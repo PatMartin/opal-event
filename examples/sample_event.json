@@ -1,0 +1,9 @@
+{
+  "topic": "vision.object.detected",
+  "source": "opal-look",
+  "data": {
+    "object": "person",
+    "camera": "front_door",
+    "confidence": 0.94
+  }
+}

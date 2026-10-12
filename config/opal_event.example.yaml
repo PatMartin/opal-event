@@ -1,0 +1,84 @@
+# Opal Event service configuration (YAML is authoritative; see README.md for full field docs).
+#
+# Fields under `server`, `zeromq.publishers`/`subscribers`/`curve`, `security.rest_auth`, and
+# `persistence.database` only take effect after a service restart. Everything else (execution,
+# persistence.event_mode/retention_days, actions, rules) hot-reloads: edit this file and save, or
+# use the REST API (PATCH /api/v1/settings/, rules/actions endpoints), and changes apply live.
+version: 1
+
+server:
+  host: 127.0.0.1
+  port: 8080
+
+zeromq:
+  publishers: tcp://127.0.0.1:5555   # producers (PUB) connect here
+  subscribers: tcp://127.0.0.1:5556  # consumers (SUB) connect here
+  max_event_bytes: 1048576
+  curve:
+    enabled: false
+    server_public_key_file: null
+    server_secret_key_file: null
+    authorized_client_keys_file: null
+
+security:
+  rest_auth:
+    enabled: false
+    token_env: OPAL_EVENT_API_TOKEN
+  http_action_allowlist:
+    - host: 127.0.0.1
+      ports: [9000]
+      schemes: [http]
+
+execution:
+  max_workers: 4
+  queue_size: 100
+  default_timeout_seconds: 30
+  overflow: drop_and_log
+  retry_enabled: false
+  max_output_bytes: 65536
+
+persistence:
+  database: var/opal_event.db
+  event_mode: all
+  retention_days: 7
+  execution_history_enabled: true
+
+actions:
+  - id: announce_person
+    type: shell
+    enabled: true
+    mode: exec
+    executable: /bin/echo
+    args: ["person detected at {{data.camera}}"]
+    stdin: none
+    timeout_seconds: 10
+
+  - id: send_notification
+    type: http
+    enabled: true
+    method: POST
+    url: http://127.0.0.1:9000/notify
+    body_mode: template
+    body:
+      camera: "{{data.camera}}"
+      event: "{{event}}"
+    timeout_seconds: 15
+
+  - id: process_detection
+    type: python
+    enabled: true
+    module: opal_event.plugins.example
+    function: handle_event
+    timeout_seconds: 10
+
+rules:
+  - id: front_door_alert
+    enabled: true
+    topic: vision.*
+    conditions:
+      - path: data.object
+        operator: eq
+        value: person
+    actions:
+      - announce_person
+      - send_notification

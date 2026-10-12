@@ -1,0 +1,9 @@
+{
+  "id": "front_door_alert",
+  "enabled": true,
+  "topic": "vision.*",
+  "conditions": [
+    { "path": "data.object", "operator": "eq", "value": "person" }
+  ],
+  "actions": ["announce_person", "send_notification"]
+}

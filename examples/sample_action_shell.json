@@ -1,0 +1,10 @@
+{
+  "id": "announce_person",
+  "type": "shell",
+  "enabled": true,
+  "mode": "bash",
+  "script_path": "scripts/announce.sh",
+  "args": ["{{data.camera}}"],
+  "stdin": "none",
+  "timeout_seconds": 10
+}

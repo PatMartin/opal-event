@@ -26,7 +26,7 @@ def load_contract_operations() -> dict[str, tuple[str, str]]:
 class TestContractCoverage:
     def test_contract_loads_and_has_expected_operation_count(self):
         operations = load_contract_operations()
-        assert len(operations) == 27
+        assert len(operations) == 29
 
     def test_cli_exposes_every_contract_operation(self):
         operations = load_contract_operations()

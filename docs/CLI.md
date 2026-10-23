@@ -285,44 +285,98 @@ opal event --json rules list
 
 ## 4. Command tree
 
-```
+```text
 opal
-└── event [--api-url] [--token] [--json] [--timeout]
-          [--opal-session-id] [--opal-transaction-id] [--opal-causation-id]
-    ├── publish          Publish an event to the bus (REST ingress)
-    ├── list             List stored events (cursor-paginated)
-    ├── get              Get a stored event by ID
-    ├── delete           Delete a stored event by ID
-    ├── clear            Clear all stored events from all topics
-    ├── topics           List observed topics
-    ├── health           Summary health and readiness status
-    ├── health-live      Liveness probe (process + SQLite reachability)
-    ├── health-ready     Readiness probe (ZeroMQ broker + config state)
-    ├── stats            Runtime metrics and counters
+└── event (alias: opal-event)
+    │   [Global Options & Flags]
+    │   ├── --api-url <url>                     REST API base URL [env: OPAL_EVENT_API_URL]
+    │   ├── --token <token>                     Bearer token [env: OPAL_EVENT_API_TOKEN]
+    │   ├── --json                              Output raw JSON (flag)
+    │   ├── --timeout <seconds>                 HTTP timeout [default: 30.0]
+    │   ├── --opal-session-id <id>              X-Opal-Session-Id header [env: OPAL_SESSION_ID]
+    │   ├── --opal-transaction-id <id>          X-Opal-Transaction-Id header [env: OPAL_TRANSACTION_ID]
+    │   └── --opal-causation-id <id>            X-Opal-Causation-Id header [env: OPAL_CAUSATION_ID]
+    │
+    ├── publish <topic>                         Publish event to the bus
+    │   ├── --data-json <json>                  (required) Event data JSON
+    │   ├── [--id <uuid>]                       Explicit event UUID
+    │   ├── [--source <src>]                    Event source [default: opal-event-rest]
+    │   └── [--timestamp <rfc3339>]             Timestamp [default: now]
+    │
+    ├── list                                    List stored events
+    │   ├── [--cursor <token>]                  Pagination cursor
+    │   ├── [--limit <int>]                     Max items [default: 50]
+    │   ├── [--topic <topic>]                   Topic exact filter
+    │   ├── [--source <src>]                    Source filter
+    │   ├── [--from <rfc3339>]                  Created >= timestamp
+    │   └── [--to <rfc3339>]                    Created <= timestamp
+    │
+    ├── get <event_id>                          Get stored event by ID
+    ├── delete <event_id>                       Delete stored event by ID
+    ├── clear                                   Clear all stored events from all topics
+    ├── topics                                  List observed topics
+    ├── health                                  Readiness and health summary
+    ├── health-live                             Liveness probe (no auth)
+    ├── health-ready                            Readiness probe (no auth)
+    ├── stats                                   Runtime metrics and counters
+    │
     ├── rules
-    │   ├── list         List all configured rules (bounded catalog)
-    │   ├── get          Get rule definition by ID
-    │   ├── create       Register a new rule (--json, --file, or stdin)
-    │   ├── update       Partially update a rule (--json, --file, or stdin)
-    │   ├── delete       Delete a rule by ID
-    │   └── test         Evaluate a rule against a sample event (dry-run)
+    │   ├── list                                List rules (bounded catalog)
+    │   ├── get <rule_id>                       Get rule by ID
+    │   ├── create                              Create new rule
+    │   │   ├── [--json <json>]                 Full Rule JSON body
+    │   │   └── [--file <path>]                 File path containing JSON
+    │   ├── update <rule_id>                    Partially update rule
+    │   │   ├── [--json <json>]                 Partial RulePatch JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   ├── delete <rule_id>                    Delete rule by ID
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   └── test <rule_id>                      Dry-run evaluate rule against event
+    │       └── --event-json <json>             (required) Sample event JSON
+    │
     ├── actions
-    │   ├── list         List all configured actions (bounded catalog)
-    │   ├── get          Get action definition by ID
-    │   ├── create       Register a new action (--json, --file, or stdin)
-    │   ├── update       Partially update an action (--json, --file, or stdin)
-    │   ├── delete       Delete an action by ID (fails if referenced by rule)
-    │   └── execute      Manually trigger an action with an event payload
+    │   ├── list                                List actions (bounded catalog)
+    │   ├── get <action_id>                     Get action by ID
+    │   ├── create                              Create new action
+    │   │   ├── [--json <json>]                 Full Action JSON body
+    │   │   └── [--file <path>]                 File path containing JSON
+    │   ├── update <action_id>                  Partially update action
+    │   │   ├── [--json <json>]                 Partial ActionPatch JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   ├── delete <action_id>                  Delete action by ID
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   └── execute <action_id>                 Manually execute action
+    │       └── --event-json <json>             (required) Sample event JSON
+    │
     ├── executions
-    │   ├── list         List action execution history (filterable, paginated)
-    │   └── get          Get detailed execution record by ID
+    │   ├── list                                List action executions
+    │   │   ├── [--cursor <token>]              Pagination cursor
+    │   │   ├── [--limit <int>]                 Max items [default: 100]
+    │   │   ├── [--status <status>]             Filter by execution status
+    │   │   ├── [--rule-id <rule_id>]           Filter by rule ID
+    │   │   ├── [--action-id <action_id>]       Filter by action ID
+    │   │   └── [--event-id <event_id>]         Filter by triggering event ID
+    │   └── get <execution_id>                  Get execution details by ID
+    │
     ├── settings
-    │   ├── get          Inspect live portable service settings
-    │   └── update       Update portable settings (--json, --file, or stdin)
+    │   ├── get                                 Get portable service settings
+    │   └── update                              Update portable settings
+    │       ├── [--json <json>]                 Partial settings JSON body
+    │       ├── [--file <path>]                 File path containing JSON
+    │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │
     └── backup
-        ├── export       Export portable configuration to JSON or file
-        ├── validate     Validate a portable backup payload
-        └── import       Atomically import a portable backup
+        ├── export                              Export configuration bundle
+        │   └── [--output <path>]               Write to file instead of stdout
+        ├── validate                            Validate configuration bundle
+        │   ├── [--json <json>]                 Full ConfigBackup JSON body
+        │   └── [--file <path>]                 File path containing JSON
+        └── import                              Import configuration bundle atomically
+            ├── [--json <json>]                 BackupImportRequest JSON body
+            ├── [--file <path>]                 File path containing JSON
+            └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
 ```
 
 ---

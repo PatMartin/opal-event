@@ -44,6 +44,30 @@ class TestDatabaseEvents:
         db.insert_event(make_event("e3", topic="c.d"))
         assert db.list_topics() == ["a.b", "c.d"]
 
+    def test_clear_events(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_event(make_event("e1", topic="a.b"))
+        db.insert_event(make_event("e2", topic="c.d"))
+        assert len(db.list_topics()) == 2
+        events, _ = db.list_events()
+        assert len(events) == 2
+
+        db.clear_events()
+
+        events_after, _ = db.list_events()
+        assert len(events_after) == 0
+        assert db.list_topics() == []
+
+    def test_delete_event(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_event(make_event("e1", topic="a.b"))
+        db.insert_event(make_event("e2", topic="c.d"))
+        assert db.delete_event("e1") is True
+        assert db.get_event("e1") is None
+        assert db.get_event("e2") is not None
+        assert db.delete_event("e1") is False
+        assert db.delete_event("non_existent") is False
+
 
 class TestDatabaseExecutions:
     def test_insert_update_get_execution(self, tmp_path):

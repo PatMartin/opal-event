@@ -13,3 +13,4 @@ dist/
 *.tsbuildinfo
 config/opal_event.yaml
 .DS_Store
+.vscode/

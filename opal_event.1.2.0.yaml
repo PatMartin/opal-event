@@ -215,6 +215,38 @@ paths:
         in: query
         schema:
           type: string
+    delete:
+      tags:
+      - Events
+      operationId: delete_api_v1_events
+      summary: Clear all stored events
+      description: Clear all events from all topics.
+      responses:
+        '204':
+          description: Successful operation
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
     parameters:
     - $ref: '#/components/parameters/OpalSessionIdHeader'
     - $ref: '#/components/parameters/OpalTransactionIdHeader'
@@ -234,6 +266,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Event'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '500':
+          $ref: '#/components/responses/Error500'
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    delete:
+      tags:
+      - Events
+      operationId: delete_api_v1_events_id
+      summary: Delete stored event
+      description: Delete an individual event given its ID.
+      responses:
+        '204':
+          description: Successful operation
           headers:
             X-Opal-Session-Id:
               $ref: '#/components/headers/OpalSessionIdHeader'

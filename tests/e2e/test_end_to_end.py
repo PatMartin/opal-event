@@ -60,6 +60,40 @@ class TestEndToEndPipeline:
         resp = app_client.get("/api/v1/rules/new_rule")
         assert resp.status_code == 404
 
+    def test_clear_events_operation(self, app_client):
+        resp = app_client.post("/api/v1/events/", json={"topic": "vision.object.detected", "data": {"object": "person"}})
+        assert resp.status_code == 202
+        assert wait_until(lambda: app_client.get("/api/v1/events/").json()["items"])
+        assert len(app_client.get("/api/v1/events/").json()["items"]) > 0
+
+        # DELETE /api/v1/events/ should clear all events from all topics
+        clear_resp = app_client.delete("/api/v1/events/")
+        assert clear_resp.status_code == 204
+
+        # Events list should now be empty
+        events_resp = app_client.get("/api/v1/events/").json()
+        assert events_resp["items"] == []
+        topics_resp = app_client.get("/api/v1/topics/").json()
+        assert topics_resp["items"] == []
+
+    def test_delete_event_operation(self, app_client):
+        resp = app_client.post("/api/v1/events/", json={"topic": "vision.object.detected", "data": {"object": "person"}})
+        assert resp.status_code == 202
+        event_id = resp.json()["id"]
+        assert wait_until(lambda: app_client.get(f"/api/v1/events/{event_id}").status_code == 200)
+
+        # DELETE /api/v1/events/{event_id} should delete the specific event and return 204
+        delete_resp = app_client.delete(f"/api/v1/events/{event_id}")
+        assert delete_resp.status_code == 204
+
+        # Getting the deleted event should return 404
+        get_resp = app_client.get(f"/api/v1/events/{event_id}")
+        assert get_resp.status_code == 404
+
+        # Deleting a non-existent event should return 404
+        delete_missing_resp = app_client.delete(f"/api/v1/events/{event_id}")
+        assert delete_missing_resp.status_code == 404
+
     def test_manual_action_execution(self, app_client):
         resp = app_client.post(
             "/api/v1/actions/python_action/execute", json={"event": {"topic": "manual.test", "data": {"object": "cat"}}}
@@ -80,9 +114,7 @@ class TestEndToEndPipeline:
         # Unlike settings/rules/actions, opal_event.1.2.0.yaml does not add 412/428 responses to
         # backup/import; a stale revision intentionally still yields the original 409 Conflict.
         exported = app_client.get("/api/v1/backup/export").json()
-        resp = app_client.post(
-            "/api/v1/backup/import", json={"backup": exported}, headers={"If-Match": "definitely-stale"}
-        )
+        resp = app_client.post("/api/v1/backup/import", json={"backup": exported}, headers={"If-Match": "definitely-stale"})
         assert resp.status_code == 409
 
     def test_backup_import_missing_if_match_is_422_not_428(self, app_client):

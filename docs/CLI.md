@@ -19,7 +19,7 @@ on a remote host.
 3. [Conventions](#3-conventions)
 4. [Command tree](#4-command-tree)
 5. [`publish`: event publication](#5-publish-event-publication)
-6. [`list` & `get`: event history](#6-list--get-event-history)
+6. [`list`, `get`, `delete`, & `clear`: event history](#6-list-get-delete--clear-event-history)
 7. [`topics`: topic catalog](#7-topics-topic-catalog)
 8. [`rules`: rule management](#8-rules-rule-management)
 9. [`actions`: action management](#9-actions-action-management)
@@ -292,6 +292,8 @@ opal
     ├── publish          Publish an event to the bus (REST ingress)
     ├── list             List stored events (cursor-paginated)
     ├── get              Get a stored event by ID
+    ├── delete           Delete a stored event by ID
+    ├── clear            Clear all stored events from all topics
     ├── topics           List observed topics
     ├── health           Summary health and readiness status
     ├── health-live      Liveness probe (process + SQLite reachability)
@@ -374,7 +376,7 @@ opal event --opal-session-id "user-sess-42" \
 
 ---
 
-## 6. `list` & `get`: event history
+## 6. `list`, `get`, `delete`, & `clear`: event history
 
 When `persistence.event_mode` is set to `all` or `matched`, observed events are stored in the SQLite
 database and queryable via the CLI.
@@ -430,6 +432,43 @@ Output:
     "object": "person"
   }
 }
+```
+
+### `delete`: delete an individual stored event
+
+Deletes a single stored event by its unique ID. Returns an error if the event does not exist.
+
+```
+opal event delete <EVENT_ID>
+```
+
+```bash
+opal event delete 7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+# Output:
+# Deleted event '7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c'.
+```
+
+With `--json`:
+```bash
+opal event delete 7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c --json
+# Output:
+# {
+#   "deleted": "7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c"
+# }
+```
+
+### `clear`: clear all stored events
+
+Deletes all stored events from all topics in the database.
+
+```
+opal event clear
+```
+
+```bash
+opal event clear
+# Output:
+# Cleared all events.
 ```
 
 ---
@@ -1267,9 +1306,10 @@ opal event executions list --rule-id greet_user --limit 1
 # 7. Manually execute the action directly
 opal event actions execute say_hello --event-json '{"topic":"manual","data":{"name":"Bob"}}'
 
-# 8. Clean up (delete rule first, then action)
+# 8. Clean up (delete rule first, action, then clear test events)
 opal event rules delete greet_user
 opal event actions delete say_hello
+opal event clear
 ```
 
 ### 14.2 Webhook alert configuration
@@ -1387,14 +1427,16 @@ done
 
 ## 17. Appendix: CLI ↔ REST mapping
 
-All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 27 OpenAPI
+All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 29 OpenAPI
 operations declared in `opal_event.1.2.0.yaml` are mapped below:
 
 | CLI command | HTTP method | API endpoint | If-Match / ETag |
 |---|---|---|---|
 | `opal event publish` | `POST` | `/api/v1/events/` | None |
 | `opal event list` | `GET` | `/api/v1/events/` | None |
+| `opal event clear` | `DELETE` | `/api/v1/events/` | None |
 | `opal event get` | `GET` | `/api/v1/events/{event_id}` | None |
+| `opal event delete` | `DELETE` | `/api/v1/events/{event_id}` | None |
 | `opal event topics` | `GET` | `/api/v1/topics/` | Response carries strong `ETag` |
 | `opal event rules list` | `GET` | `/api/v1/rules/` | Response carries strong `ETag` |
 | `opal event rules create` | `POST` | `/api/v1/rules/` | None |

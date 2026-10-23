@@ -63,9 +63,7 @@ def event_callback(
         "X-Opal-Causation-Id": opal_causation_id or os.environ.get("OPAL_CAUSATION_ID"),
     }
     context_headers = {k: v for k, v in context_headers.items() if v}
-    ctx.obj = CliState(
-        ApiClient(api_url or api_url_from_env(), token or token_from_env(), timeout), json_output, context_headers
-    )
+    ctx.obj = CliState(ApiClient(api_url or api_url_from_env(), token or token_from_env(), timeout), json_output, context_headers)
 
 
 # -- helpers -----------------------------------------------------------------------------------
@@ -194,6 +192,26 @@ def list_events(
 def get_event(ctx: typer.Context, event_id: str = typer.Argument(...)) -> None:
     """Get a stored event by ID."""
     _emit(ctx, _call(ctx, "get_api_v1_events_id", path_params={"event_id": event_id}).json())
+
+
+@event_app.command("delete")
+def delete_event_cmd(ctx: typer.Context, event_id: str = typer.Argument(..., help="Event ID to delete")) -> None:
+    """Delete a stored event by ID."""
+    _call(ctx, "delete_api_v1_events_id", path_params={"event_id": event_id})
+    if _state(ctx).json_output:
+        typer.echo(json.dumps({"deleted": event_id}))
+    else:
+        typer.echo(f"Deleted event '{event_id}'.")
+
+
+@event_app.command("clear")
+def clear_events_cmd(ctx: typer.Context) -> None:
+    """Clear all events from all topics."""
+    _call(ctx, "delete_api_v1_events")
+    if _state(ctx).json_output:
+        typer.echo(json.dumps({"cleared": True}))
+    else:
+        typer.echo("Cleared all events.")
 
 
 @event_app.command("topics")

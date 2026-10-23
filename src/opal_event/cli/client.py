@@ -14,7 +14,9 @@ DEFAULT_API_URL = "http://127.0.0.1:8080"
 OPERATIONS: dict[str, tuple[str, str]] = {
     "post_api_v1_events": ("POST", "/api/v1/events/"),
     "get_api_v1_events": ("GET", "/api/v1/events/"),
+    "delete_api_v1_events": ("DELETE", "/api/v1/events/"),
     "get_api_v1_events_id": ("GET", "/api/v1/events/{event_id}"),
+    "delete_api_v1_events_id": ("DELETE", "/api/v1/events/{event_id}"),
     "get_api_v1_topics": ("GET", "/api/v1/topics/"),
     "get_api_v1_rules": ("GET", "/api/v1/rules/"),
     "post_api_v1_rules": ("POST", "/api/v1/rules/"),

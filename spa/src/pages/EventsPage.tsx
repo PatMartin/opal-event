@@ -39,6 +39,26 @@ export default function EventsPage() {
     }
   }
 
+  async function clearAll() {
+    try {
+      setError(null);
+      await api.clearEvents();
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  async function remove(eventId: string) {
+    try {
+      setError(null);
+      await api.deleteEvent(eventId);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
   return (
     <div>
       <h2>Events</h2>
@@ -64,6 +84,9 @@ export default function EventsPage() {
         </label>
         <button className="secondary" onClick={load}>
           Refresh
+        </button>{" "}
+        <button className="danger" onClick={clearAll}>
+          Clear all events
         </button>
       </div>
 
@@ -75,6 +98,7 @@ export default function EventsPage() {
             <th>Source</th>
             <th>Timestamp</th>
             <th>Data</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -86,6 +110,11 @@ export default function EventsPage() {
               <td>{event.timestamp}</td>
               <td>
                 <pre>{JSON.stringify(event.data)}</pre>
+              </td>
+              <td>
+                <button className="danger" onClick={() => remove(event.id)}>
+                  Delete
+                </button>
               </td>
             </tr>
           ))}

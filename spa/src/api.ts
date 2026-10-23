@@ -98,6 +98,9 @@ export const api = {
     request<{ id: string; status: string; published_at: string }>("POST", "/api/v1/events/", body),
   listEvents: (query: Record<string, string | number | undefined>) =>
     request<import("./types").ListEvents>("GET", withQuery("/api/v1/events/", query)),
+  deleteEvent: (eventId: string) =>
+    request<void>("DELETE", `/api/v1/events/${encodeURIComponent(eventId)}`),
+  clearEvents: () => request<void>("DELETE", "/api/v1/events/"),
   listTopics: () => request<{ items: string[] }>("GET", "/api/v1/topics/"),
 
   // Rules/Actions are bounded configuration catalogs as of opal_event.1.2.0.yaml: GET returns the

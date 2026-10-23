@@ -92,8 +92,20 @@ def get_event(event_id: str, service: Annotated[EventService, Depends(get_servic
     return Event.model_validate(event)
 
 
+@router.delete("/api/v1/events/{event_id}", status_code=204)
+def delete_event(event_id: str, service: Annotated[EventService, Depends(get_service)]):
+    if not service.db.delete_event(event_id):
+        raise NotFoundError(f"event '{event_id}' not found")
+    return Response(status_code=204)
+
+
 @router.get("/api/v1/topics/", response_model=TopicList)
 def list_topics(service: Annotated[EventService, Depends(get_service)], response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     return TopicList(items=service.db.list_topics())
 
+
+@router.delete("/api/v1/events/", status_code=204)
+def clear_events(service: Annotated[EventService, Depends(get_service)]):
+    service.db.clear_events()
+    return Response(status_code=204)

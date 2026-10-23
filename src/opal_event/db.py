@@ -134,6 +134,15 @@ class Database:
             rows = self._conn.execute("SELECT DISTINCT topic FROM events ORDER BY topic ASC").fetchall()
         return [row["topic"] for row in rows]
 
+    def clear_events(self) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM events")
+
+    def delete_event(self, event_id: str) -> bool:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            return cursor.rowcount > 0
+
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> dict[str, Any]:
         return {

@@ -610,8 +610,53 @@ Response (`200 OK`):
 
 #### `GET /api/v1/events/{event_id}` — Get event by ID
 
+Retrieves an individual stored event (message) by its unique ID. Returns `200 OK` with the event payload, or `404 Not Found` if it does not exist.
+
 ```bash
 curl -s http://127.0.0.1:8080/api/v1/events/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+```
+
+Response (`200 OK`):
+```json
+{
+  "id": "7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c",
+  "topic": "vision.object.detected",
+  "source": "front_door_cam",
+  "timestamp": "2026-10-12T16:00:00.123456Z",
+  "data": {
+    "object": "person",
+    "camera": "front_door"
+  }
+}
+```
+
+#### `DELETE /api/v1/events/{event_id}` — Delete event by ID
+
+Deletes an individual stored event (message) by its ID. Returns `204 No Content` on success, or `404 Not Found` if the event does not exist.
+
+```bash
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+```
+
+Response (`204 No Content`):
+```
+HTTP/1.1 204 No Content
+```
+
+When the event does not exist:
+```json
+{
+  "code": "not_found",
+  "message": "event '7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c' not found"
+}
+```
+
+#### `DELETE /api/v1/events/` — Clear all events
+
+Clears all stored events from all topics in the database. Returns `204 No Content`.
+
+```bash
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/
 ```
 
 ---
@@ -1024,6 +1069,8 @@ opal event stats
 opal event publish <topic> --data-json '<json>'
 opal event list [--limit N] [--topic T]
 opal event get <event_id>
+opal event delete <event_id>
+opal event clear
 opal event topics
 
 # Rules
@@ -1081,6 +1128,8 @@ Displays real-time service status, database health, ZeroMQ broker status, and co
 - **Live Event History**: Filter stored events by topic, source, and timestamps.
 - **Event Inspector**: Click on any event to view formatted JSON payloads.
 - **Event Publisher**: Interactive form to publish events directly from the browser.
+- **Individual Deletion**: Click the **Delete** button on any event row to remove that specific message.
+- **Bulk Purge**: Click **Clear all events** to purge all stored history across all topics.
 
 #### Rules tab
 - **Rule Table**: Displays all rules, topic patterns, condition summaries, and assigned actions.
@@ -1196,6 +1245,43 @@ opal event actions create --json '{
 }'
 ```
 
+### 9.4 Recipe: Managing and pruning event history
+
+When `persistence.event_mode` is enabled (`all` or `matched`), events are persisted to SQLite. You can inspect and selectively prune individual messages or purge stored history completely.
+
+#### Find and delete a specific event by ID
+
+```bash
+# 1. List recent events for a topic to identify its ID
+opal event list --topic vision.object.detected --limit 5
+
+# 2. Inspect the event payload
+opal event get 7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+
+# 3. Delete the specific event
+opal event delete 7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+# Output: Deleted event '7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c'.
+```
+
+Equivalent REST operation:
+```bash
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+```
+
+#### Purge all events across all topics
+
+To clear the entire event history while preserving action execution audit logs:
+
+```bash
+opal event clear
+# Output: Cleared all events.
+```
+
+Equivalent REST operation:
+```bash
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/
+```
+
 ---
 
 ## 10. Integrating with your application
@@ -1287,7 +1373,9 @@ cd spa && npx tsc -b
 |---|---|---|---|---|
 | `post_api_v1_events` | `POST /api/v1/events/` | `opal event publish` | Events tab → Publish modal | None |
 | `get_api_v1_events` | `GET /api/v1/events/` | `opal event list` | Events tab → Event history | None |
+| `delete_api_v1_events` | `DELETE /api/v1/events/` | `opal event clear` | Events tab → Clear all events | None |
 | `get_api_v1_events_id` | `GET /api/v1/events/{id}` | `opal event get` | Events tab → View details | None |
+| `delete_api_v1_events_id` | `DELETE /api/v1/events/{id}` | `opal event delete` | Events tab → Delete event | None |
 | `get_api_v1_topics` | `GET /api/v1/topics/` | `opal event topics` | Events tab → Topic dropdown | ETag |
 | `get_api_v1_rules` | `GET /api/v1/rules/` | `opal event rules list` | Rules tab → Rule catalog | ETag |
 | `post_api_v1_rules` | `POST /api/v1/rules/` | `opal event rules create` | Rules tab → Create rule | None |

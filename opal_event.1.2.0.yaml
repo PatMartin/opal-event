@@ -2165,6 +2165,10 @@ components:
         observed_events:
           type: integer
           minimum: 0
+        invalid_events:
+          type: integer
+          description: Events rejected by the internal observer as invalid.
+          minimum: 0
         matched_events:
           type: integer
           minimum: 0
@@ -2186,6 +2190,7 @@ components:
       additionalProperties: false
       required:
       - observed_events
+      - invalid_events
       - matched_events
       - executions_succeeded
       - executions_failed

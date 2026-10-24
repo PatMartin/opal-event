@@ -1,0 +1,7 @@
+{
+  "id": "cancel",
+  "enabled": true,
+  "topic": "cancel",
+  "conditions": [],
+  "actions": ["cancel"]
+}

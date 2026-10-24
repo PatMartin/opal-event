@@ -75,32 +75,74 @@ class Executor:
         self._queue_size = queue_size
         self._queue: queue.Queue[Job] = queue.Queue()
         self._workers: list[threading.Thread] = []
+        self._worker_events: dict[threading.Thread, threading.Event] = {}
+        self._retired_workers: list[threading.Thread] = []
+        self._worker_counter = 0
         self._max_workers = max_workers
+        self._started = False
         self._stop = threading.Event()
         self._lock = threading.Lock()
 
+    def _start_worker(self) -> threading.Thread:
+        self._worker_counter += 1
+        stop_event = threading.Event()
+        t = threading.Thread(
+            target=self._worker_loop,
+            args=(stop_event,),
+            name=f"opal-event-worker-{self._worker_counter}",
+            daemon=True,
+        )
+        self._workers.append(t)
+        self._worker_events[t] = stop_event
+        t.start()
+        return t
+
     def start(self) -> None:
-        for i in range(self._max_workers):
-            t = threading.Thread(target=self._worker_loop, name=f"opal-event-worker-{i}", daemon=True)
-            t.start()
-            self._workers.append(t)
+        with self._lock:
+            if self._started:
+                return
+            self._stop.clear()
+            for _ in range(self._max_workers):
+                self._start_worker()
+            self._started = True
 
     def stop(self) -> None:
         self._stop.set()
-        for t in self._workers:
+        with self._lock:
+            all_threads = list(self._workers) + list(self._retired_workers)
+        for t in all_threads:
             t.join(timeout=5)
+        with self._lock:
+            self._workers.clear()
+            self._worker_events.clear()
+            self._retired_workers.clear()
+            self._started = False
 
     def resize(self, queue_size: int, max_workers: int) -> None:
         """Applies live ``execution.queue_size``/``execution.max_workers`` changes. Synchronized
-        admission control governs queue capacity on the stable worker queue."""
+        admission control governs queue capacity on the stable worker queue, and the worker pool
+        adjusts dynamically without restarting existing workers."""
+        workers_to_retire: list[threading.Event] = []
         with self._lock:
             self._queue_size = queue_size
-            if max_workers != self._max_workers:
-                self.stop()
-                self._stop = threading.Event()
-                self._workers = []
-                self._max_workers = max_workers
-                self.start()
+            self._max_workers = max_workers
+            if self._started:
+                self._retired_workers = [w for w in self._retired_workers if w.is_alive()]
+                current_count = len(self._workers)
+                if max_workers > current_count:
+                    for _ in range(max_workers - current_count):
+                        self._start_worker()
+                elif max_workers < current_count:
+                    surplus = current_count - max_workers
+                    for _ in range(surplus):
+                        worker = self._workers.pop()
+                        stop_event = self._worker_events.pop(worker, None)
+                        if stop_event is not None:
+                            workers_to_retire.append(stop_event)
+                        self._retired_workers.append(worker)
+
+        for stop_event in workers_to_retire:
+            stop_event.set()
 
     @property
     def queue_depth(self) -> int:
@@ -110,6 +152,16 @@ class Executor:
     def queue_size(self) -> int:
         with self._lock:
             return self._queue_size
+
+    @property
+    def max_workers(self) -> int:
+        with self._lock:
+            return self._max_workers
+
+    @property
+    def worker_count(self) -> int:
+        with self._lock:
+            return len(self._workers)
 
     def submit(
         self,
@@ -170,8 +222,8 @@ class Executor:
 
         return record
 
-    def _worker_loop(self) -> None:
-        while not self._stop.is_set():
+    def _worker_loop(self, stop_event: threading.Event) -> None:
+        while not self._stop.is_set() and not stop_event.is_set():
             try:
                 job = self._queue.get(timeout=0.2)
             except queue.Empty:

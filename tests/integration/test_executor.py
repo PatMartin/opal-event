@@ -480,4 +480,198 @@ class TestExecutor:
             unblock_worker.set()
             executor.stop()
 
+    def test_resize_max_workers_increase_during_long_running_job(self, tmp_path, monkeypatch):
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        # Start with 1 worker
+        executor = Executor(db, metrics, queue_size=10, max_workers=1)
+
+        import threading
+
+        job0_started = threading.Event()
+        unblock_job0 = threading.Event()
+        job1_started = threading.Event()
+        unblock_job1 = threading.Event()
+
+        import opal_event.executor as executor_module
+
+        original_run_action = executor_module.run_action
+
+        def mock_run_action(action, event, exec_settings, sec_settings):
+            if action.id == "long_0":
+                job0_started.set()
+                unblock_job0.wait(timeout=5)
+            elif action.id == "long_1":
+                job1_started.set()
+                unblock_job1.wait(timeout=5)
+            return original_run_action(action, event, exec_settings, sec_settings)
+
+        monkeypatch.setattr(executor_module, "run_action", mock_run_action)
+
+        executor.start()
+        try:
+            act0 = ShellAction(id="long_0", type="shell", mode="exec", executable="/bin/true")
+            act1 = ShellAction(id="long_1", type="shell", mode="exec", executable="/bin/true")
+            exec_settings = ExecutionSettings()
+            sec_settings = SecuritySettings()
+
+            # Submit job 0: worker 1 runs it and blocks
+            r0 = executor.submit(
+                act0,
+                {"topic": "t", "data": {}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert job0_started.wait(timeout=2)
+            assert metrics.get("active_workers") == 1
+
+            # Submit job 1: sits in queue because only 1 worker exists and it is busy
+            r1 = executor.submit(
+                act1,
+                {"topic": "t", "data": {}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert executor.queue_depth == 1
+            assert not job1_started.is_set()
+
+            # Increase max_workers from 1 to 2
+            executor.resize(queue_size=10, max_workers=2)
+            assert executor.max_workers == 2
+            assert executor.worker_count == 2
+
+            # The new worker picks up job 1 and starts running it concurrently with job 0!
+            assert job1_started.wait(timeout=2)
+            assert wait_until(lambda: metrics.get("active_workers") == 2, timeout=2)
+            assert executor.queue_depth == 0
+
+            # Unblock both jobs
+            unblock_job0.set()
+            unblock_job1.set()
+
+            assert wait_until(lambda: metrics.get("active_workers") == 0, timeout=3)
+            assert wait_until(lambda: db.get_execution(r0.id)["status"] == "succeeded", timeout=3)
+            assert wait_until(lambda: db.get_execution(r1.id)["status"] == "succeeded", timeout=3)
+            assert metrics.get("executions_succeeded") == 2
+        finally:
+            unblock_job0.set()
+            unblock_job1.set()
+            executor.stop()
+
+    def test_resize_max_workers_decrease_during_long_running_jobs(self, tmp_path, monkeypatch):
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        # Start with 3 workers
+        executor = Executor(db, metrics, queue_size=10, max_workers=3)
+
+        import threading
+
+        jobs_started = threading.Barrier(4)  # 3 worker threads + test thread
+        unblock_jobs = threading.Event()
+
+        import opal_event.executor as executor_module
+
+        original_run_action = executor_module.run_action
+
+        def mock_run_action(action, event, exec_settings, sec_settings):
+            if action.id == "long_job":
+                jobs_started.wait(timeout=5)
+                unblock_jobs.wait(timeout=5)
+            return original_run_action(action, event, exec_settings, sec_settings)
+
+        monkeypatch.setattr(executor_module, "run_action", mock_run_action)
+
+        executor.start()
+        try:
+            long_action = ShellAction(id="long_job", type="shell", mode="exec", executable="/bin/true")
+            fast_action = ShellAction(id="fast_job", type="shell", mode="exec", executable="/bin/true")
+            exec_settings = ExecutionSettings()
+            sec_settings = SecuritySettings()
+
+            # Submit 3 long-running jobs (all 3 workers become active)
+            r0 = executor.submit(
+                long_action,
+                {"topic": "t", "data": {"n": 0}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r1 = executor.submit(
+                long_action,
+                {"topic": "t", "data": {"n": 1}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r2 = executor.submit(
+                long_action,
+                {"topic": "t", "data": {"n": 2}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+
+            # Wait until all 3 workers reach the barrier inside run_action
+            jobs_started.wait(timeout=3)
+            assert wait_until(lambda: metrics.get("active_workers") == 3)
+
+            # Submit 2 fast jobs to the queue: they wait pending
+            r3 = executor.submit(
+                fast_action,
+                {"topic": "t", "data": {"n": 3}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r4 = executor.submit(
+                fast_action,
+                {"topic": "t", "data": {"n": 4}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert executor.queue_depth == 2
+
+            # Now decrease max_workers from 3 to 1 while 3 jobs are running!
+            executor.resize(queue_size=10, max_workers=1)
+            assert executor.max_workers == 1
+            assert executor.worker_count == 1
+
+            # In-flight jobs are still running (active_workers remains 3)
+            assert metrics.get("active_workers") == 3
+
+            # Unblock the 3 running jobs
+            unblock_jobs.set()
+
+            # The 3 running jobs must complete successfully
+            for r in (r0, r1, r2):
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+
+            # The 2 surplus workers retire without taking jobs 3 and 4; the single remaining worker processes them
+            for r in (r3, r4):
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+
+            assert wait_until(lambda: metrics.get("active_workers") == 0, timeout=3)
+            assert metrics.get("executions_succeeded") == 5
+            assert executor.queue_depth == 0
+        finally:
+            unblock_jobs.set()
+            executor.stop()
+
 

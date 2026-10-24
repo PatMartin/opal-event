@@ -98,6 +98,50 @@ class TestSettingsConcurrency:
         assert resp.status_code == 200
         assert resp.json()["max_event_bytes"] == 500000
 
+    def test_patch_execution_settings_preserves_unspecified_fields(self, app_client):
+        get_resp = app_client.get("/api/v1/settings/")
+        assert get_resp.status_code == 200
+        etag = get_resp.headers["etag"]
+        original_execution = get_resp.json()["execution"]
+        original_queue_size = original_execution["queue_size"]
+        new_workers = original_execution["max_workers"] + 1
+
+        # Patch only max_workers in execution
+        patch_resp = app_client.patch(
+            "/api/v1/settings/",
+            json={"execution": {"max_workers": new_workers}},
+            headers={"If-Match": etag},
+        )
+        assert patch_resp.status_code == 200
+        updated_settings = patch_resp.json()
+        assert updated_settings["execution"]["max_workers"] == new_workers
+        assert updated_settings["execution"]["queue_size"] == original_queue_size
+        assert updated_settings["execution"]["default_timeout_seconds"] == original_execution["default_timeout_seconds"]
+        assert updated_settings["execution"]["overflow"] == original_execution["overflow"]
+        assert updated_settings["execution"]["max_output_bytes"] == original_execution["max_output_bytes"]
+
+        # Ensure persistence by re-fetching
+        refetched = app_client.get("/api/v1/settings/").json()
+        assert refetched["execution"]["max_workers"] == new_workers
+        assert refetched["execution"]["queue_size"] == original_queue_size
+
+    def test_patch_max_event_bytes_updates_broker_observer_limit(self, app_client):
+        # Verify that updating max_event_bytes via settings PATCH updates the runtime broker observer
+        broker = app_client.app.state.service.broker
+        initial_broker_limit = broker.max_event_bytes
+
+        etag = app_client.get("/api/v1/settings/").headers["etag"]
+        new_limit = 250000
+        patch_resp = app_client.patch(
+            "/api/v1/settings/",
+            json={"max_event_bytes": new_limit},
+            headers={"If-Match": etag},
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["max_event_bytes"] == new_limit
+        assert broker.max_event_bytes == new_limit
+        assert broker.max_event_bytes != initial_broker_limit
+
 
 class TestTopicsEtag:
     def test_topics_list_returns_etag(self, app_client):

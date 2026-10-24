@@ -28,6 +28,12 @@ class TestContractCoverage:
         operations = load_contract_operations()
         assert len(operations) == 29
 
+    def test_stats_contract_includes_invalid_event_counter(self):
+        spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+        stats_schema = spec["components"]["schemas"]["Stats"]
+        assert stats_schema["properties"]["invalid_events"]["type"] == "integer"
+        assert "invalid_events" in stats_schema["required"]
+
     def test_cli_exposes_every_contract_operation(self):
         operations = load_contract_operations()
         missing = set(operations) - set(CLI_OPERATIONS)

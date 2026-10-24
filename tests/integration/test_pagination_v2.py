@@ -58,13 +58,9 @@ class TestEventsCursorScoping:
 
 class TestExecutionsHasMore:
     def test_has_more_true_when_additional_pages_exist(self, app_client):
-        resp = app_client.post(
-            "/api/v1/actions/python_action/execute", json={"event": {"topic": "t", "data": {}}}
-        )
+        resp = app_client.post("/api/v1/actions/python_action/execute", json={"event": {"topic": "t", "data": {}}})
         assert resp.status_code == 202
-        resp2 = app_client.post(
-            "/api/v1/actions/python_action/execute", json={"event": {"topic": "t", "data": {}}}
-        )
+        resp2 = app_client.post("/api/v1/actions/python_action/execute", json={"event": {"topic": "t", "data": {}}})
         assert resp2.status_code == 202
         data = app_client.get("/api/v1/executions/", params={"limit": 1}).json()
         assert "has_more" in data

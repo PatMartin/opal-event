@@ -11,6 +11,14 @@ def wait_until(predicate, timeout=3.0, interval=0.05):
 
 
 class TestEndToEndPipeline:
+    def test_invalid_event_increments_stats_counter(self, app_client):
+        stats_url = "/api/v1/stats/"
+        invalid_events_before = app_client.get(stats_url).json()["invalid_events"]
+
+        app_client.app.state.service.broker.publish("invalid.topic", {"topic": "mismatched.topic", "data": {}})
+
+        assert wait_until(lambda: app_client.get(stats_url).json()["invalid_events"] == invalid_events_before + 1)
+
     def test_publish_triggers_rule_and_action_execution(self, app_client):
         resp = app_client.post(
             "/api/v1/events/", json={"topic": "vision.object.detected", "data": {"object": "person", "camera": "front_door"}}

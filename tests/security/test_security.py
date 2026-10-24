@@ -67,6 +67,38 @@ class TestHttpActionAllowlist:
             execution = c.get(f"/api/v1/executions/{execution_id}").json()
             assert execution["error_code"] == "destination_not_allowed"
 
+    def test_http_action_invalid_header_value_fails(self, make_client):
+        client = make_client(
+            actions=[
+                {
+                    "id": "bad_header_http",
+                    "type": "http",
+                    "enabled": True,
+                    "method": "POST",
+                    "url": "http://127.0.0.1:9000/notify",
+                    "headers": {"X-Invalid": "{{data.count}}"},
+                    "body_mode": "none",
+                    "timeout_seconds": 5,
+                }
+            ],
+            rules=[],
+            security={
+                "rest_auth": {"enabled": False, "token_env": "OPAL_EVENT_API_TOKEN"},
+                "http_action_allowlist": [{"host": "127.0.0.1", "ports": [9000], "schemes": ["http"]}],
+            },
+        )
+        with client as c:
+            resp = c.post(
+                "/api/v1/actions/bad_header_http/execute",
+                json={"event": {"topic": "t", "data": {"count": 42}}},
+            )
+            assert resp.status_code == 202
+            execution_id = resp.json()["id"]
+            assert wait_until(lambda: c.get(f"/api/v1/executions/{execution_id}").json()["status"] == "failed")
+            execution = c.get(f"/api/v1/executions/{execution_id}").json()
+            assert execution["error_code"] == "invalid_header_value"
+            assert "must be a string" in execution["error_message"]
+
 
 class TestShellArgvIsolation:
     def test_event_data_is_not_interpreted_as_shell_code(self, make_client):

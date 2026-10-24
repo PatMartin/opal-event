@@ -22,6 +22,23 @@ class TestEvaluateCondition:
         assert evaluate_condition(c, {"data": {"object": "person"}})
         assert not evaluate_condition(c, {"data": {"object": "cat"}})
 
+    def test_eq_and_ne_distinguish_booleans_from_numbers(self):
+        assert not evaluate_condition(Condition(path="data.value", operator="eq", value=1), {"data": {"value": True}})
+        assert evaluate_condition(Condition(path="data.value", operator="ne", value=1), {"data": {"value": True}})
+        assert not evaluate_condition(Condition(path="data.value", operator="eq", value=0), {"data": {"value": False}})
+        assert evaluate_condition(Condition(path="data.value", operator="ne", value=0), {"data": {"value": False}})
+        assert evaluate_condition(Condition(path="data.value", operator="eq", value=1.0), {"data": {"value": 1}})
+        assert not evaluate_condition(Condition(path="data.value", operator="ne", value=1.0), {"data": {"value": 1}})
+
+    def test_eq_and_ne_distinguish_nested_booleans_from_numbers(self):
+        actual = {"data": {"value": [True, {"enabled": False}]}}
+        assert not evaluate_condition(
+            Condition(path="data.value", operator="eq", value=[1, {"enabled": False}]), actual
+        )
+        assert evaluate_condition(
+            Condition(path="data.value", operator="ne", value=[1, {"enabled": False}]), actual
+        )
+
     def test_missing_path_is_false_except_exists_false(self):
         c = Condition(path="data.missing", operator="eq", value=1)
         assert not evaluate_condition(c, {"data": {}})

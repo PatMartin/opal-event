@@ -1,4 +1,9 @@
+import json
+import threading
 import time
+
+import pytest
+import zmq
 
 from opal_event.models import CurveSettings, ZeroMqSettings
 from opal_event.zeromq_broker import Broker, parse_and_normalize
@@ -38,6 +43,132 @@ class TestBrokerPubSub:
         assert broker.running
         broker.stop()
         assert not broker.running
+
+    @pytest.mark.parametrize("invalid_frame_count", [1, 3])
+    def test_observer_rejects_invalid_frame_count_and_continues(self, invalid_frame_count, caplog):
+        settings = ZeroMqSettings(
+            publishers=f"tcp://127.0.0.1:{free_port()}",
+            subscribers=f"tcp://127.0.0.1:{free_port()}",
+        )
+        received = []
+        broker = Broker(settings, on_event=received.append)
+        context = zmq.Context()
+        publisher = context.socket(zmq.PUB)
+        try:
+            broker.start()
+            publisher.connect(settings.publishers)
+            time.sleep(0.2)
+
+            topic = b"intent.recognized"
+            payload = json.dumps({"topic": "intent.recognized", "data": {}}).encode()
+            invalid_frames = [topic] if invalid_frame_count == 1 else [topic, payload, b"extra"]
+            publisher.send_multipart(invalid_frames)
+            publisher.send_multipart([topic, payload])
+
+            assert wait_until(lambda: len(received) >= 2)
+            assert received[0]["_invalid"] is True
+            assert f"received {invalid_frame_count}" in received[0]["error"]
+            assert received[1]["topic"] == "intent.recognized"
+            assert any("rejected invalid event on observer path" in record.message for record in caplog.records)
+        finally:
+            publisher.close(linger=0)
+            context.term()
+            broker.stop()
+
+    def test_update_max_event_bytes_at_runtime(self):
+        settings = ZeroMqSettings(
+            publishers=f"tcp://127.0.0.1:{free_port()}",
+            subscribers=f"tcp://127.0.0.1:{free_port()}",
+            max_event_bytes=10000,
+        )
+        received = []
+        broker = Broker(settings, on_event=received.append)
+        context = zmq.Context()
+        publisher = context.socket(zmq.PUB)
+        try:
+            broker.start()
+            publisher.connect(settings.publishers)
+            time.sleep(0.2)
+
+            # Send a 500-byte event - initially accepted
+            topic = b"test.topic"
+            payload_500 = json.dumps({"topic": "test.topic", "data": {"pad": "x" * 400}}).encode("utf-8")
+            publisher.send_multipart([topic, payload_500])
+            assert wait_until(lambda: len(received) == 1)
+            assert "_invalid" not in received[0]
+
+            # Update max_event_bytes to 200 (lower than 500)
+            broker.update_max_event_bytes(200)
+
+            # Send the same 500-byte event - now rejected by the observer
+            publisher.send_multipart([topic, payload_500])
+            assert wait_until(lambda: len(received) == 2)
+            assert received[1].get("_invalid") is True
+            assert "max_event_bytes" in received[1].get("error", "")
+
+            # Send a small 100-byte event - accepted under the new 200-byte limit
+            payload_small = json.dumps({"topic": "test.topic", "data": {"ok": 1}}).encode("utf-8")
+            publisher.send_multipart([topic, payload_small])
+            assert wait_until(lambda: len(received) == 3)
+            assert "_invalid" not in received[2]
+            assert received[2]["topic"] == "test.topic"
+        finally:
+            publisher.close(linger=0)
+            context.term()
+            broker.stop()
+
+    def test_concurrent_publish_from_ten_threads(self):
+        settings = ZeroMqSettings(
+            publishers=f"tcp://127.0.0.1:{free_port()}",
+            subscribers=f"tcp://127.0.0.1:{free_port()}",
+        )
+        received = []
+        lock = threading.Lock()
+
+        def on_event(ev):
+            with lock:
+                received.append(ev)
+
+        broker = Broker(settings, on_event=on_event)
+        try:
+            broker.start()
+            assert broker.running
+
+            errors = []
+            threads = []
+
+            def worker(thread_idx: int):
+                try:
+                    for i in range(10):
+                        broker.publish(
+                            "thread.test",
+                            {
+                                "topic": "thread.test",
+                                "source": f"worker-{thread_idx}",
+                                "data": {"idx": i},
+                            },
+                        )
+                except Exception as exc:
+                    errors.append(exc)
+
+            for t_id in range(10):
+                t = threading.Thread(target=worker, args=(t_id,))
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join(timeout=5)
+
+            assert not errors
+            # 10 threads * 10 messages = 100 messages total
+            assert wait_until(lambda: len(received) == 100, timeout=5)
+            with lock:
+                assert len(received) == 100
+                assert all(ev.get("topic") == "thread.test" for ev in received)
+                sources = {ev.get("source") for ev in received}
+                assert sources == {f"worker-{i}" for i in range(10)}
+        finally:
+            broker.stop()
 
 
 class TestBrokerCurve:

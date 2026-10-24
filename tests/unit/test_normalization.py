@@ -96,3 +96,46 @@ class TestNormalizeEvent:
         assert not ts.endswith("+00:00")
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         assert dt is not None
+
+    def test_preserves_valid_correlation_metadata(self):
+        envelope = {
+            "topic": "test.meta",
+            "data": {},
+            "session_id": "sess-123",
+            "transaction_id": "txn-456",
+            "causation_id": "cause-789",
+        }
+        normalized = normalize_event(envelope)
+        assert normalized["session_id"] == "sess-123"
+        assert normalized["transaction_id"] == "txn-456"
+        assert normalized["causation_id"] == "cause-789"
+        assert normalized["opal_session_id"] == "sess-123"
+        assert normalized["opal_transaction_id"] == "txn-456"
+        assert normalized["opal_causation_id"] == "cause-789"
+
+    def test_preserves_opal_prefixed_metadata(self):
+        envelope = {
+            "topic": "test.meta",
+            "data": {},
+            "opal_session_id": "sess-abc",
+            "opal_transaction_id": "txn-def",
+            "opal_causation_id": "cause-ghi",
+        }
+        normalized = normalize_event(envelope)
+        assert normalized["session_id"] == "sess-abc"
+        assert normalized["transaction_id"] == "txn-def"
+        assert normalized["causation_id"] == "cause-ghi"
+
+    def test_ignores_malformed_metadata(self):
+        envelope = {
+            "topic": "test.meta",
+            "data": {},
+            "session_id": "invalid with spaces",
+            "transaction_id": "x" * 129,
+            "causation_id": 12345,
+        }
+        normalized = normalize_event(envelope)
+        assert "session_id" not in normalized
+        assert "transaction_id" not in normalized
+        assert "causation_id" not in normalized
+

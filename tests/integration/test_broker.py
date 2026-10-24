@@ -36,6 +36,34 @@ class TestBrokerPubSub:
         finally:
             broker.stop()
 
+    def test_publish_preserves_correlation_metadata(self):
+        settings = ZeroMqSettings(publishers=f"tcp://127.0.0.1:{free_port()}", subscribers=f"tcp://127.0.0.1:{free_port()}")
+        received = []
+        broker = Broker(settings, on_event=received.append)
+        try:
+            broker.start()
+            assert broker.running
+            broker.publish(
+                "intent.recognized",
+                {
+                    "topic": "intent.recognized",
+                    "data": {"a": 1},
+                    "session_id": "sess-zmq-1",
+                    "transaction_id": "txn-zmq-2",
+                    "causation_id": "cause-zmq-3",
+                },
+            )
+            assert wait_until(lambda: len(received) == 1)
+            event = received[0]
+            assert event["session_id"] == "sess-zmq-1"
+            assert event["transaction_id"] == "txn-zmq-2"
+            assert event["causation_id"] == "cause-zmq-3"
+            assert event["opal_session_id"] == "sess-zmq-1"
+            assert event["opal_transaction_id"] == "txn-zmq-2"
+            assert event["opal_causation_id"] == "cause-zmq-3"
+        finally:
+            broker.stop()
+
     def test_stop_sets_running_false(self):
         settings = ZeroMqSettings(publishers=f"tcp://127.0.0.1:{free_port()}", subscribers=f"tcp://127.0.0.1:{free_port()}")
         broker = Broker(settings, on_event=lambda e: None)

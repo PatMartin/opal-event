@@ -40,6 +40,9 @@ def publish_event(
     # additional properties. Best-effort: dropped if it would push the envelope over the byte cap.
     context = get_opal_context(request)
     enrichment = {
+        "session_id": context.session_id,
+        "transaction_id": context.transaction_id,
+        "causation_id": context.causation_id,
         "opal_session_id": context.session_id,
         "opal_transaction_id": context.transaction_id,
         "opal_causation_id": context.causation_id,

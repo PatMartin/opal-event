@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from opal_event.models import EventInput
+from opal_event.opal_context import extract_event_metadata
 
 
 def utc_now_iso() -> str:
@@ -39,10 +40,13 @@ def normalize_event(
         raw_timestamp = getattr(event, "timestamp", None)
         data = getattr(event, "data", None)
 
-    return {
+    res = {
         "id": raw_id or str(uuid.uuid4()),
         "topic": raw_topic,
         "source": raw_source or default_source,
         "timestamp": raw_timestamp or utc_now_iso(),
         "data": data,
     }
+    if isinstance(event, Mapping):
+        res.update(extract_event_metadata(event))
+    return res

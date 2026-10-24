@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -36,6 +38,32 @@ _HEADER_NAMES: dict[str, str] = {
     "request_id": "X-Opal-Request-Id",
     "causation_id": "X-Opal-Causation-Id",
 }
+
+
+def is_valid_opal_id(val: Any) -> bool:
+    """Returns True if val is a valid 1..128 printable-ASCII token without whitespace."""
+    return isinstance(val, str) and bool(_ID_PATTERN.match(val))
+
+
+def extract_event_metadata(envelope: Mapping[str, Any]) -> dict[str, str]:
+    """Extracts valid session, transaction, and causation metadata from an event envelope."""
+    metadata: dict[str, str] = {}
+    for key in ("session_id", "transaction_id", "causation_id"):
+        val = envelope.get(key)
+        if val is None:
+            val = envelope.get(f"opal_{key}")
+        if is_valid_opal_id(val):
+            metadata[key] = val
+
+    for key in ("opal_session_id", "opal_transaction_id", "opal_causation_id"):
+        val = envelope.get(key)
+        if val is None:
+            base_key = key.removeprefix("opal_")
+            val = envelope.get(base_key)
+        if is_valid_opal_id(val):
+            metadata[key] = val
+
+    return metadata
 
 
 @dataclass

@@ -24,9 +24,9 @@ def load_contract_operations() -> dict[str, tuple[str, str]]:
 
 
 class TestContractCoverage:
-    def test_contract_loads_and_has_expected_operation_count(self):
+    def test_contract_loads_operations_without_hardcoded_count(self):
         operations = load_contract_operations()
-        assert len(operations) == 29
+        assert operations, "Contract must define operations"
 
     def test_stats_contract_includes_invalid_event_counter(self):
         spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
@@ -45,10 +45,13 @@ class TestContractCoverage:
         zmq_schema = spec["components"]["schemas"]["ZeroMqSettings"]
         assert zmq_schema["properties"]["publisher_queue_size"]["type"] == "integer"
 
-    def test_cli_exposes_every_contract_operation(self):
+    def test_cli_and_contract_operations_match_in_both_directions(self):
         operations = load_contract_operations()
-        missing = set(operations) - set(CLI_OPERATIONS)
-        assert not missing, f"CLI is missing operations: {missing}"
+        missing_in_cli = set(operations) - set(CLI_OPERATIONS)
+        assert not missing_in_cli, f"CLI is missing operations: {missing_in_cli}"
+
+        missing_in_contract = set(CLI_OPERATIONS) - set(operations)
+        assert not missing_in_contract, f"Contract is missing CLI operations: {missing_in_contract}"
 
     def test_cli_operations_match_contract_method_and_path(self):
         operations = load_contract_operations()
@@ -57,15 +60,36 @@ class TestContractCoverage:
             assert cli_method == method, f"{op_id}: method mismatch"
             assert cli_path == path, f"{op_id}: path mismatch"
 
-    def test_app_implements_every_contract_operation(self, app_client):
+    def test_app_and_contract_operations_match_in_both_directions(self, app_client):
         operations = load_contract_operations()
+        contract_paths = set(operations.values())
+
         openapi = app_client.get("/openapi.json").json()
-        app_operation_ids = {
-            op["operationId"] for methods in openapi["paths"].values() for op in methods.values() if "operationId" in op
+        app_paths = {
+            (method.upper(), path)
+            for path, methods in openapi["paths"].items()
+            for method in methods
+            if method in ("get", "post", "put", "patch", "delete")
         }
-        # The REST layer's own operation ids are function names, not required to match the contract's
-        # operationId strings exactly, but every contract path+method must be routable.
-        app_paths = {(method.upper(), path) for path, methods in openapi["paths"].items() for method in methods}
-        for op_id, (method, path) in operations.items():
-            assert (method, path) in app_paths, f"missing route for {op_id}: {method} {path}"
-        assert app_operation_ids  # sanity: openapi.json actually has operations
+
+        missing_in_app = contract_paths - app_paths
+        assert not missing_in_app, f"Contract operations missing in app: {missing_in_app}"
+
+        missing_in_contract = app_paths - contract_paths
+        assert not missing_in_contract, f"App public operations missing in contract: {missing_in_contract}"
+
+    def test_event_deletion_operations_documented_in_contract(self):
+        spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+
+        clear_op = spec["paths"]["/api/v1/events/"]["delete"]
+        assert clear_op["operationId"] == "delete_api_v1_events"
+        assert "204" in clear_op["responses"]
+        assert "401" in clear_op["responses"]
+        assert "403" in clear_op["responses"]
+
+        delete_single_op = spec["paths"]["/api/v1/events/{event_id}"]["delete"]
+        assert delete_single_op["operationId"] == "delete_api_v1_events_id"
+        assert "204" in delete_single_op["responses"]
+        assert "401" in delete_single_op["responses"]
+        assert "403" in delete_single_op["responses"]
+        assert "404" in delete_single_op["responses"]

@@ -30,6 +30,7 @@ import contextlib
 import json
 import logging
 import os
+import queue
 import shutil
 import tempfile
 import threading
@@ -103,14 +104,26 @@ class Broker:
         self._ctx: zmq.Context | None = None
         self._xsub: zmq.Socket | None = None
         self._xpub: zmq.Socket | None = None
-        self._rest_pub: zmq.Socket | None = None
         self._observer_sub: zmq.Socket | None = None
         self._authenticator: ThreadAuthenticator | None = None
         self._curve_tempdir: tempfile.TemporaryDirectory | None = None
         self._proxy_thread: threading.Thread | None = None
         self._observer_thread: threading.Thread | None = None
+        self._publisher_thread: threading.Thread | None = None
+        self._pub_queue: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue()
         self._stop = threading.Event()
         self._started = False
+        self._lock = threading.Lock()
+        self._max_event_bytes = settings.max_event_bytes
+
+    def update_max_event_bytes(self, max_event_bytes: int) -> None:
+        with self._lock:
+            self._max_event_bytes = max_event_bytes
+
+    @property
+    def max_event_bytes(self) -> int:
+        with self._lock:
+            return self._max_event_bytes
 
     @property
     def running(self) -> bool:
@@ -120,6 +133,8 @@ class Broker:
             and self._proxy_thread.is_alive()
             and self._observer_thread is not None
             and self._observer_thread.is_alive()
+            and self._publisher_thread is not None
+            and self._publisher_thread.is_alive()
         )
 
     def start(self) -> None:
@@ -156,9 +171,6 @@ class Broker:
         self._xsub.bind(self._settings.publishers)
         self._xpub.bind(self._settings.subscribers)
 
-        self._rest_pub = self._make_client_socket(zmq.PUB, curve, ephemeral_public, ephemeral_secret)
-        self._rest_pub.connect(self._settings.publishers)
-
         self._observer_sub = self._make_client_socket(zmq.SUB, curve, ephemeral_public, ephemeral_secret)
         self._observer_sub.setsockopt(zmq.SUBSCRIBE, b"")
         self._observer_sub.connect(self._settings.subscribers)
@@ -166,8 +178,15 @@ class Broker:
         self._stop.clear()
         self._proxy_thread = threading.Thread(target=self._run_proxy, name="opal-event-zmq-proxy", daemon=True)
         self._observer_thread = threading.Thread(target=self._run_observer, name="opal-event-zmq-observer", daemon=True)
+        self._publisher_thread = threading.Thread(
+            target=self._run_publisher,
+            args=(curve, ephemeral_public, ephemeral_secret),
+            name="opal-event-zmq-publisher",
+            daemon=True,
+        )
         self._proxy_thread.start()
         self._observer_thread.start()
+        self._publisher_thread.start()
         self._started = True
         time.sleep(0.2)  # mitigate PUB/SUB slow-joiner before the service reports readiness
 
@@ -203,13 +222,19 @@ class Broker:
             if self._observer_sub not in events:
                 continue
             try:
-                topic_bytes, payload_bytes = self._observer_sub.recv_multipart(flags=zmq.NOBLOCK)
+                frames = self._observer_sub.recv_multipart(flags=zmq.NOBLOCK)
             except zmq.Again:
                 continue
             except zmq.ZMQError:
                 break
+            if len(frames) != 2:
+                message = f"expected exactly 2 frames, received {len(frames)}"
+                logger.warning("rejected invalid event on observer path: %s", message)
+                self._on_event({"_invalid": True, "error": message})
+                continue
+            topic_bytes, payload_bytes = frames
             try:
-                normalized = parse_and_normalize(topic_bytes, payload_bytes, self._settings.max_event_bytes)
+                normalized = parse_and_normalize(topic_bytes, payload_bytes, self.max_event_bytes)
             except InvalidEventError as exc:
                 logger.warning("rejected invalid event on observer path: %s", exc)
                 self._on_event({"_invalid": True, "error": str(exc)})
@@ -219,14 +244,36 @@ class Broker:
             except Exception:
                 logger.exception("on_event handler raised for topic %s", normalized.get("topic"))
 
+    def _run_publisher(self, curve, ephemeral_public: bytes, ephemeral_secret: bytes) -> None:
+        pub_sock = self._make_client_socket(zmq.PUB, curve, ephemeral_public, ephemeral_secret)
+        pub_sock.connect(self._settings.publishers)
+        try:
+            while not self._stop.is_set():
+                try:
+                    item = self._pub_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if item is None:
+                    break
+                topic, envelope = item
+                try:
+                    pub_sock.send_multipart([topic.encode("utf-8"), json.dumps(envelope).encode("utf-8")])
+                except zmq.ZMQError:
+                    break
+        finally:
+            pub_sock.close(linger=0)
+
     def publish(self, topic: str, envelope: dict[str, Any]) -> None:
-        if self._rest_pub is None:
+        if not self._started or self._stop.is_set():
             raise RuntimeError("broker is not started")
-        self._rest_pub.send_multipart([topic.encode("utf-8"), json.dumps(envelope).encode("utf-8")])
+        self._pub_queue.put((topic, envelope))
 
     def stop(self) -> None:
         self._stop.set()
-        for sock in (self._xsub, self._xpub, self._rest_pub, self._observer_sub):
+        self._pub_queue.put(None)
+        if self._publisher_thread is not None:
+            self._publisher_thread.join(timeout=2)
+        for sock in (self._xsub, self._xpub, self._observer_sub):
             if sock is not None:
                 sock.close(linger=0)
         if self._authenticator is not None:

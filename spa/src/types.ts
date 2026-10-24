@@ -110,6 +110,7 @@ export interface Health {
 
 export interface Stats {
   observed_events: number;
+  invalid_events: number;
   matched_events: number;
   executions_succeeded: number;
   executions_failed: number;

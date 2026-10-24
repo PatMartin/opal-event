@@ -56,6 +56,7 @@ class EventService:
 
     def _handle_observed_event(self, event: dict[str, Any]) -> None:
         if event.get("_invalid"):
+            self.metrics.incr("invalid_events")
             logger.warning("invalid event dropped by observer: %s", event.get("error"))
             return
         settings = self.config.settings
@@ -102,6 +103,8 @@ class EventService:
     def _on_config_reload(self, old: Settings, new: Settings) -> None:
         if old.execution.queue_size != new.execution.queue_size or old.execution.max_workers != new.execution.max_workers:
             self.executor.resize(new.execution.queue_size, new.execution.max_workers)
+        if old.zeromq.max_event_bytes != new.zeromq.max_event_bytes:
+            self.broker.update_max_event_bytes(new.zeromq.max_event_bytes)
 
     # -- retention cleanup ---------------------------------------------------------------------------
 

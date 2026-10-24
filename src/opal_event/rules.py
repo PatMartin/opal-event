@@ -56,6 +56,20 @@ def _same_type_compare(op: str, value: Any, expected: Any) -> bool:
     raise AssertionError(op)
 
 
+def _json_equal(value: Any, expected: Any) -> bool:
+    if isinstance(value, bool) or isinstance(expected, bool):
+        return isinstance(value, bool) and isinstance(expected, bool) and value is expected
+    if isinstance(value, int | float) and isinstance(expected, int | float):
+        return value == expected
+    if type(value) is not type(expected):
+        return False
+    if isinstance(value, list):
+        return len(value) == len(expected) and all(_json_equal(a, b) for a, b in zip(value, expected, strict=True))
+    if isinstance(value, dict):
+        return value.keys() == expected.keys() and all(_json_equal(value[key], expected[key]) for key in value)
+    return value == expected
+
+
 def evaluate_condition(condition: Condition, event: dict[str, Any]) -> bool:
     value, found = _resolve_path(event, condition.path)
     op = condition.operator
@@ -64,9 +78,9 @@ def evaluate_condition(condition: Condition, event: dict[str, Any]) -> bool:
     if not found:
         return False
     if op == "eq":
-        return value == condition.value
+        return _json_equal(value, condition.value)
     if op == "ne":
-        return value != condition.value
+        return not _json_equal(value, condition.value)
     if op in ("gt", "gte", "lt", "lte"):
         return _same_type_compare(op, value, condition.value)
     if op == "in":

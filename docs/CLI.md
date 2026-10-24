@@ -1295,6 +1295,7 @@ Output:
 ```json
 {
   "observed_events": 1420,
+  "invalid_events": 3,
   "matched_events": 350,
   "executions_succeeded": 348,
   "executions_failed": 2,
@@ -1305,6 +1306,7 @@ Output:
 ```
 
 - `observed_events`: Total events received by the internal observer.
+- `invalid_events`: Events rejected by the internal observer as invalid.
 - `matched_events`: Events that matched at least one enabled rule.
 - `executions_succeeded`: Completed actions with successful outcomes.
 - `executions_failed`: Actions that returned errors or non-zero status.

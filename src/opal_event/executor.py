@@ -127,6 +127,18 @@ class Executor:
         execution_id = str(uuid.uuid4())
         created_at = _now()
         action_revision = sha256(action.model_dump_json().encode("utf-8")).hexdigest()[:16]
+        record = ExecutionRecord(
+            id=execution_id,
+            event_id=event_id,
+            rule_id=rule_id,
+            action_id=action.id,
+            status="queued",
+            trigger=trigger,
+            created_at=created_at,
+            action_revision=action_revision,
+        )
+        self.db.insert_execution(_record_to_dict(record))
+
         job = Job(
             execution_id=execution_id,
             action=action,
@@ -141,33 +153,18 @@ class Executor:
         try:
             self._queue.put_nowait(job)
         except queue.Full:
-            record = ExecutionRecord(
-                id=execution_id,
-                event_id=event_id,
-                rule_id=rule_id,
-                action_id=action.id,
+            self.db.update_execution(
+                execution_id,
                 status="dropped",
-                trigger=trigger,
-                created_at=created_at,
-                action_revision=action_revision,
                 error_code="queue_full",
                 error_message="bounded execution queue is full",
             )
-            self.db.insert_execution(_record_to_dict(record))
+            record.status = "dropped"
+            record.error_code = "queue_full"
+            record.error_message = "bounded execution queue is full"
             self.metrics.incr("executions_dropped")
             return record
 
-        record = ExecutionRecord(
-            id=execution_id,
-            event_id=event_id,
-            rule_id=rule_id,
-            action_id=action.id,
-            status="queued",
-            trigger=trigger,
-            created_at=created_at,
-            action_revision=action_revision,
-        )
-        self.db.insert_execution(_record_to_dict(record))
         return record
 
     def _worker_loop(self) -> None:
@@ -187,7 +184,23 @@ class Executor:
         started_at = _now()
         self.db.update_execution(job.execution_id, status="running", started_at=started_at)
         start = time.monotonic()
-        outcome = run_action(job.action, job.event, job.execution_settings, job.security_settings)
+        try:
+            outcome = run_action(job.action, job.event, job.execution_settings, job.security_settings)
+        except Exception as exc:
+            logger.exception("unexpected exception during execution of action %s", job.action.id)
+            duration_ms = int((time.monotonic() - start) * 1000)
+            finished_at = _now()
+            self.db.update_execution(
+                job.execution_id,
+                status="failed",
+                finished_at=finished_at,
+                duration_ms=duration_ms,
+                error_code="unexpected_error",
+                error_message=str(exc),
+            )
+            self.metrics.incr("executions_failed")
+            return
+
         duration_ms = int((time.monotonic() - start) * 1000)
         finished_at = _now()
         self.db.update_execution(

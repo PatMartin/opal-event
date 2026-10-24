@@ -993,7 +993,7 @@ event = {
     "topic": "vision.object.detected",
     "source": "camera_front_door",
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "data": {"object": "person", "camera": "front_door", "confidence": 0.95}
+    "data": {"object": "person", "camera": "front_door", "confidence": 0.95},
 }
 
 topic_bytes = event["topic"].encode("utf-8")
@@ -1217,8 +1217,9 @@ The React SPA provides a comprehensive browser-based dashboard.
 
 #### Health tab
 Displays real-time service status, database health, ZeroMQ broker status, and counters:
-`observed_events`, `matched_events`, `executions_succeeded`, `executions_failed`, `executions_dropped`,
-`queue_depth`, and `active_workers`.
+`observed_events`, `invalid_events`, `matched_events`, `executions_succeeded`, `executions_failed`,
+`executions_dropped`, `queue_depth`, and `active_workers`. `invalid_events` counts messages rejected
+by the observer because their frame count or event contents are invalid.
 
 #### Events tab
 - **Live Event History**: Filter stored events by topic, source, and timestamps.
@@ -1323,11 +1324,7 @@ Perform custom mathematical transformations or data enrichment:
 def process_temperature(event: dict) -> dict:
     celsius = event.get("data", {}).get("celsius", 0.0)
     fahrenheit = (celsius * 9 / 5) + 32
-    return {
-        "celsius": celsius,
-        "fahrenheit": round(fahrenheit, 2),
-        "status": "warning" if celsius > 35 else "normal"
-    }
+    return {"celsius": celsius, "fahrenheit": round(fahrenheit, 2), "status": "warning" if celsius > 35 else "normal"}
 ```
 
 Register the action:

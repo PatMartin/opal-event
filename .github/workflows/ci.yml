@@ -11,6 +11,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  backend-lint:
+    name: Backend Lint (Ruff)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint and format check (Ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+
   backend-test:
     name: Backend Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -33,11 +57,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-
-      - name: Lint and format check (Ruff)
-        run: |
-          ruff check .
-          ruff format --check .
 
       - name: Run test suite
         run: |

@@ -298,6 +298,7 @@ class HealthProbe(Strict):
 
 class Stats(Strict):
     observed_events: Annotated[int, Field(ge=0)]
+    invalid_events: Annotated[int, Field(ge=0)]
     matched_events: Annotated[int, Field(ge=0)]
     executions_succeeded: Annotated[int, Field(ge=0)]
     executions_failed: Annotated[int, Field(ge=0)]

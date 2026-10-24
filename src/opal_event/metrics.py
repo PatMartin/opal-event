@@ -11,6 +11,7 @@ class Metrics:
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {
             "observed_events": 0,
+            "invalid_events": 0,
             "matched_events": 0,
             "executions_succeeded": 0,
             "executions_failed": 0,

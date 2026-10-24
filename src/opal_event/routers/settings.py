@@ -42,7 +42,7 @@ def patch_settings(patch: PortableSettingsPatch, config=Depends(get_config), if_
         raw = dict(raw)
         fields = patch.model_dump(mode="json", exclude_unset=True)
         if "execution" in fields:
-            raw["execution"] = fields["execution"]
+            raw["execution"] = {**raw.get("execution", {}), **fields["execution"]}
         if "persistence" in fields:
             raw["persistence"] = {**raw.get("persistence", {}), **fields["persistence"]}
         if "max_event_bytes" in fields:
@@ -54,4 +54,3 @@ def patch_settings(patch: PortableSettingsPatch, config=Depends(get_config), if_
     except ConcurrentUpdateError as exc:
         raise PreconditionFailedError(str(exc)) from exc
     return _portable_view(new_settings)
-

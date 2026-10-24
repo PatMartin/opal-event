@@ -46,11 +46,10 @@ import zmq
 
 ctx = zmq.Context.instance()
 pub = ctx.socket(zmq.PUB)
-pub.connect('tcp://127.0.0.1:5555')
-event = {'topic': 'intent.recognized', 'source': 'opal-listen',
-         'data': {'intent': 'lights.turn_on'}}
+pub.connect("tcp://127.0.0.1:5555")
+event = {"topic": "intent.recognized", "source": "opal-listen", "data": {"intent": "lights.turn_on"}}
 # Wait for connection/subscription propagation as appropriate; this sleep alone is not a guarantee.
-pub.send_multipart([event['topic'].encode('utf-8'), json.dumps(event).encode('utf-8')])
+pub.send_multipart([event["topic"].encode("utf-8"), json.dumps(event).encode("utf-8")])
 ```
 
 Subscriber:
@@ -61,12 +60,12 @@ import zmq
 
 ctx = zmq.Context.instance()
 sub = ctx.socket(zmq.SUB)
-sub.connect('tcp://127.0.0.1:5556')
-sub.setsockopt(zmq.SUBSCRIBE, b'intent.')
+sub.connect("tcp://127.0.0.1:5556")
+sub.setsockopt(zmq.SUBSCRIBE, b"intent.")
 while True:
     topic, payload = sub.recv_multipart()
     event = json.loads(payload)
-    if event.get('topic') != topic.decode('utf-8'):
+    if event.get("topic") != topic.decode("utf-8"):
         continue
     print(event)
 ```

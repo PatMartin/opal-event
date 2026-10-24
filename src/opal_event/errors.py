@@ -113,4 +113,3 @@ async def opal_contextual_error_handler(request: Request, exc: OpalContextualErr
     if exc.details is not None:
         body["error"]["details"] = exc.details
     return JSONResponse(status_code=exc.status_code, content=body)
-

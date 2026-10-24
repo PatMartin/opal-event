@@ -43,4 +43,3 @@ def get_execution(execution_id: str, service: Annotated[EventService, Depends(ge
     if execution is None:
         raise NotFoundError(f"execution '{execution_id}' not found")
     return Execution.model_validate(execution)
-

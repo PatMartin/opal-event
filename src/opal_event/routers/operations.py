@@ -41,6 +41,7 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
     snapshot = service.metrics.snapshot()
     return Stats(
         observed_events=snapshot["observed_events"],
+        invalid_events=snapshot["invalid_events"],
         matched_events=snapshot["matched_events"],
         executions_succeeded=snapshot["executions_succeeded"],
         executions_failed=snapshot["executions_failed"],

@@ -7,8 +7,7 @@ matching ``If-Match`` (428 if omitted, 412 if stale) instead of the previous unc
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from uuid import uuid4
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Response
 
@@ -17,6 +16,7 @@ from opal_event.config import ConcurrentUpdateError
 from opal_event.deps import get_config
 from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
 from opal_event.models import EventInput, ListRules, Rule, RulePatch, RuleTestInput, RuleTestResult
+from opal_event.normalization import normalize_event
 from opal_event.rules import evaluate_rule
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -27,18 +27,8 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 RULES_MAX_COUNT = 10_000
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-def _normalize_event_input(event_input: EventInput) -> dict:
-    return {
-        "id": event_input.id or str(uuid4()),
-        "topic": event_input.topic,
-        "source": event_input.source or "opal-event-rest",
-        "timestamp": event_input.timestamp or _now(),
-        "data": event_input.data,
-    }
+def _normalize_event_input(event_input: EventInput) -> dict[str, Any]:
+    return normalize_event(event_input)
 
 
 @router.get("/api/v1/rules/", response_model=ListRules)

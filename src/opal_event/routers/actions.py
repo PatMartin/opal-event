@@ -7,9 +7,7 @@ matching ``If-Match`` (428 if omitted, 412 if stale) instead of the previous unc
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Annotated, Any
-from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, Response
 
@@ -26,6 +24,7 @@ from opal_event.models import (
     PythonActionPatch,
     ShellActionPatch,
 )
+from opal_event.normalization import normalize_event
 from opal_event.service import EventService
 from opal_event.validation import ValidationProblem, validate_model, validate_type
 
@@ -41,10 +40,6 @@ _PATCH_MODELS = {
 # silently truncate" (opal_event.1.2.0.yaml). Generous default; not part of the portable/REST
 # schema, purely an internal safety net.
 ACTIONS_MAX_COUNT = 10_000
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @router.get("/api/v1/actions/", response_model=ListActions)
@@ -148,14 +143,7 @@ def execute_action(
     if not action.enabled:
         raise ValidationProblem.from_message(["body", "action_id"], f"action '{action_id}' is disabled", "value_error")
 
-    event_input = body.event
-    event = {
-        "id": event_input.id or str(uuid4()),
-        "topic": event_input.topic,
-        "source": event_input.source or "opal-event-rest",
-        "timestamp": event_input.timestamp or _now(),
-        "data": event_input.data,
-    }
+    event = normalize_event(body.event)
     settings = config.settings
     record = service.executor.submit(
         action,

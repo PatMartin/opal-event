@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import uuid
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -13,16 +11,13 @@ from opal_event.auth import require_auth
 from opal_event.deps import get_config, get_service
 from opal_event.errors import NotFoundError, PayloadTooLargeError, ServiceUnavailableError
 from opal_event.models import Event, EventInput, ListEvents, PublishReceipt, TopicList
+from opal_event.normalization import normalize_event
 from opal_event.opal_context import get_opal_context
 from opal_event.pagination import decode_scoped_cursor, encode_scoped_cursor
 from opal_event.service import EventService
 from opal_event.zeromq_broker import PublisherQueueFullError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @router.post("/api/v1/events/", status_code=202, response_model=PublishReceipt)
@@ -34,13 +29,7 @@ def publish_event(
 ):
     if not service.is_ready():
         raise ServiceUnavailableError("ZeroMQ broker is not running")
-    envelope = {
-        "id": event_input.id or str(uuid.uuid4()),
-        "topic": event_input.topic,
-        "source": event_input.source or "opal-event-rest",
-        "timestamp": event_input.timestamp or _now(),
-        "data": event_input.data,
-    }
+    envelope = normalize_event(event_input)
     wire_size = len(envelope["topic"].encode("utf-8")) + len(json.dumps(envelope).encode("utf-8"))
     if wire_size > config.settings.zeromq.max_event_bytes:
         raise PayloadTooLargeError()

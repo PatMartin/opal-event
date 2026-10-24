@@ -35,9 +35,7 @@ import shutil
 import tempfile
 import threading
 import time
-import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
 import zmq
@@ -45,14 +43,11 @@ import zmq.auth
 from zmq.auth.thread import ThreadAuthenticator
 
 from opal_event.models import ZeroMqSettings
+from opal_event.normalization import normalize_event
 
 logger = logging.getLogger("opal_event.broker")
 
 TOPIC_MAX_LENGTH = 255
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _write_public_cert(path: str, public_key: bytes) -> None:
@@ -91,13 +86,7 @@ def parse_and_normalize(topic_bytes: bytes, payload_bytes: bytes, max_event_byte
         raise InvalidEventError("envelope missing required 'topic'/'data' keys")
     if envelope["topic"] != topic:
         raise InvalidEventError("frame topic does not match envelope topic")
-    return {
-        "id": envelope.get("id") or str(uuid.uuid4()),
-        "topic": topic,
-        "source": envelope.get("source") or "unknown",
-        "timestamp": envelope.get("timestamp") or _now(),
-        "data": envelope.get("data"),
-    }
+    return normalize_event(envelope, topic=topic, default_source="unknown")
 
 
 class Broker:

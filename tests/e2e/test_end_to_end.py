@@ -1,4 +1,7 @@
+import threading
 import time
+
+import zmq
 
 
 def wait_until(predicate, timeout=3.0, interval=0.05):
@@ -18,6 +21,65 @@ class TestEndToEndPipeline:
         app_client.app.state.service.broker.publish("invalid.topic", {"topic": "mismatched.topic", "data": {}})
 
         assert wait_until(lambda: app_client.get(stats_url).json()["invalid_events"] == invalid_events_before + 1)
+
+    def test_publisher_queue_full_returns_503_and_recovers(self, app_client, monkeypatch):
+        stats_url = "/api/v1/stats/"
+        stats_before = app_client.get(stats_url).json()
+        rejected_before = stats_before["rejected_publications"]
+
+        service = app_client.app.state.service
+        service.broker.update_publisher_queue_size(2)
+
+        unblock_event = threading.Event()
+        send_started = threading.Event()
+        original_send = zmq.Socket.send_multipart
+
+        def blocked_send(sock_self, frames, *args, **kwargs):
+            send_started.set()
+            unblock_event.wait(timeout=5)
+            return original_send(sock_self, frames, *args, **kwargs)
+
+        monkeypatch.setattr(zmq.Socket, "send_multipart", blocked_send)
+
+        try:
+            # 1. Publish first event; publisher thread consumes it from queue and blocks in send_multipart
+            resp1 = app_client.post("/api/v1/events/", json={"topic": "queue.e2e", "data": {"n": 1}})
+            assert resp1.status_code == 202
+            assert resp1.json()["status"] == "accepted"
+            assert send_started.wait(timeout=2)
+
+            # 2. Fill the remaining queue capacity (2 slots)
+            resp2 = app_client.post("/api/v1/events/", json={"topic": "queue.e2e", "data": {"n": 2}})
+            assert resp2.status_code == 202
+            resp3 = app_client.post("/api/v1/events/", json={"topic": "queue.e2e", "data": {"n": 3}})
+            assert resp3.status_code == 202
+
+            # 3. New publication must be rejected with 503
+            resp4 = app_client.post("/api/v1/events/", json={"topic": "queue.e2e", "data": {"n": 4}})
+            assert resp4.status_code == 503
+            body4 = resp4.json()
+            assert body4["code"] == "unavailable"
+            assert "Publisher queue is full" in body4["message"]
+            assert "request_id" in body4
+
+            # Stats must reflect the rejected publication
+            stats_mid = app_client.get(stats_url).json()
+            assert stats_mid["rejected_publications"] == rejected_before + 1
+
+            # 4. Unblock the publisher thread to drain the queue
+            unblock_event.set()
+            assert wait_until(lambda: service.broker.queue_depth == 0, timeout=3)
+
+            # 5. Recovery: subsequent publish succeeds with 202
+            resp5 = app_client.post("/api/v1/events/", json={"topic": "queue.e2e", "data": {"n": 5}})
+            assert resp5.status_code == 202
+            assert resp5.json()["status"] == "accepted"
+
+            # Rejected counter should not have changed for the successful publish
+            stats_after = app_client.get(stats_url).json()
+            assert stats_after["rejected_publications"] == rejected_before + 1
+        finally:
+            unblock_event.set()
 
     def test_publish_triggers_rule_and_action_execution(self, app_client):
         resp = app_client.post(

@@ -16,6 +16,7 @@ from opal_event.models import Event, EventInput, ListEvents, PublishReceipt, Top
 from opal_event.opal_context import get_opal_context
 from opal_event.pagination import decode_scoped_cursor, encode_scoped_cursor
 from opal_event.service import EventService
+from opal_event.zeromq_broker import PublisherQueueFullError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -61,7 +62,10 @@ def publish_event(
         if enriched_size <= config.settings.zeromq.max_event_bytes:
             envelope = enriched_envelope
 
-    service.publish(envelope)
+    try:
+        service.publish(envelope)
+    except PublisherQueueFullError as exc:
+        raise ServiceUnavailableError("Publisher queue is full") from exc
     return PublishReceipt(id=envelope["id"], status="accepted", published_at=envelope["timestamp"])
 
 

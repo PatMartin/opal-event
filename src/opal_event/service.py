@@ -33,7 +33,11 @@ class EventService:
             queue_size=config.settings.execution.queue_size,
             max_workers=config.settings.execution.max_workers,
         )
-        self.broker = Broker(config.settings.zeromq, on_event=self._handle_observed_event)
+        self.broker = Broker(
+            config.settings.zeromq,
+            on_event=self._handle_observed_event,
+            on_reject=lambda: self.metrics.incr("rejected_publications"),
+        )
         self._retention_stop = threading.Event()
         self._retention_thread: threading.Thread | None = None
         config.set_reload_callback(self._on_config_reload)
@@ -105,6 +109,8 @@ class EventService:
             self.executor.resize(new.execution.queue_size, new.execution.max_workers)
         if old.zeromq.max_event_bytes != new.zeromq.max_event_bytes:
             self.broker.update_max_event_bytes(new.zeromq.max_event_bytes)
+        if old.zeromq.publisher_queue_size != new.zeromq.publisher_queue_size:
+            self.broker.update_publisher_queue_size(new.zeromq.publisher_queue_size)
 
     # -- retention cleanup ---------------------------------------------------------------------------
 

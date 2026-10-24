@@ -117,6 +117,7 @@ export interface Stats {
   executions_dropped: number;
   queue_depth: number;
   active_workers: number;
+  rejected_publications: number;
 }
 
 export interface ExecutionSettings {

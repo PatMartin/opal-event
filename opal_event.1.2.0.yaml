@@ -112,7 +112,7 @@ paths:
       operationId: post_api_v1_events
       summary: Publish event
       description: Normalizes missing metadata, checks 1 MiB serialized wire payload, enqueues publication.
-        Does not guarantee observer storage or action execution.
+        Does not guarantee observer storage or action execution. Returns 503 if the publisher queue is full.
       responses:
         '202':
           description: Accepted, not guaranteed delivered/executed
@@ -2187,6 +2187,10 @@ components:
         active_workers:
           type: integer
           minimum: 0
+        rejected_publications:
+          type: integer
+          description: Publications rejected because the publisher queue was full.
+          minimum: 0
       additionalProperties: false
       required:
       - observed_events
@@ -2197,6 +2201,7 @@ components:
       - executions_dropped
       - queue_depth
       - active_workers
+      - rejected_publications
     ServerSettings:
       type: object
       additionalProperties: false
@@ -2247,6 +2252,12 @@ components:
           const: 1048576
         curve:
           $ref: '#/components/schemas/CurveSettings'
+        publisher_queue_size:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          default: 1000
+          description: Maximum number of events buffered in memory for ZeroMQ publication.
       required:
       - publishers
       - subscribers
@@ -2795,7 +2806,7 @@ components:
             code: error
             message: Unexpected service error
     Error503:
-      description: Broker, persistence, or execution subsystem unavailable
+      description: Broker, persistence, or execution subsystem unavailable, or publisher queue is full
       content:
         application/json:
           schema:

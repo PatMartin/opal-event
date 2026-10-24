@@ -72,7 +72,8 @@ class Executor:
     def __init__(self, db: Database, metrics: Metrics, queue_size: int, max_workers: int):
         self.db = db
         self.metrics = metrics
-        self._queue: queue.Queue[Job] = queue.Queue(maxsize=queue_size)
+        self._queue_size = queue_size
+        self._queue: queue.Queue[Job] = queue.Queue()
         self._workers: list[threading.Thread] = []
         self._max_workers = max_workers
         self._stop = threading.Event()
@@ -90,18 +91,10 @@ class Executor:
             t.join(timeout=5)
 
     def resize(self, queue_size: int, max_workers: int) -> None:
-        """Applies live ``execution.queue_size``/``execution.max_workers`` changes. The queue itself
-        cannot be resized in place, so in-flight items are preserved and a fresh bounded queue of
-        the new size takes over for subsequent submissions."""
+        """Applies live ``execution.queue_size``/``execution.max_workers`` changes. Synchronized
+        admission control governs queue capacity on the stable worker queue."""
         with self._lock:
-            old_queue = self._queue
-            new_queue = queue.Queue(maxsize=queue_size)
-            while True:
-                try:
-                    new_queue.put_nowait(old_queue.get_nowait())
-                except queue.Empty:
-                    break
-            self._queue = new_queue
+            self._queue_size = queue_size
             if max_workers != self._max_workers:
                 self.stop()
                 self._stop = threading.Event()
@@ -112,6 +105,11 @@ class Executor:
     @property
     def queue_depth(self) -> int:
         return self._queue.qsize()
+
+    @property
+    def queue_size(self) -> int:
+        with self._lock:
+            return self._queue_size
 
     def submit(
         self,
@@ -150,9 +148,14 @@ class Executor:
             execution_settings=execution_settings,
             security_settings=security_settings,
         )
-        try:
-            self._queue.put_nowait(job)
-        except queue.Full:
+        with self._lock:
+            if self._queue.qsize() >= self._queue_size:
+                admitted = False
+            else:
+                self._queue.put_nowait(job)
+                admitted = True
+
+        if not admitted:
             self.db.update_execution(
                 execution_id,
                 status="dropped",

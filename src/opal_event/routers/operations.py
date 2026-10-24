@@ -48,6 +48,7 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
         executions_dropped=snapshot["executions_dropped"],
         queue_depth=service.executor.queue_depth,
         active_workers=snapshot["active_workers"],
+        rejected_publications=snapshot.get("rejected_publications", 0),
     )
 
 

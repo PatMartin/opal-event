@@ -34,6 +34,17 @@ class TestContractCoverage:
         assert stats_schema["properties"]["invalid_events"]["type"] == "integer"
         assert "invalid_events" in stats_schema["required"]
 
+    def test_stats_contract_includes_rejected_publications_counter(self):
+        spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+        stats_schema = spec["components"]["schemas"]["Stats"]
+        assert stats_schema["properties"]["rejected_publications"]["type"] == "integer"
+        assert "rejected_publications" in stats_schema["required"]
+
+    def test_zeromq_settings_contract_includes_publisher_queue_size(self):
+        spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+        zmq_schema = spec["components"]["schemas"]["ZeroMqSettings"]
+        assert zmq_schema["properties"]["publisher_queue_size"]["type"] == "integer"
+
     def test_cli_exposes_every_contract_operation(self):
         operations = load_contract_operations()
         missing = set(operations) - set(CLI_OPERATIONS)

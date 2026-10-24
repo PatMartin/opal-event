@@ -204,4 +204,280 @@ class TestExecutor:
         finally:
             executor.stop()
 
+    def test_decrease_queue_size_while_jobs_pending_preserves_accepted_and_rejects_excess(self, tmp_path, monkeypatch):
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        # Single worker, initial queue_size = 4
+        executor = Executor(db, metrics, queue_size=4, max_workers=1)
+
+        import threading
+
+        worker_busy = threading.Event()
+        unblock_worker = threading.Event()
+
+        import opal_event.executor as executor_module
+
+        original_run_action = executor_module.run_action
+
+        def mock_run_action(action, event, exec_settings, sec_settings):
+            if action.id == "blocking_action":
+                worker_busy.set()
+                unblock_worker.wait(timeout=5)
+            return original_run_action(action, event, exec_settings, sec_settings)
+
+        monkeypatch.setattr(executor_module, "run_action", mock_run_action)
+
+        executor.start()
+        try:
+            blocking_action = ShellAction(id="blocking_action", type="shell", mode="exec", executable="/bin/true")
+            normal_action = ShellAction(id="normal_action", type="shell", mode="exec", executable="/bin/true")
+            exec_settings = ExecutionSettings()
+            sec_settings = SecuritySettings()
+
+            # Submit job 0: single worker picks it up and blocks in run_action
+            r0 = executor.submit(
+                blocking_action,
+                {"topic": "t", "data": {"n": 0}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert worker_busy.wait(timeout=2)
+
+            # Submit 3 normal jobs into queue (queue capacity 4, current depth 3)
+            r1 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 1}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r2 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 2}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r3 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 3}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+
+            assert r1.status == "queued"
+            assert r2.status == "queued"
+            assert r3.status == "queued"
+            assert executor.queue_depth == 3
+
+            # Stable queue verification: capture the underlying queue object
+            stable_queue = executor._queue
+
+            # Decrease queue_size to 2 while 3 jobs are pending (> 2)
+            executor.resize(queue_size=2, max_workers=1)
+
+            # Queue object must be identical (stable worker queue)
+            assert executor._queue is stable_queue
+            assert executor.queue_size == 2
+
+            # Accepted jobs must remain in queue untouched
+            assert executor.queue_depth == 3
+            assert db.get_execution(r1.id)["status"] == "queued"
+            assert db.get_execution(r2.id)["status"] == "queued"
+            assert db.get_execution(r3.id)["status"] == "queued"
+
+            # New submission must be rejected (3 >= 2) with drop-newest and execution record
+            r4 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 4}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert r4.status == "dropped"
+            assert r4.error_code == "queue_full"
+            assert db.get_execution(r4.id)["status"] == "dropped"
+            assert metrics.get("executions_dropped") == 1
+
+            # Still, jobs 1, 2, 3 remain intact in queue
+            assert executor.queue_depth == 3
+
+            # Unblock the worker so it drains the pending jobs
+            unblock_worker.set()
+
+            # Wait until jobs 0, 1, 2 finish and queue depth drops below new capacity (2)
+            assert wait_until(lambda: executor.queue_depth <= 1, timeout=3)
+
+            # Now submit a new job: queue_depth < 2, so it must be admitted!
+            r5 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 5}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert r5.status == "queued"
+
+            # All admitted jobs (r0, r1, r2, r3, r5) must succeed
+            for r in (r0, r1, r2, r3, r5):
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+
+            assert metrics.get("executions_succeeded") == 5
+            assert metrics.get("executions_dropped") == 1
+        finally:
+            unblock_worker.set()
+            executor.stop()
+
+    def test_increase_queue_size_while_jobs_pending_allows_more_admissions(self, tmp_path, monkeypatch):
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        # Single worker, initial queue_size = 2
+        executor = Executor(db, metrics, queue_size=2, max_workers=1)
+
+        import threading
+
+        worker_busy = threading.Event()
+        unblock_worker = threading.Event()
+
+        import opal_event.executor as executor_module
+
+        original_run_action = executor_module.run_action
+
+        def mock_run_action(action, event, exec_settings, sec_settings):
+            if action.id == "blocking_action":
+                worker_busy.set()
+                unblock_worker.wait(timeout=5)
+            return original_run_action(action, event, exec_settings, sec_settings)
+
+        monkeypatch.setattr(executor_module, "run_action", mock_run_action)
+
+        executor.start()
+        try:
+            blocking_action = ShellAction(id="blocking_action", type="shell", mode="exec", executable="/bin/true")
+            normal_action = ShellAction(id="normal_action", type="shell", mode="exec", executable="/bin/true")
+            exec_settings = ExecutionSettings()
+            sec_settings = SecuritySettings()
+
+            # Submit job 0: single worker picks it up and blocks
+            r0 = executor.submit(
+                blocking_action,
+                {"topic": "t", "data": {"n": 0}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert worker_busy.wait(timeout=2)
+
+            # Fill the queue (2 slots)
+            r1 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 1}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r2 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 2}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert r1.status == "queued"
+            assert r2.status == "queued"
+            assert executor.queue_depth == 2
+
+            # Queue is full under limit 2: excess submission rejected
+            r3 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 3}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert r3.status == "dropped"
+            assert r3.error_code == "queue_full"
+            assert metrics.get("executions_dropped") == 1
+
+            stable_queue = executor._queue
+
+            # Increase queue_size to 4 while jobs 1 and 2 are pending
+            executor.resize(queue_size=4, max_workers=1)
+
+            # Queue object must be stable
+            assert executor._queue is stable_queue
+            assert executor.queue_size == 4
+            # Pending jobs preserved
+            assert executor.queue_depth == 2
+
+            # Now additional submissions can be admitted into the expanded queue
+            r4 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 4}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            r5 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 5}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert r4.status == "queued"
+            assert r5.status == "queued"
+            assert executor.queue_depth == 4
+
+            # Further submission beyond 4 is rejected
+            r6 = executor.submit(
+                normal_action,
+                {"topic": "t", "data": {"n": 6}},
+                event_id=None,
+                rule_id=None,
+                trigger="manual",
+                execution_settings=exec_settings,
+                security_settings=sec_settings,
+            )
+            assert r6.status == "dropped"
+            assert r6.error_code == "queue_full"
+            assert metrics.get("executions_dropped") == 2
+
+            # Unblock worker and verify all accepted jobs finish
+            unblock_worker.set()
+            for r in (r0, r1, r2, r4, r5):
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+
+            assert metrics.get("executions_succeeded") == 5
+            assert metrics.get("executions_dropped") == 2
+        finally:
+            unblock_worker.set()
+            executor.stop()
+
 

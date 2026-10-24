@@ -305,6 +305,7 @@ class Stats(Strict):
     executions_dropped: Annotated[int, Field(ge=0)]
     queue_depth: Annotated[int, Field(ge=0)]
     active_workers: Annotated[int, Field(ge=0)]
+    rejected_publications: Annotated[int, Field(ge=0)] = 0
 
 
 class HTTPValidationErrorItem(Strict):
@@ -342,6 +343,7 @@ class ZeroMqSettings(Strict):
     # that PATCH operation non-functional, so we treat 1048576 as the enforced ceiling, not a fixed value.
     max_event_bytes: Annotated[int, Field(ge=1, le=MAX_EVENT_BYTES)] = MAX_EVENT_BYTES
     curve: CurveSettings = Field(default_factory=CurveSettings)
+    publisher_queue_size: Annotated[int, Field(ge=1, le=100000)] = 1000
 
 
 class RestAuthSettings(Strict):

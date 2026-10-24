@@ -1,0 +1,16 @@
+{
+  "id": "turn_on_kitchen_light",
+  "enabled": true,
+  "topic": "b0962887-ceac-4bd8-aa35-ae8f59636f3d",
+  "conditions": [
+    {
+      "path": "data.object",
+      "operator": "eq",
+      "value": "person"
+    }
+  ],
+  "actions": [
+    "turn_on_kitchen_light",
+    "send_notification"
+  ]
+}

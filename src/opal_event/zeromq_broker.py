@@ -65,6 +65,11 @@ class InvalidEventError(Exception):
     pass
 
 
+class PublisherQueueFullError(Exception):
+    """Raised when the broker's publisher queue is at capacity."""
+
+
+
 def parse_and_normalize(topic_bytes: bytes, payload_bytes: bytes, max_event_bytes: int) -> dict[str, Any]:
     """Validates a raw two-frame ZeroMQ message and normalizes it for internal storage.
 
@@ -98,9 +103,16 @@ def parse_and_normalize(topic_bytes: bytes, payload_bytes: bytes, max_event_byte
 class Broker:
     """Owns the ZeroMQ context, proxy, internal observer, and REST publisher connector."""
 
-    def __init__(self, settings: ZeroMqSettings, on_event: Callable[[dict[str, Any]], None]):
+    def __init__(
+        self,
+        settings: ZeroMqSettings,
+        on_event: Callable[[dict[str, Any]], None],
+        queue_size: int | None = None,
+        on_reject: Callable[[], None] | None = None,
+    ):
         self._settings = settings
         self._on_event = on_event
+        self._on_reject = on_reject
         self._ctx: zmq.Context | None = None
         self._xsub: zmq.Socket | None = None
         self._xpub: zmq.Socket | None = None
@@ -110,20 +122,44 @@ class Broker:
         self._proxy_thread: threading.Thread | None = None
         self._observer_thread: threading.Thread | None = None
         self._publisher_thread: threading.Thread | None = None
-        self._pub_queue: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue()
+        self._queue_size = (
+            queue_size if queue_size is not None else getattr(settings, "publisher_queue_size", 1000)
+        )
+        self._pub_queue: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue(maxsize=self._queue_size)
         self._stop = threading.Event()
         self._started = False
         self._lock = threading.Lock()
         self._max_event_bytes = settings.max_event_bytes
+        self._rejected_publications = 0
 
     def update_max_event_bytes(self, max_event_bytes: int) -> None:
         with self._lock:
             self._max_event_bytes = max_event_bytes
 
+    def update_publisher_queue_size(self, queue_size: int) -> None:
+        with self._lock:
+            self._queue_size = queue_size
+            with self._pub_queue.mutex:
+                self._pub_queue.maxsize = queue_size
+
     @property
     def max_event_bytes(self) -> int:
         with self._lock:
             return self._max_event_bytes
+
+    @property
+    def queue_size(self) -> int:
+        with self._lock:
+            return self._queue_size
+
+    @property
+    def queue_depth(self) -> int:
+        return self._pub_queue.qsize()
+
+    @property
+    def rejected_publications(self) -> int:
+        with self._lock:
+            return self._rejected_publications
 
     @property
     def running(self) -> bool:
@@ -266,11 +302,22 @@ class Broker:
     def publish(self, topic: str, envelope: dict[str, Any]) -> None:
         if not self._started or self._stop.is_set():
             raise RuntimeError("broker is not started")
-        self._pub_queue.put((topic, envelope))
+        try:
+            self._pub_queue.put_nowait((topic, envelope))
+        except queue.Full as exc:
+            with self._lock:
+                self._rejected_publications += 1
+            if self._on_reject is not None:
+                try:
+                    self._on_reject()
+                except Exception:
+                    logger.exception("on_reject callback raised")
+            raise PublisherQueueFullError("publisher queue is full") from exc
 
     def stop(self) -> None:
         self._stop.set()
-        self._pub_queue.put(None)
+        with contextlib.suppress(queue.Full):
+            self._pub_queue.put(None, timeout=0.2)
         if self._publisher_thread is not None:
             self._publisher_thread.join(timeout=2)
         for sock in (self._xsub, self._xpub, self._observer_sub):

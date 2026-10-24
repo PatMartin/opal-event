@@ -6,7 +6,7 @@ import pytest
 import zmq
 
 from opal_event.models import CurveSettings, ZeroMqSettings
-from opal_event.zeromq_broker import Broker, parse_and_normalize
+from opal_event.zeromq_broker import Broker, PublisherQueueFullError, parse_and_normalize
 from tests.conftest import free_port
 
 
@@ -168,6 +168,77 @@ class TestBrokerPubSub:
                 sources = {ev.get("source") for ev in received}
                 assert sources == {f"worker-{i}" for i in range(10)}
         finally:
+            broker.stop()
+
+    def test_publisher_queue_full_rejection_and_recovery(self, monkeypatch):
+        settings = ZeroMqSettings(
+            publishers=f"tcp://127.0.0.1:{free_port()}",
+            subscribers=f"tcp://127.0.0.1:{free_port()}",
+            publisher_queue_size=2,
+        )
+        received = []
+        rejected_callbacks = []
+        broker = Broker(
+            settings,
+            on_event=received.append,
+            on_reject=lambda: rejected_callbacks.append(True),
+        )
+
+        unblock_event = threading.Event()
+        send_started = threading.Event()
+        original_send = zmq.Socket.send_multipart
+
+        def blocked_send(sock_self, frames, *args, **kwargs):
+            send_started.set()
+            unblock_event.wait(timeout=5)
+            return original_send(sock_self, frames, *args, **kwargs)
+
+        monkeypatch.setattr(zmq.Socket, "send_multipart", blocked_send)
+
+        try:
+            broker.start()
+            assert broker.running
+            assert broker.queue_size == 2
+            assert broker.rejected_publications == 0
+
+            # 1. Publish first event; publisher thread consumes it from queue and blocks in send_multipart
+            broker.publish("queue.test", {"topic": "queue.test", "data": {"num": 1}})
+            assert send_started.wait(timeout=2)
+
+            # 2. Fill the remaining queue capacity (2 slots)
+            broker.publish("queue.test", {"topic": "queue.test", "data": {"num": 2}})
+            broker.publish("queue.test", {"topic": "queue.test", "data": {"num": 3}})
+            assert broker.queue_depth == 2
+
+            # 3. New publication must be rejected and raise PublisherQueueFullError
+            with pytest.raises(PublisherQueueFullError):
+                broker.publish("queue.test", {"topic": "queue.test", "data": {"num": 4}})
+
+            assert broker.rejected_publications == 1
+            assert len(rejected_callbacks) == 1
+
+            # Another attempt while full is also rejected without discarding queued items
+            with pytest.raises(PublisherQueueFullError):
+                broker.publish("queue.test", {"topic": "queue.test", "data": {"num": 5}})
+
+            assert broker.rejected_publications == 2
+            assert len(rejected_callbacks) == 2
+            assert broker.queue_depth == 2
+
+            # 4. Unblock the publisher thread; all 3 accepted events should be sent and observed
+            unblock_event.set()
+            assert wait_until(lambda: len(received) == 3, timeout=3)
+            received_nums = [e["data"]["num"] for e in received]
+            assert received_nums == [1, 2, 3]
+
+            # 5. Recovery: once queue is drained, new publications are accepted again
+            assert wait_until(lambda: broker.queue_depth == 0, timeout=2)
+            broker.publish("queue.test", {"topic": "queue.test", "data": {"num": 6}})
+            assert wait_until(lambda: len(received) == 4, timeout=2)
+            assert received[-1]["data"]["num"] == 6
+            assert broker.rejected_publications == 2
+        finally:
+            unblock_event.set()
             broker.stop()
 
 

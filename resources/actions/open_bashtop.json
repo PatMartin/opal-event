@@ -1,0 +1,10 @@
+{
+  "id": "open_bashtop",
+  "type": "shell",
+  "enabled": true,
+  "mode": "exec",
+  "executable": "/usr/bin/bashtop",
+  "args": [],
+  "stdin": "none",
+  "timeout_seconds": null
+}

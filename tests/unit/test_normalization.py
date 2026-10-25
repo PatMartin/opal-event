@@ -138,4 +138,3 @@ class TestNormalizeEvent:
         assert "session_id" not in normalized
         assert "transaction_id" not in normalized
         assert "causation_id" not in normalized
-

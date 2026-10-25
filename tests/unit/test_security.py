@@ -184,5 +184,3 @@ class TestRunHttpActionStreaming:
         assert response_closed is True
         # Ensure we stopped streaming chunks early instead of reading all 100 chunks
         assert chunks_yielded == 1
-
-

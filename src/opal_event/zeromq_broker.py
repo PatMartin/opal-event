@@ -64,7 +64,6 @@ class PublisherQueueFullError(Exception):
     """Raised when the broker's publisher queue is at capacity."""
 
 
-
 def parse_and_normalize(topic_bytes: bytes, payload_bytes: bytes, max_event_bytes: int) -> dict[str, Any]:
     """Validates a raw two-frame ZeroMQ message and normalizes it for internal storage.
 
@@ -111,9 +110,7 @@ class Broker:
         self._proxy_thread: threading.Thread | None = None
         self._observer_thread: threading.Thread | None = None
         self._publisher_thread: threading.Thread | None = None
-        self._queue_size = (
-            queue_size if queue_size is not None else getattr(settings, "publisher_queue_size", 1000)
-        )
+        self._queue_size = queue_size if queue_size is not None else getattr(settings, "publisher_queue_size", 1000)
         self._pub_queue: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue(maxsize=self._queue_size)
         self._stop = threading.Event()
         self._started = False

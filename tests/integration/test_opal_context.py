@@ -124,4 +124,3 @@ class TestOpalContextHeaders:
         assert ev["session_id"] == "sess-only-123"
         assert "transaction_id" in ev and ev["transaction_id"]
         assert "causation_id" not in ev
-

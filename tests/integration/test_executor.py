@@ -673,5 +673,3 @@ class TestExecutor:
         finally:
             unblock_jobs.set()
             executor.stop()
-
-

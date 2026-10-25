@@ -1,0 +1,15 @@
+{
+  "id": "open_bashtop",
+  "enabled": true,
+  "topic": "opal.listen.intent.match",
+  "conditions": [
+    {
+      "path": "data.intent",
+      "operator": "eq",
+      "value": "open_bashtop"
+    }
+  ],
+  "actions": [
+    "open_bashtop"
+  ]
+}

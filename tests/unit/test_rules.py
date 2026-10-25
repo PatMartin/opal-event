@@ -32,12 +32,8 @@ class TestEvaluateCondition:
 
     def test_eq_and_ne_distinguish_nested_booleans_from_numbers(self):
         actual = {"data": {"value": [True, {"enabled": False}]}}
-        assert not evaluate_condition(
-            Condition(path="data.value", operator="eq", value=[1, {"enabled": False}]), actual
-        )
-        assert evaluate_condition(
-            Condition(path="data.value", operator="ne", value=[1, {"enabled": False}]), actual
-        )
+        assert not evaluate_condition(Condition(path="data.value", operator="eq", value=[1, {"enabled": False}]), actual)
+        assert evaluate_condition(Condition(path="data.value", operator="ne", value=[1, {"enabled": False}]), actual)
 
     def test_missing_path_is_false_except_exists_false(self):
         c = Condition(path="data.missing", operator="eq", value=1)

@@ -14,3 +14,4 @@ dist/
 config/opal_event.yaml
 .DS_Store
 .vscode/
+uv.lock

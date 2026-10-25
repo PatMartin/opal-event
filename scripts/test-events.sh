@@ -16,8 +16,8 @@
 #      - Subcommand help: rules, actions, executions, settings, backup
 #   2. Service Health, Readiness & Diagnostics
 #      - opal-event health
-#      - opal-event health-live (unauthenticated liveness probe)
-#      - opal-event health-ready (unauthenticated readiness probe)
+#      - opal-event health --live (unauthenticated liveness probe)
+#      - opal-event health --ready (unauthenticated readiness probe)
 #      - opal-event stats & opal-event --json stats
 #   3. Portable Service Settings
 #      - opal-event settings get & opal-event --json settings get
@@ -307,7 +307,7 @@ SERVER_PID=$!
 
 READY=0
 for _ in {1..40}; do
-    if opal-event health-ready >/dev/null 2>&1; then
+    if opal-event health --ready >/dev/null 2>&1; then
         READY=1
         break
     fi
@@ -336,8 +336,8 @@ assert_contains "Export, validate, and import portable configuration" "Backup su
 echo ""
 echo "--- 2. Service Health, Readiness & Diagnostics ---"
 assert_contains "status" "Health summary check" opal-event health
-assert_contains "ok" "Liveness probe (health-live)" opal-event health-live
-assert_contains "ok" "Readiness probe (health-ready)" opal-event health-ready
+assert_contains "ok" "Liveness probe (health --live)" opal-event health --live
+assert_contains "ok" "Readiness probe (health --ready)" opal-event health --ready
 assert_contains "observed_events" "Stats summary" opal-event stats
 assert_json "Stats formatted as JSON" opal-event --json stats
 

@@ -221,21 +221,16 @@ def topics(ctx: typer.Context) -> None:
 
 
 @event_app.command("health")
-def health(ctx: typer.Context) -> None:
-    """Get readiness and health."""
-    _emit(ctx, _call(ctx, "get_api_v1_health").json())
-
-
-@event_app.command("health-live")
-def health_live(ctx: typer.Context) -> None:
-    """Check liveness (no auth required)."""
-    _emit(ctx, _call(ctx, "get_api_v1_health_live").json())
-
-
-@event_app.command("health-ready")
-def health_ready(ctx: typer.Context) -> None:
-    """Check readiness (no auth required)."""
-    _emit(ctx, _call(ctx, "get_api_v1_health_ready").json())
+def health(
+    ctx: typer.Context,
+    live: bool = typer.Option(False, "--live", help="Liveness probe only (GET /api/v1/health/live; no auth required)"),
+    ready: bool = typer.Option(False, "--ready", help="Readiness probe only (GET /api/v1/health/ready; no auth required)"),
+) -> None:
+    """Get service health, or run the liveness (--live) or readiness (--ready) probe."""
+    if live and ready:
+        raise typer.BadParameter("--live and --ready are mutually exclusive")
+    op = "get_api_v1_health_live" if live else "get_api_v1_health_ready" if ready else "get_api_v1_health"
+    _emit(ctx, _call(ctx, op).json())
 
 
 @event_app.command("stats")

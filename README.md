@@ -298,7 +298,8 @@ opal event publish <topic> --data-json '<json>' [--id] [--source] [--timestamp]
 opal event list [--cursor] [--limit] [--topic] [--source] [--from] [--to]
 opal event get <event_id>
 opal event topics
-opal event health | stats | health-live | health-ready
+opal event health [--live | --ready]
+opal event stats
 
 opal event rules list                         # full catalog; no cursor/limit (v1.2 bounded catalog)
 opal event rules create|get [--json|--file]

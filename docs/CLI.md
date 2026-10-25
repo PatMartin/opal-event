@@ -162,8 +162,8 @@ opal event --api-url http://127.0.0.1:8080 health
 Use the health probes to verify connectivity:
 
 ```bash
-opal event health-live            # verifies process and database reachability
-opal event health-ready           # verifies broker and configuration readiness
+opal event health --live          # verifies the process is answering
+opal event health --ready         # verifies broker and database readiness (exit 1 if not ready)
 opal event health                 # summary status (status: ok | degraded)
 ```
 
@@ -315,9 +315,7 @@ opal
     ├── delete <event_id>                       Delete stored event by ID
     ├── clear                                   Clear all stored events from all topics
     ├── topics                                  List observed topics
-    ├── health                                  Readiness and health summary
-    ├── health-live                             Liveness probe (no auth)
-    ├── health-ready                            Readiness probe (no auth)
+    ├── health [--live | --ready]               Health summary, or liveness/readiness probe (no auth)
     ├── stats                                   Runtime metrics and counters
     │
     ├── rules
@@ -1243,13 +1241,32 @@ Output:
 - `database_ready`: Indicates SQLite WAL connection is functional.
 - `pending_restart`: `true` if changes were made to restart-only YAML settings on disk.
 
-### `health-live` (Liveness Probe)
+#### `health --live` (Liveness Probe)
 
-Fast liveness check intended for Kubernetes or systemd (`GET /api/v1/health/live`). Requires no
-authentication.
+Fast liveness check intended for Kubernetes or systemd (`GET /api/v1/health/live`). It only confirms
+the process is answering HTTP requests. Requires no authentication.
 
 ```bash
-opal event health-live
+opal event health --live
+```
+
+Output:
+```json
+{
+  "status": "ok",
+  "details": null
+}
+```
+
+#### `health --ready` (Readiness Probe)
+
+Readiness probe intended for load balancers (`GET /api/v1/health/ready`). Checks that the ZeroMQ
+broker is running and the database is reachable. Requires no authentication. When either check
+fails the server returns `503` and the command exits with status `1`, so it can be used directly in
+scripts (e.g. `until opal event health --ready; do sleep 1; done`).
+
+```bash
+opal event health --ready
 ```
 
 Output:
@@ -1257,31 +1274,13 @@ Output:
 {
   "status": "ok",
   "details": {
-    "process": "alive",
-    "database": "reachable"
+    "broker": "ok",
+    "database": "ok"
   }
 }
 ```
 
-### `health-ready` (Readiness Probe)
-
-Readiness probe intended for load balancers (`GET /api/v1/health/ready`). Checks whether the broker
-is running and configurations are loaded. Requires no authentication.
-
-```bash
-opal event health-ready
-```
-
-Output:
-```json
-{
-  "status": "ok",
-  "details": {
-    "broker": "running",
-    "config": "valid"
-  }
-}
-```
+`--live` and `--ready` are mutually exclusive.
 
 ### `stats` (Runtime Metrics)
 
@@ -1446,7 +1445,7 @@ echo "Deploying to production..."
 opal event --api-url http://prod-event.local:8080 backup import --file config/backup.json
 
 echo "Checking health..."
-opal event --api-url http://prod-event.local:8080 health-ready
+opal event --api-url http://prod-event.local:8080 health --ready
 echo "Deployment successful!"
 ```
 
@@ -1515,5 +1514,5 @@ operations declared in `opal_event.1.2.0.yaml` are mapped below:
 | `opal event backup import` | `POST` | `/api/v1/backup/import` | Required (`If-Match`; auto-fetched) |
 | `opal event health` | `GET` | `/api/v1/health/` | None |
 | `opal event stats` | `GET` | `/api/v1/stats/` | None |
-| `opal event health-live` | `GET` | `/api/v1/health/live` | None (no auth required) |
-| `opal event health-ready` | `GET` | `/api/v1/health/ready` | None (no auth required) |
+| `opal event health --live` | `GET` | `/api/v1/health/live` | None (no auth required) |
+| `opal event health --ready` | `GET` | `/api/v1/health/ready` | None (no auth required) |

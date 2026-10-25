@@ -215,8 +215,8 @@ In a separate terminal, test the service using the CLI:
 opal event health
 
 # Verify liveness and readiness
-opal event health-live
-opal event health-ready
+opal event health --live
+opal event health --ready
 
 # Inspect metrics
 opal event stats
@@ -290,7 +290,7 @@ git pull
 pip install -e ".[dev]"
 opal event backup export --output backup_pre_upgrade.json
 sudo systemctl restart opal-event
-opal event health-ready
+opal event health --ready
 ```
 
 ---
@@ -1088,9 +1088,7 @@ opal
     ├── delete <event_id>                       Delete stored event by ID
     ├── clear                                   Clear all stored events from all topics
     ├── topics                                  List observed topics
-    ├── health                                  Readiness and health summary
-    ├── health-live                             Liveness probe (no auth)
-    ├── health-ready                            Readiness probe (no auth)
+    ├── health [--live | --ready]               Health summary, or liveness/readiness probe (no auth)
     ├── stats                                   Runtime metrics and counters
     │
     ├── rules
@@ -1157,8 +1155,8 @@ opal
 ```bash
 # Health & operational stats
 opal event health
-opal event health-live
-opal event health-ready
+opal event health --live
+opal event health --ready
 opal event stats
 
 # Publishing & viewing events
@@ -1491,5 +1489,5 @@ cd spa && npx tsc -b
 | `post_api_v1_backup_import`| `POST /api/v1/backup/import` | `opal event backup import` | Settings tab → Import modal | `If-Match` |
 | `get_api_v1_health` | `GET /api/v1/health/` | `opal event health` | Health tab → Summary | None |
 | `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event stats` | Health tab → Metrics counters | None |
-| `get_api_v1_health_live` | `GET /api/v1/health/live` | `opal event health-live` | Health tab → Liveness badge | None |
-| `get_api_v1_health_ready`| `GET /api/v1/health/ready` | `opal event health-ready` | Health tab → Readiness badge | None |
+| `get_api_v1_health_live` | `GET /api/v1/health/live` | `opal event health --live` | Health tab → Liveness badge | None |
+| `get_api_v1_health_ready`| `GET /api/v1/health/ready` | `opal event health --ready` | Health tab → Readiness badge | None |

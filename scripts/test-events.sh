@@ -88,15 +88,27 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Platform detection: Git Bash / MSYS2 / Cygwin report MINGW*/MSYS*/CYGWIN*.
+# The only differences that matter below are the venv layout (Scripts/ vs bin/),
+# the `python` binary name (python3 doesn't exist on Windows), paths handed to
+# native Windows .exe files, and the lack of /bin/echo.
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+case "${UNAME_S}" in
+    MINGW*|MSYS*|CYGWIN*) IS_WINDOWS_BASH=1 ;;
+    *)                    IS_WINDOWS_BASH=0 ;;
+esac
+
 if [ -z "${VIRTUAL_ENV:-}" ] || ! command -v opal-event >/dev/null 2>&1; then
-    if [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
+    if [ -f "${REPO_ROOT}/.venv/Scripts/activate" ]; then
+        # Windows venv layout
+        # shellcheck disable=SC1091
+        source "${REPO_ROOT}/.venv/Scripts/activate"
+    elif [ -f "${REPO_ROOT}/.venv/bin/activate" ]; then
+        # Unix venv layout
         # shellcheck disable=SC1091
         source "${REPO_ROOT}/.venv/bin/activate"
-    elif [ -f "/gh/opal/opal-event/.venv/bin/activate" ]; then
-        # shellcheck disable=SC1091
-        source "/gh/opal/opal-event/.venv/bin/activate"
     else
-        echo "Error: Python virtual environment not found (.venv/bin/activate)." >&2
+        echo "Error: Python virtual environment not found (.venv/{Scripts,bin}/activate)." >&2
         exit 1
     fi
 fi
@@ -104,6 +116,38 @@ fi
 if ! command -v opal-event >/dev/null 2>&1; then
     echo "Error: 'opal-event' CLI executable not found in PATH after virtualenv activation." >&2
     exit 1
+fi
+
+# `python` exists in every venv on both platforms; `python3` is Unix-only (on
+# Windows the name resolves to the Microsoft Store stub). `py` is the last resort.
+if command -v python >/dev/null 2>&1; then
+    PYTHON=python
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v py >/dev/null 2>&1; then
+    PYTHON="py -3"
+else
+    echo "Error: no Python interpreter found." >&2
+    exit 1
+fi
+
+# native_path converts a bash path for a native .exe argument. On Git Bash,
+# cygpath -m gives C:/... which Windows APIs, Python open() and YAML all accept
+# (unlike backslash paths, which break when embedded in Python/YAML strings).
+if command -v cygpath >/dev/null 2>&1; then
+    native_path() { cygpath -m "$1"; }
+else
+    native_path() { printf '%s' "$1"; }
+fi
+
+# /bin/echo does not exist on Windows; use `cmd /c echo` there so that actions
+# can still actually execute.
+if [ "${IS_WINDOWS_BASH}" -eq 1 ]; then
+    ECHO_EXEC="cmd"
+    ECHO_ARGS_JSON='"/c", "echo", '
+else
+    ECHO_EXEC="/bin/echo"
+    ECHO_ARGS_JSON=''
 fi
 
 # ------------------------------------------------------------------------------
@@ -191,7 +235,7 @@ assert_json() {
     output="$("$@" 2>&1)"
     local actual_code=$?
     set -e
-    if [ "${actual_code}" -eq 0 ] && echo "${output}" | python3 -m json.tool >/dev/null 2>&1; then
+    if [ "${actual_code}" -eq 0 ] && echo "${output}" | ${PYTHON} -m json.tool >/dev/null 2>&1; then
         echo "PASS"
         PASSED=$((PASSED + 1))
         return 0
@@ -208,6 +252,7 @@ assert_json() {
 # 3. Isolated Test Server Provisioning
 # ------------------------------------------------------------------------------
 TEST_TMPDIR="$(mktemp -d /tmp/opal_cli_test_XXXXXX)"
+TEST_TMPDIR_NATIVE="$(native_path "${TEST_TMPDIR}")"
 SERVER_PID=""
 
 cleanup() {
@@ -219,7 +264,8 @@ cleanup() {
         wait "${SERVER_PID}" 2>/dev/null || true
     fi
     if [ -d "${TEST_TMPDIR}" ]; then
-        rm -rf "${TEST_TMPDIR}"
+        # On Windows, SQLite/log files can stay locked briefly after kill; don't fail the trap on it
+        rm -rf "${TEST_TMPDIR}" 2>/dev/null || true
     fi
     exit "${exit_code}"
 }
@@ -230,7 +276,7 @@ echo "OPAL Event CLI Test Suite"
 echo "=============================================================================="
 
 # Generate an isolated YAML configuration bound to ephemeral localhost ports
-python3 -c "
+${PYTHON} -c "
 import socket, yaml, os
 
 def free_port():
@@ -238,10 +284,11 @@ def free_port():
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
-tmpdir = '${TEST_TMPDIR}'
+tmpdir = '${TEST_TMPDIR_NATIVE}'
 p_server = free_port()
 p_pub = free_port()
 p_sub = free_port()
+echo_exec, echo_args = ('cmd', ['/c', 'echo']) if os.name == 'nt' else ('/bin/echo', [])
 
 cfg = {
     'version': 1,
@@ -274,8 +321,8 @@ cfg = {
             'type': 'shell',
             'enabled': True,
             'mode': 'exec',
-            'executable': '/bin/echo',
-            'args': ['bootstrap: {{data.msg}}'],
+            'executable': echo_exec,
+            'args': echo_args + ['bootstrap: {{data.msg}}'],
             'stdin': 'none',
             'timeout_seconds': 5
         }
@@ -302,7 +349,7 @@ SERVER_PORT="$(cat "${TEST_TMPDIR}/server_port.txt")"
 export OPAL_EVENT_API_URL="http://127.0.0.1:${SERVER_PORT}"
 
 echo "Starting isolated test service on port ${SERVER_PORT}..."
-opal-event-svc --config "${TEST_TMPDIR}/config.yaml" --log-level error &
+opal-event-svc --config "$(native_path "${TEST_TMPDIR}/config.yaml")" --log-level error &
 SERVER_PID=$!
 
 READY=0
@@ -358,8 +405,8 @@ ACTION_PAYLOAD='{
   "type": "shell",
   "enabled": true,
   "mode": "exec",
-  "executable": "/bin/echo",
-  "args": ["{{data.msg}}"],
+  "executable": "'"${ECHO_EXEC}"'",
+  "args": ['"${ECHO_ARGS_JSON}"'"{{data.msg}}"],
   "stdin": "none",
   "timeout_seconds": 5
 }'
@@ -368,19 +415,19 @@ assert_contains "cli_shell_action" "Get action by ID" opal-event actions get cli
 
 # Create action using --file
 FILE_ACTION_PATH="${TEST_TMPDIR}/file_action.json"
-cat <<'EOF' > "${FILE_ACTION_PATH}"
+cat <<EOF > "${FILE_ACTION_PATH}"
 {
   "id": "cli_file_action",
   "type": "shell",
   "enabled": true,
   "mode": "exec",
-  "executable": "/bin/echo",
-  "args": ["hello file"],
+  "executable": "${ECHO_EXEC}",
+  "args": [${ECHO_ARGS_JSON}"hello file"],
   "stdin": "none",
   "timeout_seconds": 5
 }
 EOF
-assert_success "Create action with --file" opal-event actions create --file "${FILE_ACTION_PATH}"
+assert_success "Create action with --file" opal-event actions create --file "$(native_path "${FILE_ACTION_PATH}")"
 assert_contains "cli_file_action" "Get file-created action" opal-event actions get cli_file_action
 
 assert_success "Update action (disable)" opal-event actions update cli_shell_action --json '{"enabled": false}'
@@ -424,7 +471,7 @@ cat <<'EOF' > "${FILE_RULE_PATH}"
   "actions": ["cli_shell_action"]
 }
 EOF
-assert_success "Create rule with --file" opal-event rules create --file "${FILE_RULE_PATH}"
+assert_success "Create rule with --file" opal-event rules create --file "$(native_path "${FILE_RULE_PATH}")"
 assert_contains "cli_file_rule" "Get file-created rule" opal-event rules get cli_file_rule
 
 assert_contains '"matched": true' "Test rule with matching event" opal-event rules test cli_test_rule --event-json '{"topic": "cli.test.run", "data": {"trigger": "now"}}'
@@ -467,7 +514,7 @@ assert_success "List executions filtered by status" opal-event executions list -
 assert_success "List executions filtered by action ID" opal-event executions list --action-id cli_shell_action
 
 # Fetch execution ID from JSON list
-EXECUTION_ID="$(opal-event --json executions list | python3 -c "import sys, json; data = json.load(sys.stdin); print(data[0]['id'] if data else '')")"
+EXECUTION_ID="$(opal-event --json executions list | ${PYTHON} -c "import sys, json; data = json.load(sys.stdin); print(data[0]['id'] if data else '')")"
 if [ -n "${EXECUTION_ID}" ]; then
     assert_contains "${EXECUTION_ID}" "Get execution details by ID" opal-event executions get "${EXECUTION_ID}"
 else
@@ -477,7 +524,7 @@ fi
 echo ""
 echo "--- 9. Configuration Backup Lifecycle ---"
 BACKUP_FILE="${TEST_TMPDIR}/backup_export.json"
-assert_success "Export configuration to file" opal-event backup export --output "${BACKUP_FILE}"
+assert_success "Export configuration to file" opal-event backup export --output "$(native_path "${BACKUP_FILE}")"
 assert_json "Export configuration to stdout" opal-event backup export
 
 assert_contains '"valid": true' "Validate exported backup file" opal-event backup validate --file "${BACKUP_FILE}"
@@ -486,14 +533,14 @@ assert_exit_code 1 "Reject invalid backup via --json (validation error)" opal-ev
 
 # Wrap backup into BackupImportRequest
 IMPORT_FILE="${TEST_TMPDIR}/backup_import.json"
-python3 -c "
+${PYTHON} -c "
 import json
-with open('${BACKUP_FILE}') as f:
+with open('$(native_path "${BACKUP_FILE}")') as f:
     b = json.load(f)
-with open('${IMPORT_FILE}', 'w') as f:
+with open('$(native_path "${IMPORT_FILE}")', 'w') as f:
     json.dump({'backup': b}, f)
 "
-assert_success "Import configuration from file" opal-event backup import --file "${IMPORT_FILE}"
+assert_success "Import configuration from file" opal-event backup import --file "$(native_path "${IMPORT_FILE}")"
 
 echo ""
 echo "--- 10. Rule and Action Cleanup ---"

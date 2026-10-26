@@ -86,3 +86,64 @@ class TestEvaluateRule:
         rule = Rule(id="r1", enabled=False, topic="vision.*", conditions=[], actions=["a1"])
         matched, _ = evaluate_rule(rule, {"topic": "vision.anything", "data": {}})
         assert not matched
+
+
+class TestJsonMembership:
+    """Membership operators (in/not_in/list-contains) use JSON-aware equality: bools are not
+    numbers, int/float are numerically equivalent, null is a real member, structures compare
+    recursively."""
+
+    def _in(self, value, options):
+        return evaluate_condition(Condition(path="data.x", operator="in", value=options), {"data": {"x": value}})
+
+    def test_true_is_not_1(self):
+        assert not self._in(True, [1])
+        assert self._in(True, [True])
+
+    def test_false_is_not_0(self):
+        assert not self._in(False, [0])
+        assert self._in(False, [False])
+
+    def test_int_matches_float(self):
+        assert self._in(1, [1.0, 2.5])
+        assert self._in(1.0, [1])
+
+    def test_null_membership(self):
+        assert self._in(None, [None])
+        assert not self._in(None, [0, False])
+        assert not self._in(0, [None])
+
+    def test_ordinary_membership(self):
+        assert self._in("a", ["a", "b"])
+        assert not self._in("c", ["a", "b"])
+        assert not self._in("a", "not-a-list")  # non-list value rejects
+
+    def test_not_in(self):
+        cond = lambda v, opts: evaluate_condition(  # noqa: E731
+            Condition(path="data.x", operator="not_in", value=opts), {"data": {"x": v}}
+        )
+        assert cond(True, [1])  # True is NOT in [1] under JSON typing
+        assert not cond(1, [1.0, 2])
+        assert cond("z", ["a", "b"])
+
+    def test_contains_nested_structures(self):
+        ev = {"data": {"items": [{"a": 1}, [1, 2], "x"]}}
+        assert evaluate_condition(Condition(path="data.items", operator="contains", value={"a": 1}), ev)
+        assert evaluate_condition(Condition(path="data.items", operator="contains", value=[1, 2]), ev)
+        assert not evaluate_condition(Condition(path="data.items", operator="contains", value={"a": 1.5}), ev)
+        assert not evaluate_condition(Condition(path="data.items", operator="contains", value=[1, "2"]), ev)
+
+    def test_contains_keeps_bool_number_distinct(self):
+        ev = {"data": {"items": [1, 0]}}
+        assert not evaluate_condition(Condition(path="data.items", operator="contains", value=True), ev)
+        assert not evaluate_condition(Condition(path="data.items", operator="contains", value=False), ev)
+        ev2 = {"data": {"items": [True]}}
+        assert evaluate_condition(Condition(path="data.items", operator="contains", value=True), ev2)
+
+    def test_contains_string_unchanged(self):
+        assert evaluate_condition(Condition(path="data.s", operator="contains", value="ell"), {"data": {"s": "hello"}})
+        assert not evaluate_condition(Condition(path="data.s", operator="contains", value="bye"), {"data": {"s": "hello"}})
+
+    def test_membership_missing_path(self):
+        assert not evaluate_condition(Condition(path="data.missing", operator="in", value=[1]), {"data": {}})
+        assert not evaluate_condition(Condition(path="data.missing", operator="contains", value=1), {"data": {}})

@@ -84,14 +84,14 @@ def evaluate_condition(condition: Condition, event: dict[str, Any]) -> bool:
     if op in ("gt", "gte", "lt", "lte"):
         return _same_type_compare(op, value, condition.value)
     if op == "in":
-        return isinstance(condition.value, list) and value in condition.value
+        return isinstance(condition.value, list) and any(_json_equal(value, item) for item in condition.value)
     if op == "not_in":
-        return isinstance(condition.value, list) and value not in condition.value
+        return isinstance(condition.value, list) and not any(_json_equal(value, item) for item in condition.value)
     if op == "contains":
         if isinstance(value, str):
             return isinstance(condition.value, str) and condition.value in value
         if isinstance(value, list):
-            return condition.value in value
+            return any(_json_equal(item, condition.value) for item in value)
         return False
     raise ValueError(f"unknown operator: {op}")
 

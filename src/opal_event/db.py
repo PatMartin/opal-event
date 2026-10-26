@@ -263,6 +263,34 @@ class Database:
         next_cursor = _encode_cursor(page[-1]["seq"]) if has_more and page else None
         return [to_dict(row) for row in page], next_cursor
 
+    def reconcile_interrupted_executions(self) -> int:
+        """Closes out executions left ``queued``/``running`` by an abrupt shutdown.
+
+        ``queued`` -> ``dropped`` (the job never ran and its queue is gone) and
+        ``running`` -> ``failed`` (the job was in flight and will never report a result). Both get
+        ``error_code='service_restart'`` and a ``finished_at`` timestamp; every other column —
+        created_at, started_at, action_revision, trigger, linkage — is preserved untouched.
+        Idempotent: only non-terminal rows match, so a second call is a no-op. Never reruns or
+        retries the interrupted actions. Returns the number of rows reconciled.
+        """
+        now = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"  # same ISO-8601 Z format the executor writes
+        with self._lock, self._conn:
+            queued = self._conn.execute(
+                f"""UPDATE executions
+                    SET status='dropped', finished_at={now},
+                        error_code='service_restart',
+                        error_message='service restarted before the job started'
+                    WHERE status='queued'"""
+            ).rowcount
+            running = self._conn.execute(
+                f"""UPDATE executions
+                    SET status='failed', finished_at={now},
+                        error_code='service_restart',
+                        error_message='service restarted while the job was running'
+                    WHERE status='running'"""
+            ).rowcount
+            return queued + running
+
     # -- retention --------------------------------------------------------------------
 
     def cleanup_retention(self, retention_days: int) -> None:

@@ -43,6 +43,11 @@ class EventService:
         config.set_reload_callback(self._on_config_reload)
 
     def start(self) -> None:
+        # Reconcile executions interrupted by a previous abrupt shutdown before accepting any new
+        # work (queued -> dropped, running -> failed, both error_code=service_restart).
+        reconciled = self.db.reconcile_interrupted_executions()
+        if reconciled:
+            logger.info("reconciled %d interrupted execution(s) left by previous run", reconciled)
         self.executor.start()
         self.broker.start()
         self._retention_thread = threading.Thread(target=self._retention_loop, daemon=True, name="opal-event-retention")

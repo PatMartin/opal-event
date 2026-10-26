@@ -96,3 +96,58 @@ class TestDatabaseExecutions:
         db.cleanup_retention(retention_days=7)
         assert db.get_event("old") is None
         assert db.get_execution("old") is None
+
+
+class TestReconcileInterrupted:
+    def _row(self, eid, status, **kw):
+        row = {
+            "id": eid,
+            "action_id": "a1",
+            "status": status,
+            "trigger": "manual",
+            "created_at": "2026-01-01T00:00:00Z",
+            "action_revision": "rev123",
+        }
+        row.update(kw)
+        return row
+
+    def test_queued_becomes_dropped(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_execution(self._row("q1", "queued"))
+        assert db.reconcile_interrupted_executions() == 1
+        row = db.get_execution("q1")
+        assert row["status"] == "dropped"
+        assert row["error_code"] == "service_restart"
+        assert row["started_at"] is None and row["finished_at"] is not None
+        assert row["created_at"] == "2026-01-01T00:00:00Z" and row["action_revision"] == "rev123"
+
+    def test_running_becomes_failed(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_execution(self._row("r1", "running", started_at="2026-01-01T00:00:01Z"))
+        assert db.reconcile_interrupted_executions() == 1
+        row = db.get_execution("r1")
+        assert row["status"] == "failed"
+        assert row["error_code"] == "service_restart"
+        assert row["started_at"] == "2026-01-01T00:00:01Z" and row["finished_at"] is not None
+
+    def test_terminal_rows_untouched(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        for i, s in enumerate(("succeeded", "failed", "timed_out", "dropped")):
+            db.insert_execution(self._row(f"e{i}", s, finished_at="2026-01-02T00:00:00Z"))
+        assert db.reconcile_interrupted_executions() == 0
+        for i, s in enumerate(("succeeded", "failed", "timed_out", "dropped")):
+            row = db.get_execution(f"e{i}")
+            assert row["status"] == s and row["finished_at"] == "2026-01-02T00:00:00Z"
+
+    def test_idempotent_repeat(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_execution(self._row("q1", "queued"))
+        db.insert_execution(self._row("r1", "running"))
+        assert db.reconcile_interrupted_executions() == 2
+        assert db.reconcile_interrupted_executions() == 0
+        assert db.get_execution("q1")["status"] == "dropped"
+        assert db.get_execution("r1")["status"] == "failed"
+
+    def test_empty_history(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        assert db.reconcile_interrupted_executions() == 0

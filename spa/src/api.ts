@@ -142,6 +142,8 @@ export const api = {
 
   listExecutions: (query: Record<string, string | number | undefined>) =>
     request<import("./types").ListExecutions>("GET", withQuery("/api/v1/executions/", query)),
+  getExecution: (executionId: string) =>
+    request<import("./types").Execution>("GET", `/api/v1/executions/${encodeURIComponent(executionId)}`),
 
   getHealth: () => request<import("./types").Health>("GET", "/api/v1/health/"),
   getStats: () => request<import("./types").Stats>("GET", "/api/v1/stats/"),

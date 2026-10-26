@@ -189,6 +189,16 @@ class Executor:
         with self._lock:
             return len(self._workers)
 
+    @property
+    def healthy(self) -> bool:
+        """True when the pool can actually accept and run jobs: started, not stopping, and every
+        expected worker thread is alive. Cheap and side-effect-free — safe to poll on each
+        health/readiness request."""
+        with self._lock:
+            if not self._started or self._stop.is_set():
+                return False
+            return len(self._workers) == self._max_workers and all(w.is_alive() for w in self._workers)
+
     def submit(
         self,
         action: Action,

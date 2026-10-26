@@ -67,6 +67,7 @@ class ConfigStore:
         self._revision: str
         self._raw_at_load: dict
         self._pending_restart = False
+        self._reload_failed = False
         self._load_initial()
 
     # -- loading -------------------------------------------------------------------
@@ -96,6 +97,13 @@ class ConfigStore:
         with self._lock:
             return self._pending_restart
 
+    @property
+    def reload_failed(self) -> bool:
+        """True when the most recent attempted configuration reload (file edit or API write) was
+        rejected as invalid and the last-good configuration is still the one in effect."""
+        with self._lock:
+            return self._reload_failed
+
     def set_reload_callback(self, callback: Callable[[Settings, Settings], None] | None) -> None:
         """Registers (or replaces) the callback invoked with (old, new) settings after any reload,
         whether triggered by a REST write, a direct YAML edit, or a backup import."""
@@ -114,17 +122,20 @@ class ConfigStore:
                 text = self.path.read_text(encoding="utf-8")
                 new_revision = _revision_of(text)
                 if new_revision == self._revision:
+                    self._reload_failed = False  # file reverted to the active config
                     return False
                 raw = yaml.safe_load(text) or {}
                 new_settings = Settings.model_validate(raw)
             except Exception:
                 logger.exception("rejected invalid configuration reload from %s; keeping last-good config", self.path)
+                self._reload_failed = True
                 return False
             old_settings = self._settings
             self._detect_pending_restart(self._raw_at_load, raw)
             self._settings = new_settings
             self._raw_at_load = raw
             self._revision = new_revision
+            self._reload_failed = False
             if self._on_reload is not None:
                 self._on_reload(old_settings, new_settings)
             return True
@@ -162,13 +173,18 @@ class ConfigStore:
             if expected_revision is not None and expected_revision != self._revision:
                 raise ConcurrentUpdateError(self._revision)
             new_raw = mutate(dict(self._raw_at_load))
-            new_settings = Settings.model_validate(new_raw)
+            try:
+                new_settings = Settings.model_validate(new_raw)
+            except Exception:
+                self._reload_failed = True
+                raise
             self._detect_pending_restart(self._raw_at_load, new_settings.model_dump(mode="json"))
             new_revision = self._write_atomic(new_settings.model_dump(mode="json"))
             old_settings = self._settings
             self._settings = new_settings
             self._raw_at_load = new_settings.model_dump(mode="json")
             self._revision = new_revision
+            self._reload_failed = False
             if self._on_reload is not None:
                 self._on_reload(old_settings, new_settings)
             return new_settings

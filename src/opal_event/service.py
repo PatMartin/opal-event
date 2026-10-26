@@ -137,7 +137,7 @@ class EventService:
     # -- readiness -------------------------------------------------------------------------------
 
     def is_ready(self) -> bool:
-        return self.broker.running
+        return self.broker.running and self.executor.healthy
 
     async def watch_config_file(self) -> None:
         """Watches the YAML config file on disk and hot-reloads on change. Runs as an asyncio task

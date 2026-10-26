@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -11,6 +12,8 @@ from opal_event.deps import get_config, get_service
 from opal_event.errors import ServiceUnavailableError
 from opal_event.models import Health, HealthProbe, Stats
 from opal_event.service import EventService
+
+logger = logging.getLogger("opal_event.routers.operations")
 
 router = APIRouter()
 
@@ -27,7 +30,17 @@ def _database_ready(service: EventService) -> bool:
 def get_health(service: Annotated[EventService, Depends(get_service)], config=Depends(get_config)):
     broker_running = service.broker.running
     database_ready = _database_ready(service)
-    status = "ok" if broker_running and database_ready else "degraded"
+    executor_healthy = service.executor.healthy
+    reload_ok = not config.reload_failed
+    status = "ok" if (broker_running and database_ready and executor_healthy and reload_ok) else "degraded"
+    if status == "degraded":
+        logger.warning(
+            "health degraded: broker_running=%s database_ready=%s executor_healthy=%s config_reload_ok=%s",
+            broker_running,
+            database_ready,
+            executor_healthy,
+            reload_ok,
+        )
     return Health(
         status=status,
         broker_running=broker_running,
@@ -61,6 +74,7 @@ def health_live():
 def health_ready(service: Annotated[EventService, Depends(get_service)]):
     broker_ok = service.broker.running
     db_ok = _database_ready(service)
-    if not (broker_ok and db_ok):
-        raise ServiceUnavailableError("broker or persistence subsystem is not ready")
-    return HealthProbe(status="ok", details={"broker": "ok", "database": "ok"})
+    executor_ok = service.executor.healthy
+    if not (broker_ok and db_ok and executor_ok):
+        raise ServiceUnavailableError("broker, persistence, or executor subsystem is not ready")
+    return HealthProbe(status="ok", details={"broker": "ok", "database": "ok", "executor": "ok"})

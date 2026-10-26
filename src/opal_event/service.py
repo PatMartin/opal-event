@@ -48,6 +48,12 @@ class EventService:
         reconciled = self.db.reconcile_interrupted_executions()
         if reconciled:
             logger.info("reconciled %d interrupted execution(s) left by previous run", reconciled)
+        try:
+            removed = self.db.cleanup_retention(self.config.settings.persistence.retention_days)
+            if removed:
+                logger.info("startup retention cleanup removed %d row(s)", removed)
+        except Exception:
+            logger.exception("startup retention cleanup failed")
         self.executor.start()
         self.broker.start()
         self._retention_thread = threading.Thread(target=self._retention_loop, daemon=True, name="opal-event-retention")

@@ -11,6 +11,7 @@ import base64
 import json
 import sqlite3
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -293,13 +294,23 @@ class Database:
 
     # -- retention --------------------------------------------------------------------
 
-    def cleanup_retention(self, retention_days: int) -> None:
+    def cleanup_retention(self, retention_days: int) -> int:
+        """Deletes events/executions strictly older than ``retention_days``; returns rows removed.
+
+        Stored timestamps are ISO-8601 ``YYYY-MM-DDTHH:MM:SS[.ffffff]Z`` while SQLite's
+        ``datetime('now')`` yields space-separated ``YYYY-MM-DD HH:MM:SS`` — a raw string
+        comparison misorders every same-date prefix ('T' > ' '). Both sides are therefore
+        compared through ``julianday`` on space-normalized strings, giving a real UTC
+        chronological comparison. Rows exactly on the cutoff are kept (strict ``<``).
+        """
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime("%Y-%m-%d %H:%M:%S.%f")
         with self._lock, self._conn:
-            self._conn.execute(
-                "DELETE FROM events WHERE timestamp < datetime('now', ?)",
-                (f"-{retention_days} days",),
-            )
-            self._conn.execute(
-                "DELETE FROM executions WHERE created_at < datetime('now', ?)",
-                (f"-{retention_days} days",),
-            )
+            events = self._conn.execute(
+                "DELETE FROM events WHERE julianday(replace(replace(timestamp,'T',' '),'Z','')) < julianday(?)",
+                (cutoff,),
+            ).rowcount
+            executions = self._conn.execute(
+                "DELETE FROM executions WHERE julianday(replace(replace(created_at,'T',' '),'Z','')) < julianday(?)",
+                (cutoff,),
+            ).rowcount
+            return events + executions

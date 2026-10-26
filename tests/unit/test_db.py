@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from opal_event.db import Database
 
 
@@ -151,3 +153,72 @@ class TestReconcileInterrupted:
     def test_empty_history(self, tmp_path):
         db = Database(tmp_path / "t.db")
         assert db.reconcile_interrupted_executions() == 0
+
+
+class TestRetention:
+    """cleanup_retention uses real chronological comparison, not lexical string compare."""
+
+    def _event(self, eid, ts):
+        return {"id": eid, "topic": "a.b", "source": "t", "timestamp": ts, "data": {}}
+
+    def _exec(self, eid, ts):
+        return {"id": eid, "action_id": "a1", "status": "succeeded", "trigger": "manual", "created_at": ts}
+
+    def test_expired_event_deleted(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_event(self._event("old", "2020-01-01T00:00:00Z"))
+        db.insert_event(self._event("new", "2999-01-01T00:00:00Z"))
+        assert db.cleanup_retention(7) == 1
+        assert db.get_event("old") is None and db.get_event("new") is not None
+
+    def test_expired_execution_deleted(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_execution(self._exec("old", "2020-01-01T00:00:00Z"))
+        db.insert_execution(self._exec("new", "2999-01-01T00:00:00Z"))
+        assert db.cleanup_retention(7) == 1
+        assert db.get_execution("old") is None and db.get_execution("new") is not None
+
+    def test_nonexpired_records_kept(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        db.insert_event(self._event("e", now))
+        db.insert_execution(self._exec("x", now))
+        assert db.cleanup_retention(7) == 0
+
+    def test_same_day_earlier_time_is_deleted(self, tmp_path, monkeypatch):
+        # The old lexical compare kept this row: '...T01:..Z' < '... 12:00:00' is False
+        # because 'T' > ' '. With chronological comparison it must be deleted.
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        db.insert_event(self._event("morning", "2026-01-10T01:00:00Z"))
+        assert db.cleanup_retention(0) == 1
+        assert db.get_event("morning") is None
+
+    def test_exactly_at_cutoff_is_kept_and_one_microsecond_older_is_deleted(self, tmp_path, monkeypatch):
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        db.insert_event(self._event("at", "2026-01-03T12:00:00Z"))  # exactly now - 7 days
+        db.insert_event(self._event("older", "2026-01-03T11:59:59.999999Z"))
+        assert db.cleanup_retention(7) == 1
+        assert db.get_event("at") is not None
+        assert db.get_event("older") is None
+
+    def test_repeated_cleanup_is_idempotent(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_event(self._event("old", "2020-01-01T00:00:00Z"))
+        assert db.cleanup_retention(7) == 1
+        assert db.cleanup_retention(7) == 0

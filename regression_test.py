@@ -147,8 +147,16 @@ def t_health_fields():
 def t_stats_fields():
     r = CLIENT.get("/api/v1/stats/")
     check(r.status_code == 200, f"stats -> {r.status_code}")
-    for key in ("observed_events", "invalid_events", "matched_events", "executions_succeeded",
-                "executions_failed", "executions_dropped", "queue_depth", "active_workers"):
+    for key in (
+        "observed_events",
+        "invalid_events",
+        "matched_events",
+        "executions_succeeded",
+        "executions_failed",
+        "executions_dropped",
+        "queue_depth",
+        "active_workers",
+    ):
         check(key in r.json(), f"stats missing '{key}'")
 
 
@@ -190,9 +198,11 @@ def t_publish_validation_shape():
 
 def t_event_stored():
     eid = _state["event_id"]
+
     def found():
         r = CLIENT.get(f"/api/v1/events/{eid}")
         return r if r.status_code == 200 else None
+
     r = poll_until(found, f"event {eid} persisted")
     ev = r.json()
     check(ev["topic"] == f"{TOPIC_BASE}.one" and ev["data"] == {"n": 1}, f"event mismatch: {ev}")
@@ -218,8 +228,7 @@ def t_second_publish_for_cursor():
     r = CLIENT.post("/api/v1/events/", json={"topic": f"{TOPIC_BASE}.two", "data": {"n": 2}})
     check(r.status_code == 202, f"publish2 -> {r.status_code}")
     _state["event_id_2"] = r.json()["id"]
-    poll_until(lambda: CLIENT.get(f"/api/v1/events/{_state['event_id_2']}").status_code == 200,
-               "second event persisted")
+    poll_until(lambda: CLIENT.get(f"/api/v1/events/{_state['event_id_2']}").status_code == 200, "second event persisted")
 
 
 def t_cursor_scoping():
@@ -242,6 +251,7 @@ def t_topics_list():
         if r.status_code != 200:
             return None
         return r if f"{TOPIC_BASE}.one" in r.json()["items"] else None
+
     r = poll_until(found, "topic visible in /topics/")
     check(r.headers.get("etag"), "topics list missing ETag")
 
@@ -258,7 +268,9 @@ def t_rules_catalog():
 
 def t_rule_create_and_conflict():
     rule = {
-        "id": RULE_ID, "enabled": True, "topic": f"{TOPIC_BASE}.*",
+        "id": RULE_ID,
+        "enabled": True,
+        "topic": f"{TOPIC_BASE}.*",
         "conditions": [{"path": "data.kind", "operator": "eq", "value": "hit"}],
         "actions": [],
     }
@@ -287,19 +299,16 @@ def t_rule_patch_preconditions():
 
 
 def t_rule_dry_test():
-    match = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test",
-                        json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
+    match = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
     check(match.status_code == 200, f"rule test -> {match.status_code}")
     # rule was disabled by the previous PATCH test -> matched must be False
     check(match.json()["matched"] is False, f"disabled rule should not match: {match.json()}")
     etag = CLIENT.get(f"/api/v1/rules/{RULE_ID}").headers["etag"]
     r = CLIENT.patch(f"/api/v1/rules/{RULE_ID}", json={"enabled": True}, headers={"If-Match": etag})
     check(r.status_code == 200 and r.json()["enabled"] is True, f"re-enable rule -> {r.status_code}")
-    match2 = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test",
-                         json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
+    match2 = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
     check(match2.json()["matched"] is True, f"enabled rule should match: {match2.json()}")
-    miss = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test",
-                       json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "miss"}}})
+    miss = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "miss"}}})
     check(miss.json()["matched"] is False, f"non-matching condition should not match: {miss.json()}")
 
 
@@ -315,8 +324,11 @@ def t_rule_delete():
 
 def t_action_create_and_conflict():
     action = {
-        "id": ACTION_ID, "type": "python", "enabled": True,
-        "module": "opal_event.plugins.example", "function": "handle_event",
+        "id": ACTION_ID,
+        "type": "python",
+        "enabled": True,
+        "module": "opal_event.plugins.example",
+        "function": "handle_event",
         "timeout_seconds": 10,
     }
     r = CLIENT.post("/api/v1/actions/", json=action)
@@ -334,8 +346,7 @@ def t_action_patch_preconditions():
 
 
 def t_action_execute():
-    r = CLIENT.post(f"/api/v1/actions/{ACTION_ID}/execute",
-                    json={"event": {"topic": f"{TOPIC_BASE}.manual", "data": {"k": "v"}}})
+    r = CLIENT.post(f"/api/v1/actions/{ACTION_ID}/execute", json={"event": {"topic": f"{TOPIC_BASE}.manual", "data": {"k": "v"}}})
     check(r.status_code == 202, f"execute -> {r.status_code} {r.text[:200]}")
     body = r.json()
     check(body["status"] == "queued", f"expected 'queued' receipt, got: {body['status']} {body.get('error_code')}")
@@ -345,11 +356,13 @@ def t_action_execute():
 
 def t_execution_reaches_terminal():
     eid = _state["exec_id"]
+
     def done():
         r = CLIENT.get(f"/api/v1/executions/{eid}")
         if r.status_code != 200:
             return None
         return r if r.json()["status"] in ("succeeded", "failed", "timed_out", "dropped") else None
+
     r = poll_until(done, f"execution {eid} terminal")
     ex = r.json()
     check(ex["status"] == "succeeded", f"python action should succeed: {ex['status']} {ex.get('error_message')}")
@@ -384,8 +397,7 @@ def t_settings_get_and_patch():
     check(etag, "settings missing ETag")
     r2 = CLIENT.patch("/api/v1/settings/", json={"max_event_bytes": body["max_event_bytes"]})
     check(r2.status_code == 428, f"settings PATCH w/o If-Match -> {r2.status_code} (want 428)")
-    r3 = CLIENT.patch("/api/v1/settings/", json={"max_event_bytes": body["max_event_bytes"]},
-                      headers={"If-Match": etag})
+    r3 = CLIENT.patch("/api/v1/settings/", json={"max_event_bytes": body["max_event_bytes"]}, headers={"If-Match": etag})
     check(r3.status_code == 200, f"settings PATCH -> {r3.status_code}")
 
 
@@ -393,8 +405,7 @@ def t_backup_export_validate_import():
     r = CLIENT.get("/api/v1/backup/export")
     check(r.status_code == 200, f"export -> {r.status_code}")
     backup = r.json()
-    check(backup.get("format_version") == 1 and "actions" in backup and "rules" in backup,
-          f"bad backup shape: {list(backup)}")
+    check(backup.get("format_version") == 1 and "actions" in backup and "rules" in backup, f"bad backup shape: {list(backup)}")
     v = CLIENT.post("/api/v1/backup/validate", json=backup)
     check(v.status_code == 200 and v.json()["valid"] is True, f"validate -> {v.status_code} {v.text[:200]}")
     r2 = CLIENT.post("/api/v1/backup/import", json={"backup": backup})
@@ -407,11 +418,21 @@ def t_backup_export_validate_import():
 
 def t_e2e_pipeline():
     """Own rule+action so the test does not depend on the example config."""
-    action = {"id": E2E_ACTION_ID, "type": "python", "enabled": True,
-              "module": "opal_event.plugins.example", "function": "handle_event", "timeout_seconds": 10}
-    rule = {"id": E2E_RULE_ID, "enabled": True, "topic": f"{TOPIC_BASE}.e2e.*",
-            "conditions": [{"path": "data.person", "operator": "eq", "value": True}],
-            "actions": [E2E_ACTION_ID]}
+    action = {
+        "id": E2E_ACTION_ID,
+        "type": "python",
+        "enabled": True,
+        "module": "opal_event.plugins.example",
+        "function": "handle_event",
+        "timeout_seconds": 10,
+    }
+    rule = {
+        "id": E2E_RULE_ID,
+        "enabled": True,
+        "topic": f"{TOPIC_BASE}.e2e.*",
+        "conditions": [{"path": "data.person", "operator": "eq", "value": True}],
+        "actions": [E2E_ACTION_ID],
+    }
     check(CLIENT.post("/api/v1/actions/", json=action).status_code == 201, "e2e action create failed")
     check(CLIENT.post("/api/v1/rules/", json=rule).status_code == 201, "e2e rule create failed")
 
@@ -456,8 +477,10 @@ def _zmq_send(frames: list[bytes]) -> None:
     except ImportError as err:
         raise SkipTest("pyzmq not installed") from err
     parts = urlparse(ZMQ_PUB_ADDR)
-    check(parts.scheme == "tcp" and parts.hostname and parts.port,
-          f"cannot parse OPAL_EVENT_ZMQ_PUBLISHERS={ZMQ_PUB_ADDR!r} (expected tcp://host:port)")
+    check(
+        parts.scheme == "tcp" and parts.hostname and parts.port,
+        f"cannot parse OPAL_EVENT_ZMQ_PUBLISHERS={ZMQ_PUB_ADDR!r} (expected tcp://host:port)",
+    )
     # quick reachability probe so a dead endpoint fails fast, not after the poll budget
     try:
         socket.create_connection((parts.hostname, parts.port), timeout=5).close()

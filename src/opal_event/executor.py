@@ -5,6 +5,14 @@ Matched rule actions and manual executions are submitted here. A fixed-size work
 full, the job is recorded as ``dropped`` with ``error_code=queue_full`` and never retried. Workers
 run independently with no ordering guarantee across jobs. Each job executes the *action snapshot* it
 was queued with (``action_revision``), so concurrent action edits never change an in-flight job.
+
+Graceful shutdown (:meth:`Executor.stop`) is deterministic: admission closes first (new submissions
+are recorded as ``dropped`` with ``error_code=shutdown``), then every still-queued job is marked
+``dropped``/``shutdown``, and finally in-flight workers are joined without a fixed timeout so
+running actions complete under their own ``timeout_seconds`` policy. ``stop()`` only returns once
+no worker can still write execution results — callers may close the database immediately after.
+Shutdown is therefore bounded in practice by the longest in-flight action timeout; a runner wedged
+past its own timeout kill could still delay it (no overall shutdown deadline exists).
 """
 
 from __future__ import annotations
@@ -107,16 +115,34 @@ class Executor:
             self._started = True
 
     def stop(self) -> None:
-        self._stop.set()
+        """Graceful shutdown: close admission, drop queued jobs, wait for running jobs.
+
+        Idempotent. Draining and the submission gate both run under ``self._lock``, so a job either
+        lands in the queue before the drain (and is dropped here) or is rejected by ``submit``.
+        Worker joins are unbounded on purpose: each running job is already bounded by its action
+        timeout, and returning early would let workers write results after the database is closed.
+        """
         with self._lock:
+            if self._stop.is_set() or not self._started:
+                return
+            self._stop.set()
+            pending: list[Job] = []
+            while True:
+                try:
+                    pending.append(self._queue.get_nowait())
+                    self._queue.task_done()
+                except queue.Empty:
+                    break
             all_threads = list(self._workers) + list(self._retired_workers)
-        for t in all_threads:
-            t.join(timeout=5)
-        with self._lock:
             self._workers.clear()
             self._worker_events.clear()
             self._retired_workers.clear()
             self._started = False
+        for job in pending:
+            self._drop_on_shutdown(job)
+        for t in all_threads:
+            t.join()
+        logger.info("executor stopped: %d queued job(s) dropped, %d worker thread(s) joined", len(pending), len(all_threads))
 
     def resize(self, queue_size: int, max_workers: int) -> None:
         """Applies live ``execution.queue_size``/``execution.max_workers`` changes. Synchronized
@@ -201,26 +227,37 @@ class Executor:
             security_settings=security_settings,
         )
         with self._lock:
-            if self._queue.qsize() >= self._queue_size:
+            if self._stop.is_set() or not self._started:
                 admitted = False
+                error_code = "shutdown"
+                error_message = "executor is shut down (or was never started)"
+            elif self._queue.qsize() >= self._queue_size:
+                admitted = False
+                error_code = "queue_full"
+                error_message = "bounded execution queue is full"
             else:
                 self._queue.put_nowait(job)
                 admitted = True
 
         if not admitted:
-            self.db.update_execution(
-                execution_id,
-                status="dropped",
-                error_code="queue_full",
-                error_message="bounded execution queue is full",
-            )
+            self.db.update_execution(execution_id, status="dropped", error_code=error_code, error_message=error_message)
             record.status = "dropped"
-            record.error_code = "queue_full"
-            record.error_message = "bounded execution queue is full"
+            record.error_code = error_code
+            record.error_message = error_message
             self.metrics.incr("executions_dropped")
             return record
 
         return record
+
+    def _drop_on_shutdown(self, job: Job) -> None:
+        """Marks a job that was admitted but never started as ``dropped``/``shutdown``."""
+        self.db.update_execution(
+            job.execution_id,
+            status="dropped",
+            error_code="shutdown",
+            error_message="executor shut down before the job started",
+        )
+        self.metrics.incr("executions_dropped")
 
     def _worker_loop(self, stop_event: threading.Event) -> None:
         while not self._stop.is_set() and not stop_event.is_set():
@@ -228,11 +265,20 @@ class Executor:
                 job = self._queue.get(timeout=0.2)
             except queue.Empty:
                 continue
-            self.metrics.incr("active_workers")
             try:
-                self._run_job(job)
+                # The lock makes the dequeue/drain boundary deterministic: a job taken after
+                # ``stop()`` set the flag (or while the drain was in progress) is never started.
+                with self._lock:
+                    shutting_down = self._stop.is_set()
+                if shutting_down:
+                    self._drop_on_shutdown(job)
+                else:
+                    self.metrics.incr("active_workers")
+                    try:
+                        self._run_job(job)
+                    finally:
+                        self.metrics.decr("active_workers")
             finally:
-                self.metrics.decr("active_workers")
                 self._queue.task_done()
 
     def _run_job(self, job: Job) -> None:

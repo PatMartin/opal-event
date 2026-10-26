@@ -420,3 +420,6 @@ unused (dead boilerplate from the suite-wide schema set, not wired into this ser
   action retries — all explicitly out of scope per `zeromq_protocol.md`.
 * SQLite is a single-writer store; this is appropriate for the bounded worker-pool write volume this
   service targets, not for very high-throughput deployments.
+* Graceful shutdown waits for in-flight actions to finish under their own `timeout_seconds` policy
+  (queued jobs are recorded `dropped`/`shutdown` instead of running). There is no overall shutdown
+  deadline, so a runner that ignores its own timeout kill could still delay shutdown.

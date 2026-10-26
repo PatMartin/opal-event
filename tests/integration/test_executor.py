@@ -1,5 +1,8 @@
+import threading
 import time
 
+import opal_event.executor as executor_module
+from opal_event.actions import ExecutionOutcome
 from opal_event.db import Database
 from opal_event.executor import Executor
 from opal_event.metrics import Metrics
@@ -672,4 +675,165 @@ class TestExecutor:
             assert executor.queue_depth == 0
         finally:
             unblock_jobs.set()
+            executor.stop()
+
+
+class TestExecutorShutdown:
+    """Graceful shutdown: admission closes, queued jobs drop, running jobs finish."""
+
+    @staticmethod
+    def _install_blocking_run_action(monkeypatch):
+        """run_action stub: 'blocking' actions wait on `release`; everything else succeeds."""
+        running = threading.Event()
+        release = threading.Event()
+
+        def mock_run_action(action, event, exec_settings, sec_settings):
+            if action.id == "blocking":
+                running.set()
+                release.wait(timeout=10)
+            return ExecutionOutcome(status="succeeded", exit_code=0)
+
+        monkeypatch.setattr(executor_module, "run_action", mock_run_action)
+        return running, release
+
+    @staticmethod
+    def _submit(executor, action, n=0):
+        return executor.submit(
+            action,
+            {"topic": "t", "data": {"n": n}},
+            event_id=None,
+            rule_id=None,
+            trigger="manual",
+            execution_settings=ExecutionSettings(),
+            security_settings=SecuritySettings(),
+        )
+
+    def test_stop_drops_queued_jobs(self, tmp_path, monkeypatch):
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        executor = Executor(db, metrics, queue_size=5, max_workers=1)
+        running, release = self._install_blocking_run_action(monkeypatch)
+        executor.start()
+        try:
+            slow = ShellAction(id="blocking", type="shell", mode="exec", executable="noop")
+            fast = ShellAction(id="fast", type="shell", mode="exec", executable="noop")
+            r0 = self._submit(executor, slow)
+            assert running.wait(timeout=2)
+            r1 = self._submit(executor, fast, 1)
+            r2 = self._submit(executor, fast, 2)
+            assert executor.queue_depth == 2
+
+            stopper = threading.Thread(target=executor.stop, daemon=True)
+            stopper.start()
+
+            assert wait_until(lambda: db.get_execution(r1.id)["status"] == "dropped")
+            assert wait_until(lambda: db.get_execution(r2.id)["status"] == "dropped")
+            for r in (r1, r2):
+                row = db.get_execution(r.id)
+                assert row["error_code"] == "shutdown"
+                assert row["started_at"] is None  # dropped before ever starting
+            assert metrics.get("executions_dropped") == 2
+
+            release.set()
+            stopper.join(timeout=5)
+            assert not stopper.is_alive()
+            assert db.get_execution(r0.id)["status"] == "succeeded"  # running job finished, not dropped
+            assert executor.queue_depth == 0
+        finally:
+            release.set()
+            executor.stop()
+
+    def test_stop_waits_for_running_job(self, tmp_path, monkeypatch):
+        db = Database(tmp_path / "t.db")
+        executor = Executor(db, Metrics(), queue_size=5, max_workers=1)
+        running, release = self._install_blocking_run_action(monkeypatch)
+        executor.start()
+        try:
+            r0 = self._submit(executor, ShellAction(id="blocking", type="shell", mode="exec", executable="noop"))
+            assert running.wait(timeout=2)
+
+            stopper = threading.Thread(target=executor.stop, daemon=True)
+            stopper.start()
+            assert stopper.is_alive()  # blocked joining the in-flight worker
+            assert db.get_execution(r0.id)["status"] == "running"
+
+            release.set()
+            stopper.join(timeout=5)
+            assert not stopper.is_alive()
+            assert db.get_execution(r0.id)["status"] == "succeeded"
+            assert executor.worker_count == 0
+        finally:
+            release.set()
+            executor.stop()
+
+    def test_stop_with_empty_queue(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        executor = Executor(db, Metrics(), queue_size=5, max_workers=2)
+        executor.start()
+        t0 = time.monotonic()
+        executor.stop()
+        assert time.monotonic() - t0 < 3
+        assert executor.worker_count == 0
+        assert executor.queue_depth == 0
+
+    def test_stop_is_idempotent_and_safe_before_start(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        executor = Executor(db, Metrics(), queue_size=5, max_workers=1)
+        executor.stop()  # never started: must not raise
+        executor.start()
+        executor.stop()
+        executor.stop()  # repeated: must not raise or hang
+        assert executor.worker_count == 0
+
+    def test_submit_after_stop_is_dropped_with_shutdown(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        executor = Executor(db, metrics, queue_size=5, max_workers=1)
+        executor.start()
+        executor.stop()
+
+        record = self._submit(executor, ShellAction(id="late", type="shell", mode="exec", executable="noop"))
+        assert record.status == "dropped"
+        assert record.error_code == "shutdown"
+        row = db.get_execution(record.id)
+        assert row["status"] == "dropped" and row["error_code"] == "shutdown"
+        assert row["started_at"] is None
+        assert metrics.get("executions_dropped") == 1
+
+    def test_no_db_writes_after_stop_returns(self, tmp_path, monkeypatch):
+        """stop() must not return while any worker can still write to the database."""
+        db = Database(tmp_path / "t.db")
+        metrics = Metrics()
+        executor = Executor(db, metrics, queue_size=5, max_workers=1)
+        running, release = self._install_blocking_run_action(monkeypatch)
+
+        stopped = threading.Event()
+        late_writes: list = []
+        original_update = db.update_execution
+
+        def tracking_update(execution_id, **fields):
+            if stopped.is_set():
+                late_writes.append(execution_id)
+            return original_update(execution_id, **fields)
+
+        monkeypatch.setattr(db, "update_execution", tracking_update)
+
+        executor.start()
+        try:
+            r0 = self._submit(executor, ShellAction(id="blocking", type="shell", mode="exec", executable="noop"))
+            assert running.wait(timeout=2)
+
+            stopper = threading.Thread(target=executor.stop, daemon=True)
+            stopper.start()
+            release.set()
+            stopper.join(timeout=5)
+            assert not stopper.is_alive()
+
+            stopped.set()
+            time.sleep(0.3)  # any surviving worker would write its result now
+            assert late_writes == []
+            assert db.get_execution(r0.id)["status"] == "succeeded"
+            db.close()  # provably safe: no writer can still be alive
+        finally:
+            release.set()
             executor.stop()

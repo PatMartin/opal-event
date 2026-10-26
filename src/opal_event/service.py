@@ -53,6 +53,8 @@ class EventService:
         if self._retention_thread is not None:
             self._retention_thread.join(timeout=2)
         self.broker.stop()
+        # Order matters: executor.stop() blocks until every worker has finished writing its final
+        # execution record, so closing SQLite is only safe after it returns.
         self.executor.stop()
         self.db.close()
 

@@ -9,14 +9,11 @@ the whole tree.
 from __future__ import annotations
 
 import json
-import os
-import signal
 import subprocess
 import sys
-from contextlib import suppress
 from typing import Any
 
-from opal_event.actions import ExecutionOutcome, truncate_output
+from opal_event.actions import ExecutionOutcome, communicate_bounded, decode_bounded
 from opal_event.models import ShellAction
 from opal_event.security import subprocess_environment
 from opal_event.templating import TemplateError, render_value
@@ -62,22 +59,12 @@ def run_shell_action(action: ShellAction, event: dict[str, Any], timeout: int, m
         return ExecutionOutcome(status="failed", error_code="spawn_error", error_message=str(exc))
 
     try:
-        stdout_bytes, stderr_bytes = proc.communicate(input=stdin_data, timeout=timeout)
+        out, err = communicate_bounded(proc, stdin_data, timeout, max_output_bytes)
     except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        proc.wait(timeout=5)
         return ExecutionOutcome(status="timed_out", error_code="timeout", error_message=f"exceeded {timeout}s timeout")
 
-    stdout = truncate_output(stdout_bytes.decode("utf-8", errors="replace"), max_output_bytes)
-    stderr = truncate_output(stderr_bytes.decode("utf-8", errors="replace"), max_output_bytes)
+    stdout = decode_bounded(out)
+    stderr = decode_bounded(err)
     status = "succeeded" if proc.returncode == 0 else "failed"
     error_code = None if status == "succeeded" else "nonzero_exit"
     return ExecutionOutcome(status=status, exit_code=proc.returncode, stdout=stdout, stderr=stderr, error_code=error_code)
-
-
-def _kill_tree(proc: subprocess.Popen) -> None:
-    if sys.platform != "win32":
-        with suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-    else:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], check=False, capture_output=True)

@@ -5,14 +5,11 @@ JSON result from stdout."""
 from __future__ import annotations
 
 import json
-import os
-import signal
 import subprocess
 import sys
-from contextlib import suppress
 from typing import Any
 
-from opal_event.actions import ExecutionOutcome, truncate_output
+from opal_event.actions import ExecutionOutcome, communicate_bounded, decode_bounded
 from opal_event.models import PythonAction
 from opal_event.security import subprocess_environment
 
@@ -36,13 +33,11 @@ def run_python_action(action: PythonAction, event: dict[str, Any], timeout: int,
         return ExecutionOutcome(status="failed", error_code="spawn_error", error_message=str(exc))
 
     try:
-        stdout_bytes, stderr_bytes = proc.communicate(input=json.dumps(event).encode("utf-8"), timeout=timeout)
+        out, err = communicate_bounded(proc, json.dumps(event).encode("utf-8"), timeout, max_output_bytes)
     except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        proc.wait(timeout=5)
         return ExecutionOutcome(status="timed_out", error_code="timeout", error_message=f"exceeded {timeout}s timeout")
 
-    stderr = truncate_output(stderr_bytes.decode("utf-8", errors="replace"), max_output_bytes)
+    stderr = decode_bounded(err)
     if proc.returncode != 0:
         return ExecutionOutcome(
             status="failed",
@@ -51,8 +46,17 @@ def run_python_action(action: PythonAction, event: dict[str, Any], timeout: int,
             error_code="plugin_error",
             error_message=stderr or f"plugin exited with code {proc.returncode}",
         )
+    if out.overflowed:
+        # The bounded buffer kept only a prefix — parsing it would silently accept truncated JSON.
+        return ExecutionOutcome(
+            status="failed",
+            exit_code=proc.returncode,
+            stderr=stderr,
+            error_code="output_limit",
+            error_message=f"plugin stdout exceeded max_output_bytes ({max_output_bytes}); result discarded",
+        )
     try:
-        result = json.loads(stdout_bytes.decode("utf-8", errors="replace"))
+        result = json.loads(bytes(out.data).decode("utf-8", errors="replace"))
     except json.JSONDecodeError as exc:
         return ExecutionOutcome(
             status="failed",
@@ -62,11 +66,3 @@ def run_python_action(action: PythonAction, event: dict[str, Any], timeout: int,
             error_message=f"plugin stdout was not valid JSON: {exc}",
         )
     return ExecutionOutcome(status="succeeded", exit_code=proc.returncode, result=result, stderr=stderr)
-
-
-def _kill_tree(proc: subprocess.Popen) -> None:
-    if sys.platform != "win32":
-        with suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-    else:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], check=False, capture_output=True)

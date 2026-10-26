@@ -7,6 +7,12 @@ Each runner returns an :class:`ExecutionOutcome` consumed by the executor to bui
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
+import sys
+import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,6 +38,106 @@ def truncate_output(text: str | None, max_bytes: int) -> str | None:
     if len(encoded) <= max_bytes:
         return text
     return encoded[:max_bytes].decode("utf-8", errors="ignore") + "...[truncated]"
+
+
+class BoundedBuffer:
+    """Thread-feedable capture buffer capped at ``limit`` bytes.
+
+    Overflow policy: the first ``limit`` bytes are retained and the rest is *counted* (``overflow``)
+    while the stream keeps being drained — the child never deadlocks on a full pipe and memory use
+    stays bounded regardless of how much the process emits.
+    """
+
+    def __init__(self, limit: int):
+        self._limit = max(0, limit)
+        self.data = bytearray()
+        self.overflow = 0
+
+    @property
+    def overflowed(self) -> bool:
+        return self.overflow > 0
+
+    def feed(self, chunk: bytes) -> None:
+        room = self._limit - len(self.data)
+        if room > 0:
+            self.data += chunk[:room]
+        if len(chunk) > room:
+            self.overflow += len(chunk) - max(room, 0)
+
+
+def decode_bounded(buffer: BoundedBuffer) -> str:
+    """Decodes a captured buffer to text; appends the truncation marker iff bytes were dropped."""
+    text = bytes(buffer.data).decode("utf-8", errors="replace")
+    return text + "...[truncated]" if buffer.overflowed else text
+
+
+def _drain_stream(stream, buffer: BoundedBuffer) -> None:
+    try:
+        while chunk := stream.read(65536):
+            buffer.feed(chunk)
+    finally:
+        with suppress(OSError):
+            stream.close()
+
+
+def _feed_stdin(stream, data: bytes) -> None:
+    with suppress(OSError):  # child may exit or never read; EPIPE/BrokenPipeError is expected
+        stream.write(data)
+    with suppress(OSError):
+        stream.close()
+
+
+def communicate_bounded(
+    proc: subprocess.Popen,
+    stdin_data: bytes | None,
+    timeout: int,
+    max_output_bytes: int,
+) -> tuple[BoundedBuffer, BoundedBuffer]:
+    """``Popen.communicate`` replacement enforcing ``max_output_bytes`` *during* capture.
+
+    Stdout and stderr are drained on separate reader threads (portable on Windows and POSIX, and
+    safe against the classic "child fills one pipe while the parent reads the other" deadlock). The
+    stdin payload is written on its own daemon thread so a child that never reads cannot stall the
+    timeout.
+
+    On timeout the process tree is killed, remaining output is drained briefly, and
+    :class:`subprocess.TimeoutExpired` is re-raised for the caller to translate into an outcome.
+    """
+    stdout = BoundedBuffer(max_output_bytes)
+    stderr = BoundedBuffer(max_output_bytes)
+    readers = [
+        threading.Thread(target=_drain_stream, args=(proc.stdout, stdout), daemon=True, name="opal-event-out"),
+        threading.Thread(target=_drain_stream, args=(proc.stderr, stderr), daemon=True, name="opal-event-err"),
+    ]
+    for t in readers:
+        t.start()
+    if stdin_data is not None:
+        threading.Thread(target=_feed_stdin, args=(proc.stdin, stdin_data), daemon=True, name="opal-event-in").start()
+    elif proc.stdin is not None:
+        proc.stdin.close()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_process_tree(proc)
+        with suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+        for t in readers:
+            t.join(timeout=2)
+        raise
+    # The process exited; readers hit EOF. If a detached grandchild inherited the pipe and keeps
+    # it open, the bounded join caps the wait instead of hanging like communicate() would.
+    for t in readers:
+        t.join(timeout=5)
+    return stdout, stderr
+
+
+def kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kills the child and anything it spawned (session group on POSIX, job tree via taskkill)."""
+    if sys.platform != "win32":
+        with suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    else:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], check=False, capture_output=True)
 
 
 def run_action(

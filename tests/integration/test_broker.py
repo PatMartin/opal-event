@@ -103,6 +103,39 @@ class TestBrokerPubSub:
             context.term()
             broker.stop()
 
+    def test_observer_rejects_protocol_violations_and_recovers(self):
+        """Wire-protocol violations (bad topic syntax, bad metadata) are rejected; the observer
+        keeps processing subsequent valid messages."""
+        settings = ZeroMqSettings(
+            publishers=f"tcp://127.0.0.1:{free_port()}",
+            subscribers=f"tcp://127.0.0.1:{free_port()}",
+        )
+        received = []
+        broker = Broker(settings, on_event=received.append)
+        context = zmq.Context()
+        publisher = context.socket(zmq.PUB)
+        try:
+            broker.start()
+            publisher.connect(settings.publishers)
+            time.sleep(0.2)
+
+            publisher.send_multipart([b"Bad Topic", json.dumps({"topic": "Bad Topic", "data": {}}).encode()])
+            publisher.send_multipart([b"a.b", json.dumps({"topic": "a.b", "data": {}, "source": ""}).encode()])
+            publisher.send_multipart([b"good.topic", json.dumps({"topic": "good.topic", "data": {"ok": 1}}).encode()])
+
+            assert wait_until(lambda: len(received) == 3)
+            assert received[0]["_invalid"] is True
+            assert "pattern" in received[0]["error"]
+            assert received[1]["_invalid"] is True
+            assert "source" in received[1]["error"]
+            assert "_invalid" not in received[2]
+            assert received[2]["topic"] == "good.topic"
+            assert broker.running  # observer thread survived the rejections
+        finally:
+            publisher.close(linger=0)
+            context.term()
+            broker.stop()
+
     def test_update_max_event_bytes_at_runtime(self):
         settings = ZeroMqSettings(
             publishers=f"tcp://127.0.0.1:{free_port()}",
@@ -322,4 +355,101 @@ class TestParseAndNormalize:
         payload = json.dumps({"topic": "a.b", "data": {"x": 1}}).encode()
         normalized = parse_and_normalize(b"a.b", payload, max_event_bytes=1_000_000)
         assert normalized["source"] == "unknown"
+        assert normalized["topic"] == "a.b"
+
+    def test_accepts_full_valid_metadata(self):
+        import json
+
+        envelope = {
+            "topic": "vision.object.detected",
+            "data": {"object": "person"},
+            "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+            "source": "opal-look",
+            "timestamp": "2026-10-26T10:00:00Z",
+        }
+        normalized = parse_and_normalize(b"vision.object.detected", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
+        assert normalized["id"] == envelope["id"]
+        assert normalized["source"] == "opal-look"
+        assert normalized["timestamp"] == envelope["timestamp"]
+
+    def test_preserves_opal_correlation_metadata(self):
+        import json
+        import uuid
+
+        sid = str(uuid.uuid4())
+        envelope = {"topic": "a.b", "data": {}, "session_id": sid}
+        normalized = parse_and_normalize(b"a.b", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
+        assert normalized["session_id"] == sid
+
+    def test_preserves_null_data(self):
+        normalized = parse_and_normalize(b"a.b", b'{"topic":"a.b","data":null}', max_event_bytes=1_000_000)
+        assert normalized["data"] is None
+
+    @pytest.mark.parametrize(
+        "topic_bytes",
+        [b"Bad.Topic", b"a..b", b"a.-b", b"1a.b", b"A", b"a b.c", b"a" * 256],
+        ids=["uppercase", "empty-segment", "dash-segment", "leading-digit", "single-upper", "space", "oversized"],
+    )
+    def test_rejects_invalid_wire_topics(self, topic_bytes):
+        import json
+
+        from opal_event.zeromq_broker import InvalidEventError
+
+        payload = json.dumps({"topic": topic_bytes.decode("ascii"), "data": {}}).encode()
+        with pytest.raises(InvalidEventError):
+            parse_and_normalize(topic_bytes, payload, max_event_bytes=1_000_000)
+
+    def test_rejects_non_utf8_topic(self):
+        import json
+
+        from opal_event.zeromq_broker import InvalidEventError
+
+        with pytest.raises(InvalidEventError):
+            parse_and_normalize(b"\xff\xfe", json.dumps({"topic": "x", "data": {}}).encode(), max_event_bytes=1_000_000)
+
+    @pytest.mark.parametrize(
+        "envelope",
+        [
+            "not-json{{{",
+            json.dumps(["not", "an", "object"]),
+            json.dumps({"data": {}}),  # missing topic
+            json.dumps({"topic": "a.b"}),  # missing data
+            json.dumps({"topic": 5, "data": {}}),  # non-string envelope topic
+        ],
+        ids=["malformed-json", "non-object", "missing-topic", "missing-data", "non-string-topic"],
+    )
+    def test_rejects_malformed_envelopes(self, envelope):
+        from opal_event.zeromq_broker import InvalidEventError
+
+        payload = envelope if isinstance(envelope, bytes) else envelope.encode()
+        with pytest.raises(InvalidEventError):
+            parse_and_normalize(b"a.b", payload, max_event_bytes=1_000_000)
+
+    @pytest.mark.parametrize(
+        "patch",
+        [
+            {"id": "not-a-uuid"},
+            {"id": 123},
+            {"source": ""},
+            {"source": 42},
+            {"timestamp": "yesterday"},
+            {"timestamp": "2026-10-26"},  # date-only is not a date-time
+            {"timestamp": 1700000000},
+        ],
+        ids=["bad-uuid", "non-string-id", "empty-source", "non-string-source", "bad-ts", "date-only", "numeric-ts"],
+    )
+    def test_rejects_malformed_metadata(self, patch):
+        import json
+
+        from opal_event.zeromq_broker import InvalidEventError
+
+        envelope = {"topic": "a.b", "data": {}, **patch}
+        with pytest.raises(InvalidEventError):
+            parse_and_normalize(b"a.b", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
+
+    def test_permits_unknown_extra_fields(self):
+        import json
+
+        envelope = {"topic": "a.b", "data": {}, "custom_field": {"nested": [1, 2]}, "vendor.x": "y"}
+        normalized = parse_and_normalize(b"a.b", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
         assert normalized["topic"] == "a.b"

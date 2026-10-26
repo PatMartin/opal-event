@@ -31,23 +31,28 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import tempfile
 import threading
 import time
+import uuid
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import zmq
 import zmq.auth
 from zmq.auth.thread import ThreadAuthenticator
 
-from opal_event.models import ZeroMqSettings
+from opal_event.models import TOPIC_PATTERN, ZeroMqSettings
 from opal_event.normalization import normalize_event
 
 logger = logging.getLogger("opal_event.broker")
 
 TOPIC_MAX_LENGTH = 255
+_TOPIC_RE = re.compile(TOPIC_PATTERN)
+_RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 
 
 def _write_public_cert(path: str, public_key: bytes) -> None:
@@ -77,15 +82,51 @@ def parse_and_normalize(topic_bytes: bytes, payload_bytes: bytes, max_event_byte
         topic = topic_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise InvalidEventError("topic is not valid UTF-8") from exc
+    if len(topic) > TOPIC_MAX_LENGTH:
+        raise InvalidEventError(f"topic exceeds {TOPIC_MAX_LENGTH} characters")
+    if not _TOPIC_RE.match(topic):
+        raise InvalidEventError("topic does not match the required pattern")
     try:
         envelope = json.loads(payload_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InvalidEventError("payload is not valid JSON") from exc
-    if not isinstance(envelope, dict) or "topic" not in envelope or "data" not in envelope:
+    if not isinstance(envelope, dict):
+        raise InvalidEventError("envelope must be a JSON object")
+    if "topic" not in envelope or "data" not in envelope:
         raise InvalidEventError("envelope missing required 'topic'/'data' keys")
+    if not isinstance(envelope["topic"], str):
+        raise InvalidEventError("envelope 'topic' must be a string")
     if envelope["topic"] != topic:
         raise InvalidEventError("frame topic does not match envelope topic")
+    _check_optional_metadata(envelope)
     return normalize_event(envelope, topic=topic, default_source="unknown")
+
+
+def _check_optional_metadata(envelope: dict[str, Any]) -> None:
+    """Validates the optional ``id``/``source``/``timestamp`` wire fields per zeromq_protocol.md.
+
+    Additional keys (including OPAL correlation metadata) are permitted; only the documented
+    optional fields are type-checked, and only when present.
+    """
+    event_id = envelope.get("id")
+    if event_id is not None:
+        if not isinstance(event_id, str):
+            raise InvalidEventError("envelope 'id' must be a UUID string")
+        try:
+            uuid.UUID(event_id)
+        except ValueError as exc:
+            raise InvalidEventError("envelope 'id' must be a UUID") from exc
+    source = envelope.get("source")
+    if source is not None and (not isinstance(source, str) or not source):
+        raise InvalidEventError("envelope 'source' must be a nonempty string")
+    timestamp = envelope.get("timestamp")
+    if timestamp is not None:
+        if not isinstance(timestamp, str) or not _RFC3339_RE.match(timestamp):
+            raise InvalidEventError("envelope 'timestamp' must be an RFC3339 date-time")
+        try:
+            datetime.fromisoformat(timestamp)
+        except ValueError as exc:
+            raise InvalidEventError("envelope 'timestamp' is not a valid date-time") from exc
 
 
 class Broker:

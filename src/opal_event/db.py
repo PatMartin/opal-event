@@ -55,6 +55,16 @@ CREATE INDEX IF NOT EXISTS idx_executions_event ON executions(event_id);
 """
 
 
+def _normalize_ts_param(value: str) -> str:
+    """Parses an RFC3339 timestamp filter parameter into the same fixed-width UTC string
+    ``_normalized_ts_sql`` produces for stored rows, making ``>=``/``<=`` comparisons exact
+    and chronological across differing offsets and fraction formats."""
+    dt = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def _encode_cursor(seq: int) -> str:
     return base64.urlsafe_b64encode(str(seq).encode("ascii")).decode("ascii")
 
@@ -124,11 +134,11 @@ class Database:
             clauses.append("source = ?")
             params.append(source)
         if time_from:
-            clauses.append("timestamp >= ?")
-            params.append(time_from)
+            clauses.append(f"{self._normalized_ts_sql('timestamp')} >= ?")
+            params.append(_normalize_ts_param(time_from))
         if time_to:
-            clauses.append("timestamp <= ?")
-            params.append(time_to)
+            clauses.append(f"{self._normalized_ts_sql('timestamp')} <= ?")
+            params.append(_normalize_ts_param(time_to))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM events {where} ORDER BY seq DESC LIMIT ?"
         params.append(limit + 1)

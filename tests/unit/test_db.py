@@ -334,3 +334,58 @@ class TestPing:
             raise AssertionError("ping on closed db did not raise")
         except sqlite3.ProgrammingError:
             pass
+
+
+class TestTimeFilters:
+    """list_events from/to must compare chronologically in UTC, not as raw strings."""
+
+    @staticmethod
+    def _db(tmp_path):
+        db = Database(tmp_path / "t.db")
+        for eid, ts in [
+            ("eq-z", "2026-01-10T12:00:00Z"),
+            ("eq-off", "2026-01-10T14:00:00+02:00"),  # same instant as eq-z
+            ("frac", "2026-01-10T12:00:00.000001Z"),
+            ("day", "2026-01-10T23:30:00-02:00"),  # = Jan 11 01:30Z
+        ]:
+            db.insert_event({"id": eid, "topic": "a.b", "source": "t", "timestamp": ts, "data": {}})
+        return db
+
+    def test_equivalent_instants_with_different_offsets(self, tmp_path):
+        db = self._db(tmp_path)
+        items, _ = db.list_events(time_from="2026-01-10T12:00:00Z", time_to="2026-01-10T12:00:00Z")
+        assert {e["id"] for e in items} == {"eq-z", "eq-off"}  # same instant, different formats
+
+    def test_offset_param_matches_z_stored(self, tmp_path):
+        db = self._db(tmp_path)
+        items, _ = db.list_events(time_from="2026-01-10T14:00:00+02:00")
+        assert {e["id"] for e in items} >= {"eq-z", "eq-off"}
+
+    def test_microsecond_boundary(self, tmp_path):
+        db = self._db(tmp_path)
+        items, _ = db.list_events(time_to="2026-01-10T12:00:00.000000Z")
+        assert {e["id"] for e in items} == {"eq-z", "eq-off"}  # frac (1us later) excluded
+        items, _ = db.list_events(time_from="2026-01-10T12:00:00.000001Z")
+        ids = {e["id"] for e in items}
+        assert "frac" in ids and "eq-z" not in ids
+
+    def test_utc_date_transition(self, tmp_path):
+        db = self._db(tmp_path)
+        items, _ = db.list_events(time_from="2026-01-11T00:00:00Z")
+        assert {e["id"] for e in items} == {"day"}  # stored raw date Jan 10, UTC date Jan 11
+
+    def test_combined_filters(self, tmp_path):
+        db = self._db(tmp_path)
+        db.insert_event({"id": "other", "topic": "x.y", "source": "t", "timestamp": "2026-01-10T12:00:00Z", "data": {}})
+        items, _ = db.list_events(topic="a.b", time_from="2026-01-10T12:00:00Z", time_to="2026-01-10T12:00:00Z")
+        assert {e["id"] for e in items} == {"eq-z", "eq-off"}  # 'other' filtered out by topic
+
+    def test_cursor_pagination_with_time_filters(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        for i in range(3):
+            db.insert_event({"id": f"p{i}", "topic": "a.b", "source": "t", "timestamp": f"2026-01-10T12:00:0{i}Z", "data": {}})
+        db.insert_event({"id": "out", "topic": "a.b", "source": "t", "timestamp": "2026-01-01T00:00:00Z", "data": {}})
+        items, cursor = db.list_events(limit=1, time_from="2026-01-10T00:00:00Z")
+        assert items[0]["id"] == "p2" and cursor is not None
+        items2, _ = db.list_events(cursor=cursor, limit=10, time_from="2026-01-10T00:00:00Z")
+        assert {e["id"] for e in items2} == {"p0", "p1"}  # 'out' never appears

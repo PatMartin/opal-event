@@ -7,6 +7,9 @@ export default function BackupPage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [backup, setBackup] = useState<ConfigBackup | null>(null);
   const [report, setReport] = useState<ValidationReport | null>(null);
+  // ETag captured AT VALIDATION TIME and preserved through review — If-Match on import then
+  // rejects with 409 if the config changed while the user was reading the validation report.
+  const [etag, setEtag] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<BackupImportResult | null>(null);
@@ -37,6 +40,7 @@ export default function BackupPage() {
     setResult(null);
     setConfirmed(false);
     setBackup(null);
+    setEtag(null);
     if (!file) {
       setFileName(null);
       return;
@@ -45,7 +49,9 @@ export default function BackupPage() {
     try {
       const parsed = JSON.parse(await file.text()) as ConfigBackup;
       setBackup(parsed);
-      setReport(await api.validateBackup(parsed));
+      const [validation, { etag: currentEtag }] = await Promise.all([api.validateBackup(parsed), api.getSettings()]);
+      setReport(validation);
+      setEtag(currentEtag);
     } catch (err) {
       setFileName(null);
       setError(err instanceof SyntaxError ? `file is not valid JSON: ${err.message}` : describe(err));
@@ -53,21 +59,26 @@ export default function BackupPage() {
   }
 
   async function doImport() {
-    if (!backup || !report?.valid || !confirmed) return;
+    if (!backup || !report?.valid || !confirmed || !etag || importing) return;
     setImporting(true);
     setError(null);
     try {
-      // Optimistic concurrency: fetch the current revision so a concurrent change is a 409, not a silent overwrite.
-      const { etag } = await api.getSettings();
       const res = await api.importBackup(backup, etag);
       setResult(res);
       setReport(null);
       setBackup(null);
       setFileName(null);
       setConfirmed(false);
+      setEtag(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setError(`import rejected: the configuration changed concurrently (${err.message}). Re-select the file and try again.`);
+        // Config changed since validation — force re-validation against the new revision.
+        setReport(null);
+        setBackup(null);
+        setFileName(null);
+        setConfirmed(false);
+        setEtag(null);
+        setError(`import rejected: the configuration changed since this backup was validated (${err.message}). Select the file again to re-validate against the current configuration.`);
       } else {
         setError(describe(err));
       }

@@ -9,7 +9,7 @@ import subprocess
 import sys
 from typing import Any
 
-from opal_event.actions import ExecutionOutcome, communicate_bounded, decode_bounded
+from opal_event.actions import ExecutionOutcome, IncompleteCaptureError, communicate_bounded, decode_bounded
 from opal_event.models import PythonAction
 from opal_event.security import subprocess_environment
 
@@ -36,6 +36,8 @@ def run_python_action(action: PythonAction, event: dict[str, Any], timeout: int,
         out, err = communicate_bounded(proc, json.dumps(event).encode("utf-8"), timeout, max_output_bytes)
     except subprocess.TimeoutExpired:
         return ExecutionOutcome(status="timed_out", error_code="timeout", error_message=f"exceeded {timeout}s timeout")
+    except IncompleteCaptureError as exc:
+        return ExecutionOutcome(status="failed", error_code="output_capture", error_message=str(exc))
 
     stderr = decode_bounded(err)
     if proc.returncode != 0:

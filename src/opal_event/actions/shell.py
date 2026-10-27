@@ -13,7 +13,7 @@ import subprocess
 import sys
 from typing import Any
 
-from opal_event.actions import ExecutionOutcome, communicate_bounded, decode_bounded
+from opal_event.actions import ExecutionOutcome, IncompleteCaptureError, communicate_bounded, decode_bounded
 from opal_event.models import ShellAction
 from opal_event.security import subprocess_environment
 from opal_event.templating import TemplateError, render_value
@@ -62,6 +62,8 @@ def run_shell_action(action: ShellAction, event: dict[str, Any], timeout: int, m
         out, err = communicate_bounded(proc, stdin_data, timeout, max_output_bytes)
     except subprocess.TimeoutExpired:
         return ExecutionOutcome(status="timed_out", error_code="timeout", error_message=f"exceeded {timeout}s timeout")
+    except IncompleteCaptureError as exc:
+        return ExecutionOutcome(status="failed", error_code="output_capture", error_message=str(exc))
 
     stdout = decode_bounded(out)
     stderr = decode_bounded(err)

@@ -5,13 +5,18 @@ Uses ``sys.executable -c`` as the shell target so tests are platform-independent
 
 from __future__ import annotations
 
+import contextlib
+import os
+import signal
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
 import opal_event.actions.python_plugin as pp
-from opal_event.actions import communicate_bounded
+from opal_event.actions import IncompleteCaptureError, communicate_bounded
 from opal_event.actions.python_plugin import run_python_action
 from opal_event.actions.shell import run_shell_action
 from opal_event.models import PythonAction, ShellAction
@@ -100,3 +105,57 @@ class TestProcessCleanup:
         with pytest.raises(subprocess.TimeoutExpired):
             communicate_bounded(proc, None, timeout=1, max_output_bytes=65536)
         assert proc.poll() is not None  # tree is dead before the exception propagates
+
+
+class TestIncompleteCapture:
+    """A descendant inheriting a pipe means readers can never see EOF — capture must fail loudly."""
+
+    @staticmethod
+    def _proc(pidfile, stream: str) -> subprocess.Popen:
+        gc = "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(60)"
+        devnull = {"stdout": ",stdout=subprocess.DEVNULL", "stderr": ",stderr=subprocess.DEVNULL", "both": ""}[stream]
+        code = f"import subprocess,sys;subprocess.Popen([sys.executable,'-c',{gc!r},{str(pidfile)!r}]{devnull})"
+        kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "stdin": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        return subprocess.Popen([sys.executable, "-u", "-c", code], **kwargs)
+
+    @staticmethod
+    def _reap_descendant(pidfile) -> None:
+        for _ in range(50):
+            try:
+                pid = int(pidfile.read_text())
+                break
+            except (ValueError, FileNotFoundError):
+                time.sleep(0.1)
+        else:
+            return
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        else:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+    @pytest.mark.parametrize("stream", ["stdout", "stderr"])
+    def test_descendant_holding_pipe_fails_capture(self, tmp_path, stream):
+        pidfile = tmp_path / "gc.pid"
+        proc = self._proc(pidfile, stream)
+        try:
+            with pytest.raises(IncompleteCaptureError):
+                communicate_bounded(proc, None, timeout=30, max_output_bytes=65536)
+            assert not [t for t in threading.enumerate() if t.name in ("opal-event-out", "opal-event-err")]
+        finally:
+            self._reap_descendant(pidfile)
+
+    def test_descendant_via_shell_action_returns_failure(self, tmp_path):
+        pidfile = tmp_path / "gc.pid"
+        gc = "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(60)"
+        code = f"import subprocess,sys;subprocess.Popen([sys.executable,'-c',{gc!r},{str(pidfile)!r}])"
+        try:
+            outcome = run_shell_action(_shell(code), {}, timeout=30, max_output_bytes=65536)
+            assert outcome.status == "failed"
+            assert outcome.error_code == "output_capture"
+        finally:
+            self._reap_descendant(pidfile)

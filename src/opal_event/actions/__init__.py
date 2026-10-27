@@ -87,6 +87,12 @@ def _feed_stdin(stream, data: bytes) -> None:
         stream.close()
 
 
+class IncompleteCaptureError(RuntimeError):
+    """A reader thread could not reach EOF on a child output stream — a descendant inherited the
+    pipe and never closed it, so the captured output is an arbitrary prefix, not a bounded
+    prefix. Raised instead of silently returning possibly-truncated output as a success."""
+
+
 def communicate_bounded(
     proc: subprocess.Popen,
     stdin_data: bytes | None,
@@ -124,10 +130,22 @@ def communicate_bounded(
         for t in readers:
             t.join(timeout=2)
         raise
-    # The process exited; readers hit EOF. If a detached grandchild inherited the pipe and keeps
-    # it open, the bounded join caps the wait instead of hanging like communicate() would.
+    # The process exited; readers normally hit EOF promptly. If a detached grandchild inherited
+    # the pipe and keeps it open, the bounded join caps the wait — then the capture is INCOMPLETE
+    # (not merely bounded): we cannot tell output ends at the limit, so it is a distinct failure.
     for t in readers:
         t.join(timeout=5)
+    stuck = [t for t in readers if t.is_alive()]
+    if stuck:
+        kill_process_tree(proc)  # descendants share the process group; tree cleanup still applies
+        for stream in (proc.stdout, proc.stderr, proc.stdin):
+            with suppress(Exception):
+                stream.close()  # closing our pipe end unblocks the stuck read()
+        for t in readers:
+            t.join(timeout=2)
+        raise IncompleteCaptureError(
+            "child exited but a descendant still holds an output pipe open; captured output is incomplete"
+        )
     return stdout, stderr
 
 

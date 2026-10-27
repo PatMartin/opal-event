@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime
 
 from opal_event.db import Database
@@ -317,3 +318,19 @@ class TestRetention:
         assert db.get_execution("x-back") is None
         assert db.get_execution("x-fwd-new") is not None
         assert db.get_execution("x-back-new") is not None
+
+
+class TestPing:
+    def test_ping_healthy_database(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.ping()  # raises nothing
+        db.close()
+
+    def test_ping_closed_database_raises(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.close()
+        try:
+            db.ping()
+            raise AssertionError("ping on closed db did not raise")
+        except sqlite3.ProgrammingError:
+            pass

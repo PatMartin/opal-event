@@ -97,3 +97,31 @@ class TestPublishReadinessConsistency:
         app_client.app.state.service.db.close()
         assert app_client.get("/api/v1/health/ready").status_code == 503
         assert self._publish(app_client).status_code == 503
+
+
+class TestReadinessProbeCost:
+    """Readiness and publication gating must use the constant-cost ping, not list_topics
+    (which scans event history with SELECT DISTINCT)."""
+
+    def test_ping_does_not_touch_event_history(self, app_client):
+        service = app_client.app.state.service
+        calls = []
+        original = service.db.list_topics
+        service.db.list_topics = lambda *a, **kw: calls.append(1) or original(*a, **kw)
+        assert service.is_ready()
+        assert service.is_database_ready()
+        assert calls == [], "readiness probe invoked list_topics (event-history scan)"
+
+    def test_publication_uses_ping_not_list_topics(self, app_client):
+        service = app_client.app.state.service
+        calls = []
+        original = service.db.list_topics
+        service.db.list_topics = lambda *a, **kw: calls.append(1) or original(*a, **kw)
+        assert app_client.post("/api/v1/events/", json={"topic": "test.probe", "data": {}}).status_code == 202
+        assert calls == [], "publish readiness check invoked list_topics"
+
+    def test_readiness_fails_on_closed_database(self, app_client):
+        service = app_client.app.state.service
+        service.db.close()
+        assert service.is_database_ready() is False
+        assert service.is_ready() is False

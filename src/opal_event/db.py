@@ -83,6 +83,12 @@ class Database:
         with self._lock:
             self._conn.close()
 
+    def ping(self) -> None:
+        """Constant-cost connectivity probe for readiness checks: a bare ``SELECT 1`` — no table
+        scan, no event-history work. Raises if the connection is closed or the DB is unreachable."""
+        with self._lock:
+            self._conn.execute("SELECT 1").fetchone()
+
     # -- events --------------------------------------------------------------------
 
     def insert_event(self, event: dict[str, Any]) -> None:

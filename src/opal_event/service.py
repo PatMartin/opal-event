@@ -150,9 +150,9 @@ class EventService:
     # -- readiness -------------------------------------------------------------------------------
 
     def is_database_ready(self) -> bool:
-        """Cheap SQLite reachability probe (single indexed read)."""
+        """Constant-cost SQLite reachability probe (``SELECT 1`` — no event-history scan)."""
         try:
-            self.db.list_topics()
+            self.db.ping()
             return True
         except Exception:
             return False

@@ -75,8 +75,10 @@ def _drain_stream(stream, buffer: BoundedBuffer) -> None:
     try:
         while chunk := stream.read(65536):
             buffer.feed(chunk)
+    except (OSError, ValueError):
+        pass  # read aborted during incomplete-capture cleanup — same outcome as EOF
     finally:
-        with suppress(OSError):
+        with suppress(OSError, ValueError):
             stream.close()
 
 
@@ -85,6 +87,23 @@ def _feed_stdin(stream, data: bytes) -> None:
         stream.write(data)
     with suppress(OSError):
         stream.close()
+
+
+def _release_pipe_reader(stream) -> None:
+    """Unblock a reader thread stuck in ``read()`` on this pipe — without blocking ourselves.
+
+    Closing a pipe's read end from another thread can hang when a descendant still holds the
+    write end (observed on Windows: the close waits for the pending read). Windows therefore
+    aborts the pending read via CancelIoEx; POSIX closes the fd directly (the read returns
+    EBADF/EOF). Callers must tolerate ValueError/OSError for already-closed wrappers.
+    """
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+
+        ctypes.windll.kernel32.CancelIoEx(msvcrt.get_osfhandle(stream.fileno()), None)
+    else:
+        os.close(stream.fileno())
 
 
 class IncompleteCaptureError(RuntimeError):
@@ -133,16 +152,26 @@ def communicate_bounded(
     # The process exited; readers normally hit EOF promptly. If a detached grandchild inherited
     # the pipe and keeps it open, the bounded join caps the wait — then the capture is INCOMPLETE
     # (not merely bounded): we cannot tell output ends at the limit, so it is a distinct failure.
+    # Cleanup is bounded end-to-end: reader joins (5s) + tree kill + fd release + final joins (2s)
+    # — a caller never blocks on a descendant's lifetime beyond this documented interval.
     for t in readers:
         t.join(timeout=5)
     stuck = [t for t in readers if t.is_alive()]
     if stuck:
-        kill_process_tree(proc)  # descendants share the process group; tree cleanup still applies
+        kill_process_tree(proc)  # descendants in the child's process group die with it
+        # A surviving DETACHED descendant (separate process group — we deliberately do NOT kill
+        # unrelated processes) can keep the pipe write end open forever. Abort the readers'
+        # pending reads; only then is closing the streams guaranteed not to block.
         for stream in (proc.stdout, proc.stderr, proc.stdin):
-            with suppress(Exception):
-                stream.close()  # closing our pipe end unblocks the stuck read()
+            if stream is not None:
+                with suppress(OSError, ValueError):
+                    _release_pipe_reader(stream)
         for t in readers:
             t.join(timeout=2)
+        for stream in (proc.stdout, proc.stderr, proc.stdin):
+            if stream is not None:
+                with suppress(Exception):
+                    stream.close()
         raise IncompleteCaptureError(
             "child exited but a descendant still holds an output pipe open; captured output is incomplete"
         )
@@ -155,7 +184,7 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
         with suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
     else:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], check=False, capture_output=True)
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], check=False, capture_output=True, timeout=10)
 
 
 def run_action(

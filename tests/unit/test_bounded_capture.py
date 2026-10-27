@@ -159,3 +159,33 @@ class TestIncompleteCapture:
             assert outcome.error_code == "output_capture"
         finally:
             self._reap_descendant(pidfile)
+
+    def test_detached_descendant_in_own_process_group(self, tmp_path):
+        """A descendant in a SEPARATE session/group survives the tree kill (we don't kill
+        unrelated processes) — fd release must still free the reader and bound the cleanup."""
+        pidfile = tmp_path / "gc.pid"
+        gc = "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(60)"
+        if sys.platform == "win32":
+            # DETACHED_PROCESS drops inherited std handles on Windows — CREATE_NEW_PROCESS_GROUP
+            # alone gives the separate group while keeping the pipe (orphans already escape
+            # taskkill /T once the direct child exits).
+            flags = "creationflags=subprocess.CREATE_NEW_PROCESS_GROUP"
+        else:
+            flags = "start_new_session=True"
+        code = f"import subprocess,sys;subprocess.Popen([sys.executable,'-c',{gc!r},{str(pidfile)!r}],{flags})"
+        kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "stdin": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        proc = subprocess.Popen([sys.executable, "-u", "-c", code], **kwargs)
+        try:
+            t0 = time.monotonic()
+            with pytest.raises(IncompleteCaptureError):
+                communicate_bounded(proc, None, timeout=30, max_output_bytes=65536)
+            # bounded cleanup: 5s EOF join x2 + tree kill + read abort + 2s reader join (+ margin)
+            assert time.monotonic() - t0 < 25, "cleanup blocked on detached descendant"
+            alive = [t for t in threading.enumerate() if t.name in ("opal-event-out", "opal-event-err")]
+            assert not alive, f"leaked reader threads: {alive}"
+        finally:
+            self._reap_descendant(pidfile)

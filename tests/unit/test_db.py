@@ -222,3 +222,56 @@ class TestRetention:
         db.insert_event(self._event("old", "2020-01-01T00:00:00Z"))
         assert db.cleanup_retention(7) == 1
         assert db.cleanup_retention(7) == 0
+
+    def test_timezone_offsets_normalized(self, tmp_path, monkeypatch):
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        # 14:00+02:00 == 12:00 UTC -> exactly at cutoff -> kept; 11:59:59.999999+02:00 -> deleted
+        db.insert_event(self._event("off-eq", "2026-01-03T14:00:00+02:00"))
+        db.insert_event(self._event("off-old", "2026-01-03T13:59:59.999999+02:00"))
+        assert db.cleanup_retention(7) == 1
+        assert db.get_event("off-eq") is not None and db.get_event("off-old") is None
+
+    def test_legacy_and_fraction_formats(self, tmp_path, monkeypatch):
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        # no 'Z' suffix (legacy), no fraction, and a 1-digit fraction — all boundary-consistent
+        db.insert_event(self._event("no-z", "2026-01-03T12:00:00"))
+        db.insert_event(self._event("frac1", "2026-01-03T12:00:00.5Z"))
+        db.insert_event(self._event("old-legacy", "2020-01-01 00:00:00"))
+        assert db.cleanup_retention(7) == 1
+        assert db.get_event("no-z") is not None
+        assert db.get_event("frac1") is not None
+        assert db.get_event("old-legacy") is None
+
+    def test_both_tables_boundary_and_repeat(self, tmp_path, monkeypatch):
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        db.insert_event(self._event("e-old", "2026-01-03T11:59:59.999999Z"))
+        db.insert_execution(self._exec("x-old", "2026-01-03T11:59:59.999999Z"))
+        db.insert_event(self._event("e-at", "2026-01-03T12:00:00Z"))
+        db.insert_execution(self._exec("x-at", "2026-01-03T12:00:00Z"))
+        assert db.cleanup_retention(7) == 2
+        assert db.cleanup_retention(7) == 0
+        assert db.get_event("e-at") is not None and db.get_execution("x-at") is not None

@@ -294,23 +294,48 @@ class Database:
 
     # -- retention --------------------------------------------------------------------
 
+    @staticmethod
+    def _normalized_ts_sql(column: str) -> str:
+        """SQL expression rendering ``column`` as a fixed-width ``YYYY-MM-DD HH:MM:SS.ffffff`` UTC
+        string (26 chars), so a plain lexical ``<`` is an exact microsecond comparison.
+
+        ``strftime('%f')`` supplies the tz-normalized wall time incl. milliseconds; the fraction's
+        digits 4-6 (the microsecond tail) are re-appended from the raw value — timezone offsets
+        are always whole-minute so the sub-second tail survives the UTC conversion unchanged.
+        Rows SQLite cannot parse yield NULL, which never compares ``<`` — never deleted.
+        """
+        frac = f"substr({column}, instr({column}, '.')+1)"
+        end = (
+            f"min(coalesce(nullif(instr({frac},'Z'),0),99),"
+            f"coalesce(nullif(instr({frac},'+'),0),99),"
+            f"coalesce(nullif(instr({frac},'-'),0),99))"
+        )
+        return (
+            f"strftime('%Y-%m-%d %H:%M:%f', {column}) || "
+            f"CASE WHEN instr({column},'.')=0 THEN '000' "
+            f"ELSE substr(substr({frac},1,{end}-1)||'000000',4,3) END"
+        )
+
     def cleanup_retention(self, retention_days: int) -> int:
         """Deletes events/executions strictly older than ``retention_days``; returns rows removed.
 
-        Stored timestamps are ISO-8601 ``YYYY-MM-DDTHH:MM:SS[.ffffff]Z`` while SQLite's
-        ``datetime('now')`` yields space-separated ``YYYY-MM-DD HH:MM:SS`` — a raw string
-        comparison misorders every same-date prefix ('T' > ' '). Both sides are therefore
-        compared through ``julianday`` on space-normalized strings, giving a real UTC
-        chronological comparison. Rows exactly on the cutoff are kept (strict ``<``).
+        Comparison is microsecond-exact: each stored ISO-8601 timestamp (``T``, ``Z`` or a
+        numeric UTC offset, with or without fractional seconds) is normalized to a fixed-width
+        UTC string and compared lexically — ``julianday`` would lose sub-millisecond precision
+        (float day-number) and misjudge boundary rows. Rows exactly on the cutoff are kept
+        (strict ``<``). A day-level string prefilter keeps the timestamp index useful for the
+        bulk of old rows on large histories.
         """
-        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).strftime("%Y-%m-%d %H:%M:%S.%f")
+        cutoff_dt = datetime.now(UTC) - timedelta(days=retention_days)
+        cutoff = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+        cutoff_day = cutoff_dt.strftime("%Y-%m-%d")
         with self._lock, self._conn:
             events = self._conn.execute(
-                "DELETE FROM events WHERE julianday(replace(replace(timestamp,'T',' '),'Z','')) < julianday(?)",
-                (cutoff,),
+                f"DELETE FROM events WHERE timestamp < ? OR {self._normalized_ts_sql('timestamp')} < ?",
+                (cutoff_day, cutoff),
             ).rowcount
             executions = self._conn.execute(
-                "DELETE FROM executions WHERE julianday(replace(replace(created_at,'T',' '),'Z','')) < julianday(?)",
-                (cutoff,),
+                f"DELETE FROM executions WHERE created_at < ? OR {self._normalized_ts_sql('created_at')} < ?",
+                (cutoff_day, cutoff),
             ).rowcount
             return events + executions

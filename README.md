@@ -329,6 +329,24 @@ Action/rule/backup create and update commands accept a full JSON payload via `--
 `--file <path>`, or stdin — this is the simplest reliable way to expose the three polymorphic action
 types (shell/http/python) and nested rule conditions without re-implementing every field as a flag.
 
+## Benchmarking
+
+`benchmark.py` is an **opt-in** throughput probe (not run in CI or pytest). It provisions an
+isolated throwaway service on ephemeral `127.0.0.1` ports, drives sustained publication at 100 /
+1000 / 10000 events per minute over REST and raw ZeroMQ, and measures each pipeline stage
+separately — publisher acceptance, observer processing, rule matching, and execution completion:
+
+```bash
+.venv/bin/python benchmark.py                          # defaults (10s per scenario)
+.venv/bin/python benchmark.py --duration 15 --rule-counts 1,25 --json bench.json
+```
+
+Interpreting the columns: `pub/min` is what the publisher path actually accepted, `obs/min` is
+what the observer processed — a gap (or growing `drain_s`) means the observer lags ingress.
+`match/m`/`exec/m` show rule-match and execution-completion rates; `qpeak`/`drop` expose executor
+backpressure. `--rule-counts` scales rule-evaluation cost (non-matching rules still force
+evaluation). Numbers are host-relative — compare runs on the same machine, not to absolutes.
+
 ## SPA
 
 `spa/` is a React + TypeScript + Vite single-page app with tabs for **Health**, **Events**,

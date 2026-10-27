@@ -66,3 +66,34 @@ class TestHealthReporting:
         monkeypatch.setattr(Broker, "running", property(lambda self: False))
         assert app_client.get("/api/v1/health/").json()["status"] == "degraded"
         assert app_client.get("/api/v1/health/ready").status_code == 503
+
+
+class TestPublishReadinessConsistency:
+    """POST /api/v1/events/ and GET /api/v1/health/ready share one authoritative check:
+    whatever makes readiness 503 must also refuse publication with 503."""
+
+    @staticmethod
+    def _publish(app_client):
+        return app_client.post("/api/v1/events/", json={"topic": "test.probe", "data": {}})
+
+    def test_healthy_service_accepts_and_reports_ready(self, app_client):
+        assert app_client.get("/api/v1/health/ready").status_code == 200
+        assert self._publish(app_client).status_code == 202
+
+    def test_broker_failure_blocks_publication_and_readiness(self, app_client, monkeypatch):
+        monkeypatch.setattr(Broker, "running", property(lambda self: False))
+        assert app_client.get("/api/v1/health/ready").status_code == 503
+        assert self._publish(app_client).status_code == 503
+
+    def test_dead_worker_blocks_publication_and_readiness(self, app_client):
+        service = app_client.app.state.service
+        worker = service.executor._workers[0]
+        service.executor._worker_events[worker].set()
+        assert _wait_until(lambda: not worker.is_alive())
+        assert app_client.get("/api/v1/health/ready").status_code == 503
+        assert self._publish(app_client).status_code == 503
+
+    def test_database_failure_blocks_publication_and_readiness(self, app_client):
+        app_client.app.state.service.db.close()
+        assert app_client.get("/api/v1/health/ready").status_code == 503
+        assert self._publish(app_client).status_code == 503

@@ -149,8 +149,18 @@ class EventService:
 
     # -- readiness -------------------------------------------------------------------------------
 
+    def is_database_ready(self) -> bool:
+        """Cheap SQLite reachability probe (single indexed read)."""
+        try:
+            self.db.list_topics()
+            return True
+        except Exception:
+            return False
+
     def is_ready(self) -> bool:
-        return self.broker.running and self.executor.healthy
+        """Authoritative readiness: the service can safely accept and process publications only
+        when the broker is running, the executor worker pool is healthy, and SQLite answers."""
+        return self.broker.running and self.executor.healthy and self.is_database_ready()
 
     async def watch_config_file(self) -> None:
         """Watches the YAML config file on disk and hot-reloads on change. Runs as an asyncio task

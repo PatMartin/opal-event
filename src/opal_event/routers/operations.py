@@ -18,18 +18,10 @@ logger = logging.getLogger("opal_event.routers.operations")
 router = APIRouter()
 
 
-def _database_ready(service: EventService) -> bool:
-    try:
-        service.db.list_topics()
-        return True
-    except Exception:
-        return False
-
-
 @router.get("/api/v1/health/", response_model=Health, dependencies=[Depends(require_auth)])
 def get_health(service: Annotated[EventService, Depends(get_service)], config=Depends(get_config)):
     broker_running = service.broker.running
-    database_ready = _database_ready(service)
+    database_ready = service.is_database_ready()
     executor_healthy = service.executor.healthy
     reload_ok = not config.reload_failed
     status = "ok" if (broker_running and database_ready and executor_healthy and reload_ok) else "degraded"
@@ -72,9 +64,8 @@ def health_live():
 
 @router.get("/api/v1/health/ready", response_model=HealthProbe)
 def health_ready(service: Annotated[EventService, Depends(get_service)]):
-    broker_ok = service.broker.running
-    db_ok = _database_ready(service)
-    executor_ok = service.executor.healthy
-    if not (broker_ok and db_ok and executor_ok):
+    # One authoritative readiness check shared with REST publication — a 503 here means
+    # POST /api/v1/events/ would also be refused, and vice versa.
+    if not service.is_ready():
         raise ServiceUnavailableError("broker, persistence, or executor subsystem is not ready")
     return HealthProbe(status="ok", details={"broker": "ok", "database": "ok", "executor": "ok"})

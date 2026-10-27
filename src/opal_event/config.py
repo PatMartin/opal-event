@@ -48,6 +48,12 @@ def _get_path(data: dict, path: tuple[str, ...]):
     return current
 
 
+def _restart_only_snapshot(settings: Settings) -> dict:
+    """Restart-only values extracted from a *validated* settings dict (defaults normalized)."""
+    raw = settings.model_dump(mode="json")
+    return {path: _get_path(raw, path) for path in RESTART_ONLY_PATHS}
+
+
 class ConfigError(Exception):
     """Raised when the YAML configuration file is structurally or semantically invalid."""
 
@@ -81,6 +87,9 @@ class ConfigStore:
         self._settings = settings
         self._raw_at_load = raw
         self._revision = _revision_of(text)
+        # The effective startup values of restart-only settings: the baseline pending_restart is
+        # always measured against, so reverting a change clears the flag again.
+        self._restart_baseline = _restart_only_snapshot(settings)
 
     @property
     def settings(self) -> Settings:
@@ -131,20 +140,14 @@ class ConfigStore:
                 self._reload_failed = True
                 return False
             old_settings = self._settings
-            self._detect_pending_restart(self._raw_at_load, raw)
             self._settings = new_settings
             self._raw_at_load = raw
             self._revision = new_revision
             self._reload_failed = False
+            self._pending_restart = _restart_only_snapshot(new_settings) != self._restart_baseline
             if self._on_reload is not None:
                 self._on_reload(old_settings, new_settings)
             return True
-
-    def _detect_pending_restart(self, old_raw: dict, new_raw: dict) -> None:
-        for path in RESTART_ONLY_PATHS:
-            if _get_path(old_raw, path) != _get_path(new_raw, path):
-                self._pending_restart = True
-                return
 
     # -- persistence -----------------------------------------------------------------
 
@@ -178,13 +181,13 @@ class ConfigStore:
             except Exception:
                 self._reload_failed = True
                 raise
-            self._detect_pending_restart(self._raw_at_load, new_settings.model_dump(mode="json"))
             new_revision = self._write_atomic(new_settings.model_dump(mode="json"))
             old_settings = self._settings
             self._settings = new_settings
             self._raw_at_load = new_settings.model_dump(mode="json")
             self._revision = new_revision
             self._reload_failed = False
+            self._pending_restart = _restart_only_snapshot(new_settings) != self._restart_baseline
             if self._on_reload is not None:
                 self._on_reload(old_settings, new_settings)
             return new_settings

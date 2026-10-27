@@ -71,3 +71,80 @@ class TestConfigStore:
         store.update(lambda raw: {**raw, "execution": {**raw["execution"], "max_workers": 3}})
         assert len(calls) == 1
         assert calls[0][1].execution.max_workers == 3
+
+
+class TestPendingRestart:
+    @staticmethod
+    def _rewrite(path, mutate):
+        raw = yaml.safe_load(path.read_text())
+        mutate(raw)
+        path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    def test_no_pending_restart_initially(self, config_file):
+        assert ConfigStore(config_file).pending_restart is False
+
+    def test_restart_only_change_sets_flag(self, config_file):
+        store = ConfigStore(config_file)
+        self._rewrite(config_file, lambda r: r["server"].__setitem__("port", free_port()))
+        assert store.reload_from_disk()
+        assert store.pending_restart is True
+
+    def test_reverting_change_clears_flag(self, config_file):
+        store = ConfigStore(config_file)
+        original = config_file.read_text()
+        self._rewrite(config_file, lambda r: r["server"].__setitem__("port", free_port()))
+        assert store.reload_from_disk()
+        assert store.pending_restart is True
+        config_file.write_text(original, encoding="utf-8")
+        assert store.reload_from_disk()
+        assert store.pending_restart is False
+
+    def test_update_revert_clears_flag(self, config_file):
+        store = ConfigStore(config_file)
+        original_port = store.settings.server.port
+        store.update(lambda r: {**r, "server": {**r["server"], "port": free_port()}})
+        assert store.pending_restart is True
+        store.update(lambda r: {**r, "server": {**r["server"], "port": original_port}})
+        assert store.pending_restart is False
+
+    def test_multiple_restart_only_changes(self, config_file):
+        store = ConfigStore(config_file)
+
+        def mutate(r):
+            r["server"]["port"] = free_port()
+            r["zeromq"]["publishers"] = f"tcp://127.0.0.1:{free_port()}"
+
+        self._rewrite(config_file, mutate)
+        assert store.reload_from_disk()
+        assert store.pending_restart is True
+
+    def test_invalid_reload_preserves_pending_state(self, config_file):
+        store = ConfigStore(config_file)
+        config_file.write_text("bogus: [unclosed\n", encoding="utf-8")
+        assert store.reload_from_disk() is False
+        assert store.pending_restart is False
+        assert store.reload_failed is True
+
+    def test_successful_reload_after_invalid(self, config_file):
+        store = ConfigStore(config_file)
+        valid = config_file.read_text()
+        config_file.write_text("bogus: [unclosed\n", encoding="utf-8")
+        assert store.reload_from_disk() is False
+        config_file.write_text(valid, encoding="utf-8")
+        self._rewrite(config_file, lambda r: r["server"].__setitem__("port", free_port()))
+        assert store.reload_from_disk()
+        assert store.reload_failed is False
+        assert store.pending_restart is True
+
+    def test_live_setting_update_does_not_set_flag(self, config_file):
+        store = ConfigStore(config_file)
+        store.update(lambda r: {**r, "execution": {**r["execution"], "queue_size": 42}})
+        assert store.pending_restart is False
+
+    def test_restart_only_change_via_update_does_not_activate(self, config_file):
+        """Desired value changes but the running binding is untouched — flag marks it pending."""
+        store = ConfigStore(config_file)
+        new_port = free_port()
+        store.update(lambda r: {**r, "server": {**r["server"], "port": new_port}})
+        assert store.pending_restart is True
+        assert store.settings.server.port == new_port  # desired value persisted, flag tells ops to restart

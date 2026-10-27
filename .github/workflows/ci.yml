@@ -107,6 +107,10 @@ jobs:
         working-directory: spa
         run: npm ci
 
+      - name: Run SPA unit tests
+        working-directory: spa
+        run: npm test
+
       - name: Typecheck & Build SPA
         working-directory: spa
         run: |

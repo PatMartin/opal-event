@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import type { Execution } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
+import { createRequestGate, fetchGuarded } from "../requestGate";
 
 const PAGE_SIZE = 50;
 
@@ -16,15 +17,21 @@ export default function ExecutionsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
+  // One gate for ALL list loads: the newest load (refresh, pagination, or filter) always wins;
+  // any response that resolves after a newer load was issued is discarded as stale.
+  const listGate = useRef(createRequestGate()).current;
 
-  async function load(cursor: string | null) {
+  async function load(cursor: string | null, statusFilter: string) {
     try {
       setError(null);
-      const data = await api.listExecutions({
-        status: status || undefined,
-        limit: PAGE_SIZE,
-        cursor: cursor ?? undefined,
-      });
+      const data = await fetchGuarded(listGate, () =>
+        api.listExecutions({
+          status: statusFilter || undefined,
+          limit: PAGE_SIZE,
+          cursor: cursor ?? undefined,
+        }),
+      );
+      if (data === null) return; // stale response — a newer load already superseded this one
       setItems(data.items);
       setNextCursor(data.next_cursor);
       setHasMore(data.has_more);
@@ -34,16 +41,20 @@ export default function ExecutionsPage() {
   }
 
   useEffect(() => {
-    // Filters changed: pagination resets to the first page and auto-refresh restarts there.
+    // Filters changed: outstanding loads are invalidated, pagination resets, refresh restarts.
+    listGate.invalidate();
     setPage(0);
     setCursors([null]);
     setSelectedId(null);
-    void load(null);
+    void load(null, status);
     const interval = setInterval(() => {
       // Refresh only the first page; browsing older history must not be yanked back to page 1.
-      if (pageRef.current === 0) void load(null);
+      if (pageRef.current === 0) void load(null, status);
     }, 4000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      listGate.invalidate(); // unmount / filter change: in-flight loads can no longer apply
+    };
   }, [status]);
 
   async function goNext() {
@@ -55,14 +66,14 @@ export default function ExecutionsPage() {
       return c;
     });
     setPage(target);
-    await load(nextCursor);
+    await load(nextCursor, status);
   }
 
   async function goPrev() {
     if (page === 0) return;
     const target = page - 1;
     setPage(target);
-    await load(cursors[target]);
+    await load(cursors[target], status);
   }
 
   return (
@@ -81,7 +92,7 @@ export default function ExecutionsPage() {
             ))}
           </select>
         </label>
-        <button className="secondary" onClick={() => void load(cursors[page])}>
+        <button className="secondary" onClick={() => void load(cursors[page], status)}>
           Refresh
         </button>
       </div>
@@ -130,14 +141,19 @@ export default function ExecutionsPage() {
 function ExecutionDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [detail, setDetail] = useState<Execution | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  // Gate per mounted instance: a slower fetch for a previous selection can never overwrite
+  // the detail of the selection the user made afterwards.
+  const gate = useRef(createRequestGate()).current;
 
   useEffect(() => {
     setDetail(null);
     setDetailError(null);
-    api
-      .getExecution(id)
-      .then(setDetail)
+    fetchGuarded(gate, () => api.getExecution(id))
+      .then((d) => {
+        if (d !== null) setDetail(d);
+      })
       .catch((err) => setDetailError(err instanceof ApiError ? err.message : String(err)));
+    return () => gate.invalidate();
   }, [id]);
 
   if (detailError) {

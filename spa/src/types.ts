@@ -146,3 +146,21 @@ export interface RuleTestResult {
   action_ids: string[];
   checks: Record<string, unknown>[];
 }
+
+export interface ConfigBackup {
+  format_version: 1;
+  settings: PortableSettings;
+  actions: Action[];
+  rules: Rule[];
+}
+
+export interface ValidationReport {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface BackupImportResult {
+  revision: string;
+  pending_restart: boolean;
+}

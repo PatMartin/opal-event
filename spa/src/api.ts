@@ -156,6 +156,12 @@ export const api = {
   },
   patchSettings: (patch: Record<string, unknown>, ifMatch: string) =>
     request<import("./types").PortableSettings>("PATCH", "/api/v1/settings/", patch, { "If-Match": ifMatch }),
+
+  exportBackup: () => request<import("./types").ConfigBackup>("GET", "/api/v1/backup/export"),
+  validateBackup: (backup: unknown) =>
+    request<import("./types").ValidationReport>("POST", "/api/v1/backup/validate", backup),
+  importBackup: (backup: unknown, ifMatch: string) =>
+    request<import("./types").BackupImportResult>("POST", "/api/v1/backup/import", { backup }, { "If-Match": ifMatch }),
 };
 
 function authHeaders(): Record<string, string> {

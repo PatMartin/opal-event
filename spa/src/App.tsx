@@ -5,6 +5,7 @@ import RulesPage from "./pages/RulesPage";
 import ActionsPage from "./pages/ActionsPage";
 import ExecutionsPage from "./pages/ExecutionsPage";
 import SettingsPage from "./pages/SettingsPage";
+import BackupPage from "./pages/BackupPage";
 import HealthPage from "./pages/HealthPage";
 
 const TABS = [
@@ -14,6 +15,7 @@ const TABS = [
   { key: "actions", label: "Actions", component: ActionsPage },
   { key: "executions", label: "Executions", component: ExecutionsPage },
   { key: "settings", label: "Settings", component: SettingsPage },
+  { key: "backup", label: "Backup", component: BackupPage },
 ] as const;
 
 export default function App() {

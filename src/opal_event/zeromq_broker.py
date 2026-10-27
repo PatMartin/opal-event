@@ -188,6 +188,19 @@ class Broker:
         )
 
     def start(self) -> None:
+        try:
+            self._start_inner()
+        except Exception:
+            # Whatever did initialize (context, sockets, authenticator, tempdir, threads) is
+            # released by stop(), which is safe on any partially started state; the original
+            # exception propagates unchanged.
+            try:
+                self.stop()
+            except Exception:
+                logger.exception("broker rollback after failed start raised an additional error")
+            raise
+
+    def _start_inner(self) -> None:
         self._ctx = zmq.Context()
         curve = self._settings.curve
 

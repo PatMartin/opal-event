@@ -43,6 +43,19 @@ class EventService:
         config.set_reload_callback(self._on_config_reload)
 
     def start(self) -> None:
+        try:
+            self._start_inner()
+        except Exception:
+            # Roll back everything that did initialize, in reverse order, so a failed start never
+            # leaks worker threads, sockets, or the SQLite handle. stop() is idempotent and safe on
+            # partial state; its own failures are logged but never mask the original exception.
+            try:
+                self.stop()
+            except Exception:
+                logger.exception("rollback after failed startup raised an additional error")
+            raise
+
+    def _start_inner(self) -> None:
         # Reconcile executions interrupted by a previous abrupt shutdown before accepting any new
         # work (queued -> dropped, running -> failed, both error_code=service_restart).
         reconciled = self.db.reconcile_interrupted_executions()

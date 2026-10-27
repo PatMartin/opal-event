@@ -1,14 +1,19 @@
+import json
 import uuid
 from datetime import datetime
 
+import pytest
+from pydantic import ValidationError
+
 from opal_event.models import EventInput
-from opal_event.normalization import normalize_event, utc_now_iso
+from opal_event.normalization import is_rfc3339_datetime, is_uuid_string, normalize_event, utc_now_iso
+from opal_event.zeromq_broker import parse_and_normalize
 
 
 class TestNormalizeEvent:
     def test_preserves_explicit_fields_from_event_input(self):
         input_data = EventInput(
-            id="explicit-id-123",
+            id="11111111-2222-3333-4444-555555555555",
             topic="test.topic",
             source="custom-source",
             timestamp="2026-10-24T12:00:00Z",
@@ -16,7 +21,7 @@ class TestNormalizeEvent:
         )
         normalized = normalize_event(input_data)
         assert normalized == {
-            "id": "explicit-id-123",
+            "id": "11111111-2222-3333-4444-555555555555",
             "topic": "test.topic",
             "source": "custom-source",
             "timestamp": "2026-10-24T12:00:00Z",
@@ -24,7 +29,7 @@ class TestNormalizeEvent:
         }
 
     def test_fills_defaults_for_minimal_event_input(self):
-        input_data = EventInput(topic="telemetry.metric")
+        input_data = EventInput(topic="telemetry.metric", data=None)
         normalized = normalize_event(input_data)
 
         # ID generated as valid UUIDv4
@@ -138,3 +143,62 @@ class TestNormalizeEvent:
         assert "session_id" not in normalized
         assert "transaction_id" not in normalized
         assert "causation_id" not in normalized
+
+
+class TestEventInputWireValidation:
+    """REST EventInput must enforce the same id/timestamp/data rules as the ZeroMQ observer."""
+
+    @staticmethod
+    def _parse(**overrides):
+        body = {"topic": "test.input", "data": {}}
+        body.update(overrides)
+        return EventInput.model_validate(body)
+
+    def test_valid_uuid_id_accepted(self):
+        e = self._parse(id=str(uuid.uuid4()))
+        assert e.id is not None
+
+    @pytest.mark.parametrize("bad_id", ["not-a-uuid", "12345", "g47e1c2d-8f3a-4b5c-9d6e-7f8a9b0c1d2e", ""])
+    def test_invalid_uuid_rejected(self, bad_id):
+        with pytest.raises(ValidationError):
+            self._parse(id=bad_id)
+
+    @pytest.mark.parametrize("ts", ["2026-01-10T12:00:00Z", "2026-01-10T12:00:00.123456Z", "2026-01-10T14:00:00+02:00"])
+    def test_valid_rfc3339_timestamp_accepted(self, ts):
+        e = self._parse(timestamp=ts)
+        assert e.timestamp == ts
+
+    @pytest.mark.parametrize("bad_ts", ["2026-01-10 12:00:00", "2026-01-10", "not-a-date", "2026-13-99T99:99:99Z", ""])
+    def test_invalid_timestamp_rejected(self, bad_ts):
+        with pytest.raises(ValidationError):
+            self._parse(timestamp=bad_ts)
+
+    def test_explicit_null_data_allowed(self):
+        e = self._parse(data=None)
+        assert e.data is None
+
+    def test_missing_data_rejected(self):
+        with pytest.raises(ValidationError):
+            EventInput.model_validate({"topic": "test.input"})
+
+    def test_omitted_metadata_generates_valid_wire_fields(self):
+        normalized = normalize_event(self._parse())
+        assert is_uuid_string(normalized["id"])
+        assert is_rfc3339_datetime(normalized["timestamp"])
+        assert normalized["source"] == "opal-event-rest"
+
+    def test_normalized_rest_event_passes_observer_validation(self):
+        """The full REST path output must satisfy parse_and_normalize's wire checks."""
+        normalized = normalize_event(self._parse(id=str(uuid.uuid4()), source="rest_api", timestamp="2026-01-10T12:00:00Z"))
+        frame1 = normalized["topic"].encode("utf-8")
+        frame2 = json.dumps(normalized).encode("utf-8")
+        parsed = parse_and_normalize(frame1, frame2, max_event_bytes=1048576)
+        assert parsed["id"] == normalized["id"]
+        assert parsed["data"] == normalized["data"]
+
+    def test_null_data_normalized_passes_observer_validation(self):
+        normalized = normalize_event(self._parse(data=None))
+        frame1 = normalized["topic"].encode("utf-8")
+        frame2 = json.dumps(normalized).encode("utf-8")
+        parsed = parse_and_normalize(frame1, frame2, max_event_bytes=1048576)
+        assert parsed["data"] is None

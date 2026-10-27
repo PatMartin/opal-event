@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -9,6 +10,30 @@ from typing import Any
 
 from opal_event.models import EventInput
 from opal_event.opal_context import extract_event_metadata
+
+RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
+
+
+def is_uuid_string(value: Any) -> bool:
+    """True iff ``value`` is a string parseable as a UUID (wire `id` field format)."""
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def is_rfc3339_datetime(value: Any) -> bool:
+    """True iff ``value`` is a string matching the RFC3339 date-time wire format."""
+    if not isinstance(value, str) or not RFC3339_RE.match(value):
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def utc_now_iso() -> str:

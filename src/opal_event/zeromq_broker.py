@@ -36,9 +36,7 @@ import shutil
 import tempfile
 import threading
 import time
-import uuid
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any
 
 import zmq
@@ -46,13 +44,12 @@ import zmq.auth
 from zmq.auth.thread import ThreadAuthenticator
 
 from opal_event.models import TOPIC_PATTERN, ZeroMqSettings
-from opal_event.normalization import normalize_event
+from opal_event.normalization import is_rfc3339_datetime, is_uuid_string, normalize_event
 
 logger = logging.getLogger("opal_event.broker")
 
 TOPIC_MAX_LENGTH = 255
 _TOPIC_RE = re.compile(TOPIC_PATTERN)
-_RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 
 
 def _write_public_cert(path: str, public_key: bytes) -> None:
@@ -109,24 +106,14 @@ def _check_optional_metadata(envelope: dict[str, Any]) -> None:
     optional fields are type-checked, and only when present.
     """
     event_id = envelope.get("id")
-    if event_id is not None:
-        if not isinstance(event_id, str):
-            raise InvalidEventError("envelope 'id' must be a UUID string")
-        try:
-            uuid.UUID(event_id)
-        except ValueError as exc:
-            raise InvalidEventError("envelope 'id' must be a UUID") from exc
+    if event_id is not None and not is_uuid_string(event_id):
+        raise InvalidEventError("envelope 'id' must be a UUID")
     source = envelope.get("source")
     if source is not None and (not isinstance(source, str) or not source):
         raise InvalidEventError("envelope 'source' must be a nonempty string")
     timestamp = envelope.get("timestamp")
-    if timestamp is not None:
-        if not isinstance(timestamp, str) or not _RFC3339_RE.match(timestamp):
-            raise InvalidEventError("envelope 'timestamp' must be an RFC3339 date-time")
-        try:
-            datetime.fromisoformat(timestamp)
-        except ValueError as exc:
-            raise InvalidEventError("envelope 'timestamp' is not a valid date-time") from exc
+    if timestamp is not None and not is_rfc3339_datetime(timestamp):
+        raise InvalidEventError("envelope 'timestamp' must be an RFC3339 date-time")
 
 
 class Broker:

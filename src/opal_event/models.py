@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TOPIC_PATTERN = r"^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$"
 RULE_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -29,11 +29,36 @@ class Strict(BaseModel):
 
 
 class EventInput(Strict):
+    """REST event input. Validation mirrors the ZeroMQ observer's wire rules so a 202 receipt
+    never precedes an observer rejection: supplied ``id`` must be a UUID, ``timestamp`` an
+    RFC3339 date-time, ``topic``/``source`` keep their documented constraints, and ``data`` is
+    required (explicit JSON null is allowed). Omitted id/timestamp are generated downstream."""
+
     id: str | None = Field(default=None)
     topic: Annotated[str, Field(pattern=TOPIC_PATTERN, max_length=255)]
     source: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     timestamp: str | None = None
-    data: Any = None
+    data: Any
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_uuid(cls, v: str | None) -> str | None:
+        if v is not None:
+            from opal_event.normalization import is_uuid_string
+
+            if not is_uuid_string(v):
+                raise ValueError("id must be a UUID")
+        return v
+
+    @field_validator("timestamp")
+    @classmethod
+    def _timestamp_is_rfc3339(cls, v: str | None) -> str | None:
+        if v is not None:
+            from opal_event.normalization import is_rfc3339_datetime
+
+            if not is_rfc3339_datetime(v):
+                raise ValueError("timestamp must be an RFC3339 date-time")
+        return v
 
 
 class Event(Strict):

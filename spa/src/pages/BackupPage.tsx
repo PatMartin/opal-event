@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import type { BackupImportResult, ConfigBackup, ValidationReport } from "../types";
+import { createRequestGate, fetchGuarded } from "../requestGate";
 
 export default function BackupPage() {
   const [error, setError] = useState<string | null>(null);
@@ -12,6 +13,11 @@ export default function BackupPage() {
   const [etag, setEtag] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [importing, setImporting] = useState(false);
+  // Gate for file-select -> validate -> etag flow: a newer selection supersedes all in-flight
+  // reads/validations so a stale response can't overwrite the newer file's state.
+  const gate = useRef(createRequestGate()).current;
+
+  useEffect(() => () => gate.invalidate(), [gate]);
   const [result, setResult] = useState<BackupImportResult | null>(null);
 
   function describe(err: unknown): string {
@@ -35,6 +41,7 @@ export default function BackupPage() {
   }
 
   async function onFileSelected(file: File | undefined) {
+    gate.invalidate(); // retire all in-flight reads/validations from any previous selection
     setError(null);
     setReport(null);
     setResult(null);
@@ -47,11 +54,17 @@ export default function BackupPage() {
     }
     setFileName(file.name);
     try {
-      const parsed = JSON.parse(await file.text()) as ConfigBackup;
-      setBackup(parsed);
-      const [validation, { etag: currentEtag }] = await Promise.all([api.validateBackup(parsed), api.getSettings()]);
-      setReport(validation);
-      setEtag(currentEtag);
+      // The whole read+validate+etag sequence is one gated unit: all state updates happen
+      // together, only if this is still the newest selection.
+      const outcome = await fetchGuarded(gate, async () => {
+        const parsed = JSON.parse(await file.text()) as ConfigBackup;
+        const [validation, { etag: currentEtag }] = await Promise.all([api.validateBackup(parsed), api.getSettings()]);
+        return { parsed, validation, etag: currentEtag };
+      });
+      if (outcome === null) return; // stale — a newer selection already superseded this file
+      setBackup(outcome.parsed);
+      setReport(outcome.validation);
+      setEtag(outcome.etag); // etag is associated with THIS file's validation, not a later one
     } catch (err) {
       setFileName(null);
       setError(err instanceof SyntaxError ? `file is not valid JSON: ${err.message}` : describe(err));

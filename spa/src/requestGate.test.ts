@@ -74,3 +74,55 @@ describe("fetchGuarded", () => {
     await expect(failing).rejects.toThrow("boom");
   });
 });
+
+describe("backup file selection flow", () => {
+  it("discards a slow file-A read when file B is selected", async () => {
+    const gate = createRequestGate();
+    const slowFile = deferred<string>();
+    gate.invalidate(); // select A -> immediate invalidate (prior work)
+    const a = fetchGuarded(gate, () => slowFile.promise);
+    gate.invalidate(); // select B before A's read finishes
+    const b = fetchGuarded(gate, () => Promise.resolve("file-B"));
+    slowFile.resolve("file-A");
+    expect(await a).toBeNull();
+    expect(await b).toBe("file-B");
+  });
+
+  it("drops an out-of-order validation for the previous file", async () => {
+    const gate = createRequestGate();
+    const validationA = deferred<string>();
+    const a = fetchGuarded(gate, () => validationA.promise);
+    const b = fetchGuarded(gate, () => Promise.resolve("report-B"));
+    validationA.resolve("report-A"); // resolves after B already applied
+    expect(await b).toBe("report-B");
+    expect(await a).toBeNull();
+  });
+
+  it("discards a validation error from a superseded file", async () => {
+    const gate = createRequestGate();
+    const bad = deferred<string>();
+    const a = fetchGuarded(gate, () => bad.promise);
+    gate.invalidate(); // user picks a different file meanwhile
+    bad.reject(new Error("not JSON"));
+    expect(await a).toBeNull(); // stale error never surfaces
+  });
+
+  it("keeps the etag attached to its own validation response", async () => {
+    const gate = createRequestGate();
+    const a = fetchGuarded(gate, () => Promise.resolve({ report: "A", etag: "rev-A" }));
+    const outA = await a;
+    expect(outA).toEqual({ report: "A", etag: "rev-A" });
+    const b = fetchGuarded(gate, () => Promise.resolve({ report: "B", etag: "rev-B" }));
+    const outB = await b;
+    expect(outB).toEqual({ report: "B", etag: "rev-B" });
+  });
+
+  it("invalidates pending validation on unmount", async () => {
+    const gate = createRequestGate();
+    const pending = deferred<string>();
+    const a = fetchGuarded(gate, () => pending.promise);
+    gate.invalidate(); // component unmounted
+    pending.resolve("late-report");
+    expect(await a).toBeNull();
+  });
+});

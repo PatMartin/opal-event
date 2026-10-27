@@ -117,8 +117,17 @@ def stats(client: httpx.Client, base_url: str) -> dict:
     return client.get(f"{base_url}/api/v1/stats/", timeout=10).json()
 
 
+def _delete_rule(client: httpx.Client, base_url: str, rule_id: str) -> None:
+    etag = client.get(f"{base_url}/api/v1/rules/{rule_id}", timeout=10).headers.get("etag", "")
+    client.delete(f"{base_url}/api/v1/rules/{rule_id}", headers={"If-Match": etag}, timeout=10)
+
+
 def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenario_tag: str) -> None:
-    """K-1 rules that always evaluate but never match + 1 rule that matches -> bench_noop."""
+    """Replace any prior benchmark rules with exactly ``rule_count`` fresh rules:
+    K-1 that always evaluate but never match + 1 that matches -> bench_noop."""
+    for rid in [r["id"] for r in client.get(f"{base_url}/api/v1/rules/", timeout=10).json()["items"]]:
+        if rid.startswith("bench_rule_"):
+            _delete_rule(client, base_url, rid)
     for i in range(rule_count):
         matching = i == rule_count - 1
         body = {
@@ -145,6 +154,7 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
     queue_peak = 0
 
     t_send0 = time.monotonic()
+    sent = failed = 0
     for i in range(target):
         deadline = t_send0 + (i + 1) * interval
         envelope = {"topic": "bench.throughput", "source": f"bench-{mode}", "data": {"seq": i}}
@@ -152,11 +162,16 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
             t0 = time.monotonic()
             r = client.post(f"{base_url}/api/v1/events/", json=envelope, timeout=30)
             lat_ms.append((time.monotonic() - t0) * 1000)
-            if r.status_code != 202:
-                print(f"  publish failed at event {i}: {r.status_code}", file=sys.stderr)
-                break
+            if r.status_code == 202:
+                sent += 1
+            else:
+                failed += 1
         else:
-            pub.send_multipart([b"bench.throughput", json.dumps(envelope).encode()])
+            try:
+                pub.send_multipart([b"bench.throughput", json.dumps(envelope).encode()])
+                sent += 1
+            except zmq.ZMQError:
+                failed += 1
         # sample executor queue depth opportunistically (cheap GET)
         if i % 50 == 0:
             with contextlib.suppress(httpx.HTTPError):
@@ -165,7 +180,6 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
         if remaining > 0:
             time.sleep(remaining)
     send_s = time.monotonic() - t_send0
-    sent = i + 1 if target else 0
 
     # Observer drain: poll stats until observed_events catches up to sent (or timeout).
     expected = before["observed_events"] + sent
@@ -180,10 +194,21 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
         time.sleep(0.25)
     after = stats(client, base_url)
 
-    # Executions: wait briefly for any queued running executions to finish (terminal states only).
+    # Then wait (bounded) for the executions THIS scenario triggered to reach terminal state, so
+    # the next scenario's before-snapshot is never polluted by still-running leftovers.
+    expected_exec = after["matched_events"] - before["matched_events"]
     exec_done = (after["executions_succeeded"] + after["executions_failed"] + after["executions_dropped"]) - (
         before["executions_succeeded"] + before["executions_failed"] + before["executions_dropped"]
     )
+    exec_complete = True
+    t_exec0 = time.monotonic()
+    while exec_done < expected_exec and time.monotonic() - t_exec0 < DRAIN_TIMEOUT_S:
+        time.sleep(0.25)
+        after = stats(client, base_url)
+        exec_done = (after["executions_succeeded"] + after["executions_failed"] + after["executions_dropped"]) - (
+            before["executions_succeeded"] + before["executions_failed"] + before["executions_dropped"]
+        )
+    exec_complete = exec_done >= expected_exec
     mins = duration_s / 60 or 1
     row = {
         "scenario": name,
@@ -191,6 +216,8 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
         "rate_target": rate_per_min,
         "rules": rule_count,
         "sent": sent,
+        "failed": failed,
+        "status": "ok" if (drain_s is not None and exec_complete) else "incomplete",
         "publish_rate": round(sent / (send_s / 60 or 1)),
         "publish_lat_ms": round(sum(lat_ms) / len(lat_ms), 2) if lat_ms else None,
         "observed": round((after["observed_events"] - before["observed_events"]) / mins),
@@ -261,10 +288,25 @@ def main() -> int:
             pub.close(linger=0)
             ctx.term()
 
-        cols = ("scenario", "sent", "pub/min", "lat_ms", "obs/min", "match/m", "exec/m", "drain_s", "qpeak", "drop", "inv")
+        cols = (
+            "scenario",
+            "sent",
+            "fail",
+            "pub/min",
+            "lat_ms",
+            "obs/min",
+            "match/m",
+            "exec/m",
+            "drain_s",
+            "qpeak",
+            "drop",
+            "inv",
+            "status",
+        )
         vals = (
             "scenario",
             "sent",
+            "failed",
             "publish_rate",
             "publish_lat_ms",
             "observed",
@@ -274,8 +316,9 @@ def main() -> int:
             "queue_peak",
             "dropped",
             "invalid",
+            "status",
         )
-        widths = (22, 6, 9, 8, 9, 9, 8, 9, 6, 5, 5)
+        widths = (22, 6, 5, 9, 8, 9, 9, 8, 9, 6, 5, 5, 11)
         hdr = "".join(f"{c:<{w}}" for c, w in zip(cols, widths, strict=True))
         print("\n" + hdr + "\n" + "-" * len(hdr))
         for r in rows:

@@ -18,10 +18,11 @@ class _Resp:
 
 
 class FakeClient:
-    def __init__(self, rules=None, stats_seq=None, publish_statuses=None):
+    def __init__(self, rules=None, stats_seq=None, publish_statuses=None, delete_status=204):
         self._rules = list(rules or [])
         self._stats_seq = iter(stats_seq or [])
         self._publish_statuses = list(publish_statuses or [])
+        self._delete_status = delete_status
         self.deleted = []
         self.created = []
 
@@ -42,14 +43,18 @@ class FakeClient:
     def post(self, url, json=None, timeout=None, **kw):
         if url.endswith("/api/v1/rules/"):
             self.created.append(json["id"])
+            self._rules.append({"id": json["id"]})
             return _Resp(201)
         if self._publish_statuses:
             return _Resp(self._publish_statuses.pop(0))
         return _Resp(202)
 
     def delete(self, url, headers=None, timeout=None, **kw):
-        self.deleted.append(url.rsplit("/", 1)[1])
-        return _Resp(204)
+        rid = url.rsplit("/", 1)[1]
+        self.deleted.append(rid)
+        if self._delete_status == 204:
+            self._rules = [r for r in self._rules if r["id"] != rid]
+        return _Resp(self._delete_status)
 
 
 class FakePub:
@@ -127,3 +132,52 @@ class TestRunScenarioAccounting:
         row = benchmark.run_scenario(client, FakePub(), "http://x", "t", mode="zmq", rate_per_min=600, duration_s=1, rule_count=1)
         assert row["status"] == "incomplete"
         assert row["drain_s"] == f">{0.3}"
+
+    def test_failed_rule_deletion_fails_fast(self):
+        client = FakeClient(rules=[{"id": "bench_rule_old_0"}], delete_status=500)
+        import pytest
+
+        with pytest.raises(AssertionError, match="DELETE"):
+            benchmark.configure_rules(client, "http://x", 1, "tag")
+
+    def test_leftover_rules_detected(self):
+        """A delete reporting success but leaving the rule behind must fail configuration."""
+        client = FakeClient(rules=[{"id": "bench_rule_ghost_0"}])
+        client._rules.append({"id": "bench_rule_ghost_0"})  # duplicate simulates undeletable residue
+
+        class Undeletable(FakeClient):
+            def delete(self, url, headers=None, timeout=None, **kw):
+                return _Resp(204)  # claims success but silently keeps everything
+
+        client = Undeletable(rules=[{"id": "bench_rule_ghost_0"}])
+        import pytest
+
+        with pytest.raises(AssertionError, match="unexpected benchmark rules"):
+            benchmark.configure_rules(client, "http://x", 1, "tag")
+
+    def test_failed_rest_publishes_mark_incomplete(self, monkeypatch):
+        monkeypatch.setattr(benchmark, "DRAIN_TIMEOUT_S", 0.3)
+        client = FakeClient(stats_seq=[_stats()], publish_statuses=[500, 500])
+        row = benchmark.run_scenario(
+            client, FakePub(), "http://x", "t", mode="rest", rate_per_min=120, duration_s=1, rule_count=1
+        )
+        assert row["failed"] == 2 and row["status"] == "incomplete"
+
+    def test_unobserved_zmq_events_mark_incomplete(self, monkeypatch):
+        monkeypatch.setattr(benchmark, "DRAIN_TIMEOUT_S", 0.3)
+        # stats show sent events never reached the observer (e.g. PUB slow-joiner drop)
+        client = FakeClient(stats_seq=[_stats()])
+        row = benchmark.run_scenario(client, FakePub(), "http://x", "t", mode="zmq", rate_per_min=600, duration_s=1, rule_count=1)
+        assert row["sent"] == 10 and row["observed"] == 0 and row["status"] == "incomplete"
+
+    def test_incomplete_execution_marked(self, monkeypatch):
+        monkeypatch.setattr(benchmark, "DRAIN_TIMEOUT_S", 0.3)
+        seq = [
+            _stats(),
+            _stats(observed_events=10, matched_events=10, executions_succeeded=3),
+            _stats(observed_events=10, matched_events=10, executions_succeeded=5),
+        ]
+        client = FakeClient(stats_seq=seq)
+        row = benchmark.run_scenario(client, FakePub(), "http://x", "t", mode="zmq", rate_per_min=600, duration_s=1, rule_count=1)
+        assert row["status"] == "incomplete"
+        assert row["exec_done"] == 300  # only 5 of the expected 10 executions completed

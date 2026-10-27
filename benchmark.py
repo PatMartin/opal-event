@@ -118,13 +118,16 @@ def stats(client: httpx.Client, base_url: str) -> dict:
 
 
 def _delete_rule(client: httpx.Client, base_url: str, rule_id: str) -> None:
-    etag = client.get(f"{base_url}/api/v1/rules/{rule_id}", timeout=10).headers.get("etag", "")
-    client.delete(f"{base_url}/api/v1/rules/{rule_id}", headers={"If-Match": etag}, timeout=10)
+    r = client.get(f"{base_url}/api/v1/rules/{rule_id}", timeout=10)
+    assert r.status_code == 200, f"GET /rules/{rule_id} -> {r.status_code}"
+    d = client.delete(f"{base_url}/api/v1/rules/{rule_id}", headers={"If-Match": r.headers.get("etag", "")}, timeout=10)
+    assert d.status_code in (204, 404), f"DELETE /rules/{rule_id} -> {d.status_code}"
 
 
 def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenario_tag: str) -> None:
     """Replace any prior benchmark rules with exactly ``rule_count`` fresh rules:
-    K-1 that always evaluate but never match + 1 that matches -> bench_noop."""
+    K-1 that always evaluate but never match + 1 that matches -> bench_noop.
+    Fails fast if cleanup or creation didn't leave the catalog exactly as intended."""
     for rid in [r["id"] for r in client.get(f"{base_url}/api/v1/rules/", timeout=10).json()["items"]]:
         if rid.startswith("bench_rule_"):
             _delete_rule(client, base_url, rid)
@@ -142,6 +145,13 @@ def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenar
         }
         r = client.post(f"{base_url}/api/v1/rules/", json=body, timeout=10)
         assert r.status_code == 201, f"rule create -> {r.status_code}: {r.text[:200]}"
+
+    # Fail fast if the catalog doesn't contain EXACTLY the intended benchmark rules — a leftover
+    # from a failed delete or a create that didn't land would silently skew the measurement.
+    catalog = {r["id"] for r in client.get(f"{base_url}/api/v1/rules/", timeout=10).json()["items"]}
+    bench = {rid for rid in catalog if rid.startswith("bench_rule_")}
+    expected = {f"bench_rule_{scenario_tag}_{i}" for i in range(rule_count)}
+    assert bench == expected, f"catalog has unexpected benchmark rules: {sorted(bench ^ expected)}"
 
 
 def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s, rule_count) -> dict:
@@ -217,7 +227,7 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
         "rules": rule_count,
         "sent": sent,
         "failed": failed,
-        "status": "ok" if (drain_s is not None and exec_complete) else "incomplete",
+        "status": "ok" if (drain_s is not None and exec_complete and failed == 0) else "incomplete",
         "publish_rate": round(sent / (send_s / 60 or 1)),
         "publish_lat_ms": round(sum(lat_ms) / len(lat_ms), 2) if lat_ms else None,
         "observed": round((after["observed_events"] - before["observed_events"]) / mins),

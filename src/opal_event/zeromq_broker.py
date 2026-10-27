@@ -43,7 +43,7 @@ import zmq
 import zmq.auth
 from zmq.auth.thread import ThreadAuthenticator
 
-from opal_event.models import TOPIC_PATTERN, ZeroMqSettings
+from opal_event.models import TOPIC_PATTERN, Event, ZeroMqSettings
 from opal_event.normalization import is_rfc3339_datetime, is_uuid_string, normalize_event
 
 logger = logging.getLogger("opal_event.broker")
@@ -96,7 +96,16 @@ def parse_and_normalize(topic_bytes: bytes, payload_bytes: bytes, max_event_byte
     if envelope["topic"] != topic:
         raise InvalidEventError("frame topic does not match envelope topic")
     _check_optional_metadata(envelope)
-    return normalize_event(envelope, topic=topic, default_source="unknown")
+    normalized = normalize_event(envelope, topic=topic, default_source="unknown")
+    # Persisted-schema gate: the normalized event must validate as an Event (filtered to the
+    # schema's own fields so OPAL correlation extras don't trip extra='forbid'). Catches e.g.
+    # source strings longer than the documented 128-char maximum — everything already stored
+    # or produced by REST normalization satisfies this by construction.
+    try:
+        Event.model_validate({k: normalized.get(k) for k in ("id", "topic", "source", "timestamp", "data")})
+    except Exception as exc:
+        raise InvalidEventError(f"event fails persisted Event schema: {exc}") from exc
+    return normalized
 
 
 def _check_optional_metadata(envelope: dict[str, Any]) -> None:

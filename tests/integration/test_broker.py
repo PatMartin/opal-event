@@ -453,3 +453,37 @@ class TestParseAndNormalize:
         envelope = {"topic": "a.b", "data": {}, "custom_field": {"nested": [1, 2]}, "vendor.x": "y"}
         normalized = parse_and_normalize(b"a.b", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
         assert normalized["topic"] == "a.b"
+
+    def test_rejects_source_exceeding_128_chars(self):
+        import json
+
+        from opal_event.zeromq_broker import InvalidEventError
+
+        envelope = {"topic": "a.b", "data": {}, "source": "s" * 129}
+        with pytest.raises(InvalidEventError, match="Event schema"):
+            parse_and_normalize(b"a.b", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
+
+    def test_accepts_source_at_128_char_boundary(self):
+        import json
+
+        envelope = {"topic": "a.b", "data": {}, "source": "s" * 128}
+        normalized = parse_and_normalize(b"a.b", json.dumps(envelope).encode(), max_event_bytes=1_000_000)
+        assert len(normalized["source"]) == 128
+
+    def test_rejects_missing_data_key(self):
+        import json
+
+        from opal_event.zeromq_broker import InvalidEventError
+
+        with pytest.raises(InvalidEventError):
+            parse_and_normalize(b"a.b", json.dumps({"topic": "a.b"}).encode(), max_event_bytes=1_000_000)
+
+    def test_normalized_output_validates_as_persisted_event(self):
+        """The schema gate guarantees observer-normalized events satisfy the REST Event model."""
+        import json
+
+        from opal_event.models import Event
+
+        env = {"topic": "a.b", "data": None, "source": "s", "session_id": "x"}
+        normalized = parse_and_normalize(b"a.b", json.dumps(env).encode(), max_event_bytes=1_000_000)
+        Event.model_validate({k: normalized.get(k) for k in ("id", "topic", "source", "timestamp", "data")})

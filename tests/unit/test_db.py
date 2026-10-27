@@ -275,3 +275,45 @@ class TestRetention:
         assert db.cleanup_retention(7) == 2
         assert db.cleanup_retention(7) == 0
         assert db.get_event("e-at") is not None and db.get_execution("x-at") is not None
+
+    def test_offset_crossing_utc_date_events(self, tmp_path, monkeypatch):
+        """+13:00 shifts the local date forward — raw-string day comparisons would miss rows
+        that are actually expired in UTC."""
+
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        # cutoff = 2026-01-03T12:00:00Z
+        db.insert_event(self._event("fwd-old", "2026-01-04T00:30:00+13:00"))  # = Jan 3 11:30Z -> delete
+        db.insert_event(self._event("fwd-eq", "2026-01-05T01:00:00+13:00"))  # = Jan 4 12:00Z -> keep
+        db.insert_event(self._event("fwd-new", "2026-01-04T01:30:00+13:00"))  # = Jan 3 12:30Z -> keep
+        assert db.cleanup_retention(7) == 1
+        assert db.get_event("fwd-old") is None
+        assert db.get_event("fwd-eq") is not None
+        assert db.get_event("fwd-new") is not None
+
+    def test_offset_crossing_utc_date_executions(self, tmp_path, monkeypatch):
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 1, 10, 12, 0, 0, tzinfo=UTC)
+
+        import opal_event.db as db_module
+
+        monkeypatch.setattr(db_module, "datetime", Frozen)
+        db = Database(tmp_path / "t.db")
+        db.insert_execution(self._exec("x-fwd-old", "2026-01-04T00:30:00+13:00"))  # Jan 3 11:30Z
+        db.insert_execution(self._exec("x-fwd-new", "2026-01-04T01:30:00+13:00"))  # Jan 3 12:30Z
+        db.insert_execution(self._exec("x-back", "2026-01-02T23:30:00-05:00"))  # Jan 3 04:30Z -> delete
+        db.insert_execution(self._exec("x-back-new", "2026-01-03T10:00:00-05:00"))  # Jan 3 15:00Z -> keep
+        assert db.cleanup_retention(7) == 2
+        assert db.get_execution("x-fwd-old") is None
+        assert db.get_execution("x-back") is None
+        assert db.get_execution("x-fwd-new") is not None
+        assert db.get_execution("x-back-new") is not None

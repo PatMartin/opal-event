@@ -164,3 +164,8 @@ export interface BackupImportResult {
   revision: string;
   pending_restart: boolean;
 }
+
+export interface HealthProbe {
+  status: "ok" | "degraded" | "unavailable";
+  details?: Record<string, string> | null;
+}

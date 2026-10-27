@@ -1,4 +1,5 @@
 import type { Problem } from "./types";
+import opsManifest from "./api.operations.json";
 
 const TOKEN_STORAGE_KEY = "opal_event_token";
 
@@ -92,77 +93,129 @@ async function fetchWithEtag<T>(path: string): Promise<{ data: T; etag: string }
   return { data, etag: resp.headers.get("etag") || "" };
 }
 
-/** Thin wrapper exposing one typed call per contract operationId, mirroring the CLI's client. */
+type OpId = keyof typeof opsManifest;
+type ClientKey = (typeof opsManifest)[OpId]["client"];
+
+function opMethod(op: OpId): string {
+  return opsManifest[op].method;
+}
+
+function opPath(op: OpId, params?: Record<string, string>): string {
+  let path: string = opsManifest[op].path;
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      path = path.replace(`{${key}}`, encodeURIComponent(value));
+    }
+  }
+  return path;
+}
+
+/** Thin wrapper exposing one typed call per contract operationId, mirroring the CLI's client.
+ * Methods/paths come from api.operations.json — the same manifest the contract tests verify
+ * against opal_event.1.2.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
 export const api = {
   publishEvent: (body: { topic: string; data: unknown; id?: string; source?: string; timestamp?: string }) =>
-    request<{ id: string; status: string; published_at: string }>("POST", "/api/v1/events/", body),
+    request<{ id: string; status: string; published_at: string }>(
+      opMethod("post_api_v1_events"),
+      opPath("post_api_v1_events"),
+      body,
+    ),
   listEvents: (query: Record<string, string | number | undefined>) =>
-    request<import("./types").ListEvents>("GET", withQuery("/api/v1/events/", query)),
+    request<import("./types").ListEvents>(opMethod("get_api_v1_events"), withQuery(opPath("get_api_v1_events"), query)),
   deleteEvent: (eventId: string) =>
-    request<void>("DELETE", `/api/v1/events/${encodeURIComponent(eventId)}`),
-  clearEvents: () => request<void>("DELETE", "/api/v1/events/"),
-  listTopics: () => request<{ items: string[] }>("GET", "/api/v1/topics/"),
+    request<void>(opMethod("delete_api_v1_events_id"), opPath("delete_api_v1_events_id", { event_id: eventId })),
+  clearEvents: () => request<void>(opMethod("delete_api_v1_events"), opPath("delete_api_v1_events")),
+  getEvent: (eventId: string) =>
+    request<import("./types").EventItem>(opMethod("get_api_v1_events_id"), opPath("get_api_v1_events_id", { event_id: eventId })),
+  listTopics: () => request<{ items: string[] }>(opMethod("get_api_v1_topics"), opPath("get_api_v1_topics")),
 
   // Rules/Actions are bounded configuration catalogs as of opal_event.1.2.0.yaml: GET returns the
   // complete collection (no cursor/limit) with a strong ETag, and PATCH/DELETE require a matching
   // If-Match (428 if omitted server-side, 412 if stale). get{Rule,Action} below fetch-then-mutate
   // to auto-populate If-Match, mirroring the CLI's `_resource_etag` helper.
-  listRules: () => request<import("./types").ListRules>("GET", "/api/v1/rules/"),
-  createRule: (body: import("./types").Rule) => request<import("./types").Rule>("POST", "/api/v1/rules/", body),
-  getRule: (ruleId: string) => fetchWithEtag<import("./types").Rule>(`/api/v1/rules/${encodeURIComponent(ruleId)}`),
+  listRules: () => request<import("./types").ListRules>(opMethod("get_api_v1_rules"), opPath("get_api_v1_rules")),
+  createRule: (body: import("./types").Rule) =>
+    request<import("./types").Rule>(opMethod("post_api_v1_rules"), opPath("post_api_v1_rules"), body),
+  getRule: (ruleId: string) =>
+    fetchWithEtag<import("./types").Rule>(opPath("get_api_v1_rules_id", { rule_id: ruleId })),
   deleteRule: async (ruleId: string, ifMatch?: string): Promise<void> => {
     const etag = ifMatch ?? (await api.getRule(ruleId)).etag;
-    await request<void>("DELETE", `/api/v1/rules/${encodeURIComponent(ruleId)}`, undefined, { "If-Match": etag });
+    await request<void>(opMethod("delete_api_v1_rules_id"), opPath("delete_api_v1_rules_id", { rule_id: ruleId }), undefined, {
+      "If-Match": etag,
+    });
   },
   patchRule: async (ruleId: string, patch: Partial<import("./types").Rule>, ifMatch?: string) => {
     const etag = ifMatch ?? (await api.getRule(ruleId)).etag;
-    return request<import("./types").Rule>("PATCH", `/api/v1/rules/${encodeURIComponent(ruleId)}`, patch, {
-      "If-Match": etag,
-    });
+    return request<import("./types").Rule>(
+      opMethod("patch_api_v1_rules_rule_id"),
+      opPath("patch_api_v1_rules_rule_id", { rule_id: ruleId }),
+      patch,
+      { "If-Match": etag },
+    );
   },
   testRule: (ruleId: string, event: unknown) =>
-    request<import("./types").RuleTestResult>("POST", `/api/v1/rules/${encodeURIComponent(ruleId)}/test`, { event }),
+    request<import("./types").RuleTestResult>(opMethod("post_api_v1_rules_id_test"), opPath("post_api_v1_rules_id_test", { rule_id: ruleId }), { event }),
 
-  listActions: () => request<import("./types").ListActions>("GET", "/api/v1/actions/"),
-  createAction: (body: import("./types").Action) => request<import("./types").Action>("POST", "/api/v1/actions/", body),
+  listActions: () => request<import("./types").ListActions>(opMethod("get_api_v1_actions"), opPath("get_api_v1_actions")),
+  createAction: (body: import("./types").Action) =>
+    request<import("./types").Action>(opMethod("post_api_v1_actions"), opPath("post_api_v1_actions"), body),
   getAction: (actionId: string) =>
-    fetchWithEtag<import("./types").Action>(`/api/v1/actions/${encodeURIComponent(actionId)}`),
+    fetchWithEtag<import("./types").Action>(opPath("get_api_v1_actions_id", { action_id: actionId })),
   deleteAction: async (actionId: string, ifMatch?: string): Promise<void> => {
     const etag = ifMatch ?? (await api.getAction(actionId)).etag;
-    await request<void>("DELETE", `/api/v1/actions/${encodeURIComponent(actionId)}`, undefined, { "If-Match": etag });
+    await request<void>(opMethod("delete_api_v1_actions_id"), opPath("delete_api_v1_actions_id", { action_id: actionId }), undefined, {
+      "If-Match": etag,
+    });
   },
   patchAction: async (actionId: string, patch: Record<string, unknown>, ifMatch?: string) => {
     const etag = ifMatch ?? (await api.getAction(actionId)).etag;
-    return request<import("./types").Action>("PATCH", `/api/v1/actions/${encodeURIComponent(actionId)}`, patch, {
-      "If-Match": etag,
-    });
+    return request<import("./types").Action>(
+      opMethod("patch_api_v1_actions_action_id"),
+      opPath("patch_api_v1_actions_action_id", { action_id: actionId }),
+      patch,
+      { "If-Match": etag },
+    );
   },
   executeAction: (actionId: string, event: unknown) =>
-    request<import("./types").Execution>("POST", `/api/v1/actions/${encodeURIComponent(actionId)}/execute`, { event }),
+    request<import("./types").Execution>(
+      opMethod("post_api_v1_actions_id_execute"),
+      opPath("post_api_v1_actions_id_execute", { action_id: actionId }),
+      { event },
+    ),
 
   listExecutions: (query: Record<string, string | number | undefined>) =>
-    request<import("./types").ListExecutions>("GET", withQuery("/api/v1/executions/", query)),
+    request<import("./types").ListExecutions>(opMethod("get_api_v1_executions"), withQuery(opPath("get_api_v1_executions"), query)),
   getExecution: (executionId: string) =>
-    request<import("./types").Execution>("GET", `/api/v1/executions/${encodeURIComponent(executionId)}`),
+    request<import("./types").Execution>(
+      opMethod("get_api_v1_executions_id"),
+      opPath("get_api_v1_executions_id", { execution_id: executionId }),
+    ),
 
-  getHealth: () => request<import("./types").Health>("GET", "/api/v1/health/"),
-  getStats: () => request<import("./types").Stats>("GET", "/api/v1/stats/"),
+  getHealth: () => request<import("./types").Health>(opMethod("get_api_v1_health"), opPath("get_api_v1_health")),
+  getHealthLive: () => request<import("./types").HealthProbe>(opMethod("get_api_v1_health_live"), opPath("get_api_v1_health_live")),
+  getHealthReady: () =>
+    request<import("./types").HealthProbe>(opMethod("get_api_v1_health_ready"), opPath("get_api_v1_health_ready")),
+  getStats: () => request<import("./types").Stats>(opMethod("get_api_v1_stats"), opPath("get_api_v1_stats")),
 
   getSettings: async (): Promise<{ settings: import("./types").PortableSettings; etag: string }> => {
-    const resp = await fetch("/api/v1/settings/", { headers: { ...contextHeaders(), ...authHeaders() } });
+    const resp = await fetch(opPath("get_api_v1_settings"), { headers: { ...contextHeaders(), ...authHeaders() } });
     const data = await resp.json();
     if (!resp.ok) throw new ApiError(resp.status, data);
     return { settings: data, etag: resp.headers.get("etag") || "" };
   },
   patchSettings: (patch: Record<string, unknown>, ifMatch: string) =>
-    request<import("./types").PortableSettings>("PATCH", "/api/v1/settings/", patch, { "If-Match": ifMatch }),
+    request<import("./types").PortableSettings>(opMethod("patch_api_v1_settings"), opPath("patch_api_v1_settings"), patch, {
+      "If-Match": ifMatch,
+    }),
 
-  exportBackup: () => request<import("./types").ConfigBackup>("GET", "/api/v1/backup/export"),
+  exportBackup: () => request<import("./types").ConfigBackup>(opMethod("get_api_v1_backup_export"), opPath("get_api_v1_backup_export")),
   validateBackup: (backup: unknown) =>
-    request<import("./types").ValidationReport>("POST", "/api/v1/backup/validate", backup),
+    request<import("./types").ValidationReport>(opMethod("post_api_v1_backup_validate"), opPath("post_api_v1_backup_validate"), backup),
   importBackup: (backup: unknown, ifMatch: string) =>
-    request<import("./types").BackupImportResult>("POST", "/api/v1/backup/import", { backup }, { "If-Match": ifMatch }),
-};
+    request<import("./types").BackupImportResult>(opMethod("post_api_v1_backup_import"), opPath("post_api_v1_backup_import"), { backup }, {
+      "If-Match": ifMatch,
+    }),
+} satisfies Record<ClientKey, unknown>;
 
 function authHeaders(): Record<string, string> {
   const token = getToken();

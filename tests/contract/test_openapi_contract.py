@@ -3,6 +3,7 @@ implemented by the REST app and exposed by the CLI client, with no drift in eith
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -10,6 +11,7 @@ import yaml
 from opal_event.cli.client import OPERATIONS as CLI_OPERATIONS
 
 CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.2.0.yaml"
+SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
 
 def load_contract_operations() -> dict[str, tuple[str, str]]:
@@ -21,6 +23,14 @@ def load_contract_operations() -> dict[str, tuple[str, str]]:
                 continue
             operations[operation["operationId"]] = (method.upper(), path)
     return operations
+
+
+def load_spa_manifest() -> dict[str, dict[str, str]]:
+    """The SPA's operationId -> {method, path, client} manifest (spa/src/api.operations.json).
+    api.ts builds every request from this file and the `satisfies` clause in api.ts makes tsc
+    fail if a named client function is missing, so checking the manifest against the contract
+    here verifies real client behavior rather than source text."""
+    return json.loads(SPA_MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
 class TestContractCoverage:
@@ -77,6 +87,28 @@ class TestContractCoverage:
 
         missing_in_contract = app_paths - contract_paths
         assert not missing_in_contract, f"App public operations missing in contract: {missing_in_contract}"
+
+    def test_spa_and_contract_operations_match_in_both_directions(self):
+        operations = load_contract_operations()
+        manifest = load_spa_manifest()
+        missing_in_spa = set(operations) - set(manifest)
+        assert not missing_in_spa, f"SPA client manifest is missing operations: {missing_in_spa}"
+        missing_in_contract = set(manifest) - set(operations)
+        assert not missing_in_contract, f"SPA manifest has non-contract operations: {missing_in_contract}"
+
+    def test_spa_operations_match_contract_method_and_path(self):
+        operations = load_contract_operations()
+        manifest = load_spa_manifest()
+        for op_id, (method, path) in operations.items():
+            entry = manifest[op_id]
+            assert entry["method"] == method, f"{op_id}: SPA method mismatch ({entry['method']} != {method})"
+            assert entry["path"] == path, f"{op_id}: SPA path mismatch ({entry['path']} != {path})"
+
+    def test_spa_manifest_entries_map_to_client_functions(self):
+        manifest = load_spa_manifest()
+        clients = [entry.get("client") for entry in manifest.values()]
+        assert all(clients), "every manifest entry must name a client function"
+        assert len(clients) == len(set(clients)), f"duplicate client names in manifest: {clients}"
 
     def test_event_deletion_operations_documented_in_contract(self):
         spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))

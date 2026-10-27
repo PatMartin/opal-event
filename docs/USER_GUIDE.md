@@ -531,6 +531,14 @@ rules:
 | **Hot-reloadable** | `actions` | Action additions, edits, and deletions apply immediately. |
 | **Hot-reloadable** | `rules` | Rule additions, edits, and deletions apply immediately. |
 
+> **Shutdown and restart semantics.** A graceful stop waits for in-flight actions to finish under
+> their own `timeout_seconds` (queued jobs are recorded `dropped` with `error_code=shutdown`, never
+> started). If the process dies abruptly, the next startup reconciles stale execution rows before
+> accepting work — `queued` becomes `dropped` and `running` becomes `failed`, both with
+> `error_code=service_restart`. Interrupted actions are never retried. Retention cleanup
+> (`persistence.retention_days`) runs once at startup and then hourly, deleting events and
+> executions strictly older than the cutoff using UTC-aware comparisons.
+
 ---
 
 ## 5. REST API reference
@@ -929,8 +937,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/backup/import \
 |---|---|---|
 | `GET /api/v1/health/` | General health and restart-pending status | Yes (if enabled) |
 | `GET /api/v1/stats/` | Runtime counters (observed/matched/dropped/workers) | Yes (if enabled) |
-| `GET /api/v1/health/live` | Liveness probe (process + SQLite reachability) | No |
-| `GET /api/v1/health/ready` | Readiness probe (broker running + config valid) | No |
+| `GET /api/v1/health/live` | Liveness probe (process alive; `details` is null) | No |
+| `GET /api/v1/health/ready` | Readiness probe (broker running + database reachable + executor healthy; 503 otherwise) | No |
 
 ---
 
@@ -1243,7 +1251,10 @@ by the observer because their frame count or event contents are invalid.
 
 #### Settings tab
 - **Runtime Settings Editor**: Live tuning of `max_workers`, `queue_size`, timeouts, and persistence modes.
-- **Backup & Restore**: Single-click export, upload-based validation, and atomic import.
+
+#### Backup tab
+- **Export**: Download the portable configuration (settings, actions, rules) as JSON.
+- **Import**: Upload-based validation (errors and warnings shown), explicit confirmation, atomic import with optimistic-concurrency `If-Match`.
 
 ---
 

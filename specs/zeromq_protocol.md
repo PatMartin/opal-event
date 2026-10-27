@@ -6,7 +6,7 @@
 
 - `opal-event-svc` binds an **XSUB** inbound endpoint (default `tcp://127.0.0.1:5555`) and an **XPUB** outbound endpoint (default `tcp://127.0.0.1:5556`). Producers use PUB and connect to XSUB; consumers use SUB and connect to XPUB. Names in the YAML configuration are `zeromq.publishers` (inbound producers) and `zeromq.subscribers` (outbound subscribers).
 - Proxy forwards multipart messages and propagates downstream subscription filters to upstream publishers. The internal observer must receive all events independently (for example, a capture path feeding an internal SUB/processor). It may not block the forwarding path.
-- REST POST `/v1/events` publishes through a service-owned PUB connector to the inbound XSUB endpoint. A service-owned internal all-topics observer normalizes, validates, logs and evaluates rule matches. Delivery to the observer is also best-effort.
+- REST POST `/api/v1/events` publishes through a service-owned PUB connector to the inbound XSUB endpoint. A service-owned internal all-topics observer normalizes, validates, logs and evaluates rule matches. Delivery to the observer is also best-effort.
 - Connecting does not imply all subscriptions have propagated. PUB/SUB suffers **slow-joiner** loss. There are no producer or consumer acknowledgments, durable queues, automatic replay, or delivery ordering guarantees across publishers.
 
 ## Message framing
@@ -85,7 +85,7 @@ while True:
 
 - Observer matches enabled rules; each rule's conditions use AND semantics. All matched action IDs schedule **independently** in a configurable pool (default 4 workers), no completion order guarantee.
 - When the bounded queue (suggested size 100) is full, record `dropped` with `queue_full`, increment metrics, and continue. No automatic retries for failure or drop.
-- Persist observed event history according to YAML `event_mode`: `all`, `matched`, `none`; separate execution history remains enabled. Default seven-day retention; cleanup is periodic. `GET /v1/events` is for inspection and not for replay.
+- Persist observed event history according to YAML `event_mode`: `all`, `matched`, `none`; separate execution history remains enabled. Default seven-day retention; cleanup is periodic. `GET /api/v1/events` is for inspection and not for replay.
 - Shell exit code, HTTP status and response summary, Python result/error, runtime, captured output, action config revision are recorded on execution. Request and output values may be redacted/truncated according to configuration.
 
 ## Configuration and reload semantics

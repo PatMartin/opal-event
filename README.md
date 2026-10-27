@@ -7,10 +7,9 @@ exactly; the ZeroMQ wire transport implements `specs/zeromq_protocol.md` exactly
 authoritative — see them for the full, normative request/response and wire-protocol details. This
 README explains how the implementation realizes that contract and how to run it.
 
-> **Versioning:** [`opal_event.1.1.0.yaml`](opal_event.1.1.0.yaml) is kept alongside the active
-> [`opal_event.1.2.0.yaml`](opal_event.1.2.0.yaml) purely as a historical/diff reference; the
-> implementation targets 1.2.0. See [Migrating from 1.1.0](#migrating-from-110) below for exactly
-> what changed and why none of it touches the ZeroMQ wire protocol.
+> **Versioning:** [`opal_event.1.2.0.yaml`](opal_event.1.2.0.yaml) is the only contract file in the
+> repository and is authoritative. See [Migrating from 1.1.0](#migrating-from-110) below for what
+> changed relative to the previous revision and why none of it touches the ZeroMQ wire protocol.
 
 ## Architecture
 
@@ -78,7 +77,6 @@ README explains how the implementation realizes that contract and how to run it.
 ```
 opal-event/
 ├── opal_event.1.2.0.yaml        # authoritative OpenAPI 3.1 contract (do not modify)
-├── opal_event.1.1.0.yaml        # previous contract version, kept for historical reference
 ├── specs/zeromq_protocol.md     # authoritative ZeroMQ wire protocol (do not modify)
 ├── config/opal_event.example.yaml
 ├── examples/                    # sample event/rule/action JSON
@@ -273,7 +271,7 @@ malformed OPAL context headers (422) -- see [Migrating from 1.1.0](#migrating-fr
 
 | Resource | Operations |
 |---|---|
-| Events | `POST/GET /api/v1/events/`, `GET /api/v1/events/{id}` (cursor-paginated history) |
+| Events | `POST/GET/DELETE /api/v1/events/`, `GET/DELETE /api/v1/events/{id}` (cursor-paginated history; DELETE clears all events / one event) |
 | Topics | `GET /api/v1/topics/` (full catalog, strong ETag) |
 | Rules | `GET/POST /api/v1/rules/`, `GET/PATCH/DELETE /api/v1/rules/{id}`, `POST /api/v1/rules/{id}/test` (full catalog, strong ETag, PATCH/DELETE require `If-Match`) |
 | Actions | `GET/POST /api/v1/actions/`, `GET/PATCH/DELETE /api/v1/actions/{id}`, `POST /api/v1/actions/{id}/execute` (full catalog, strong ETag, PATCH/DELETE require `If-Match`) |
@@ -334,7 +332,7 @@ types (shell/http/python) and nested rule conditions without re-implementing eve
 ## SPA
 
 `spa/` is a React + TypeScript + Vite single-page app with tabs for **Health**, **Events**,
-**Rules**, **Actions**, **Executions**, and **Settings**. It talks only to the REST API (no business
+**Rules**, **Actions**, **Executions**, **Settings**, and **Backup**. It talks only to the REST API (no business
 logic is duplicated client-side): publishing events, creating/enabling/disabling/deleting rules and
 actions, running rule dry-tests and manual action executions, browsing event/execution history, and
 editing portable settings. A bearer token field in the sidebar is stored in `localStorage` and sent
@@ -423,3 +421,19 @@ unused (dead boilerplate from the suite-wide schema set, not wired into this ser
 * Graceful shutdown waits for in-flight actions to finish under their own `timeout_seconds` policy
   (queued jobs are recorded `dropped`/`shutdown` instead of running). There is no overall shutdown
   deadline, so a runner that ignores its own timeout kill could still delay shutdown.
+* After an *ungraceful* termination, the next startup reconciles stale execution rows before
+  accepting work: `queued` -> `dropped` and `running` -> `failed`, both with
+  `error_code=service_restart`. Interrupted actions are never retried or rerun.
+* `POST /api/v1/events/` returning `202 Accepted` means only that the event was normalized and
+  handed to the local publisher. It does **not** acknowledge subscriber delivery, persistence,
+  rule matching, or action completion — ZeroMQ delivery is best-effort with no deduplication
+  guarantee, so consumers should treat IDs as advisory, not dedup keys.
+* The observer rejects malformed ZeroMQ messages for its own processing (frame count, topic
+  syntax/255-char cap, JSON shape, UUID/RFC3339 metadata, `max_event_bytes`) and counts them in
+  `invalid_events`; the transparent proxy still forwards the original frames to subscribers.
+* Retention (`persistence.retention_days`) deletes stored events and executions strictly older
+  than the cutoff — once at startup and then hourly — using UTC-aware timestamp comparisons.
+* `GET /api/v1/health/` reports `degraded` if the broker is down, the database is unreachable, an
+  executor worker died, or the last config reload was rejected (last-good still active).
+  `GET /api/v1/health/ready` fails (503) only when the broker, database, or executor cannot
+  actually serve — a rejected config edit alone does not affect readiness.

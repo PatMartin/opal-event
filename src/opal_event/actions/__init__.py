@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -120,62 +121,125 @@ def communicate_bounded(
 ) -> tuple[BoundedBuffer, BoundedBuffer]:
     """``Popen.communicate`` replacement enforcing ``max_output_bytes`` *during* capture.
 
-    Stdout and stderr are drained on separate reader threads (portable on Windows and POSIX, and
-    safe against the classic "child fills one pipe while the parent reads the other" deadlock). The
-    stdin payload is written on its own daemon thread so a child that never reads cannot stall the
-    timeout.
+    POSIX drains stdout/stderr nonblocking via a ``selectors`` loop in the caller thread — there
+    is no second thread that can be stuck in ``read()`` on a descendant-held pipe, so cleanup is
+    deterministic. Windows uses reader threads plus CancelIoEx to abort pending reads. The stdin
+    payload is written on its own daemon thread so a child that never reads cannot stall the
+    timeout. One monotonic deadline governs execution plus a small bounded cleanup allowance:
+    the caller always returns by ``timeout`` + ``_CLEANUP_ALLOWANCE``.
 
-    On timeout the process tree is killed, remaining output is drained briefly, and
-    :class:`subprocess.TimeoutExpired` is re-raised for the caller to translate into an outcome.
+    Classifications: child alive past ``timeout`` -> ``subprocess.TimeoutExpired``; child exited
+    but a pipe is still held by a descendant -> ``IncompleteCaptureError`` (output is incomplete,
+    never silently treated as success).
     """
     stdout = BoundedBuffer(max_output_bytes)
     stderr = BoundedBuffer(max_output_bytes)
+    if stdin_data is not None:
+        threading.Thread(target=_feed_stdin, args=(proc.stdin, stdin_data), daemon=True, name="opal-event-in").start()
+    elif proc.stdin is not None:
+        proc.stdin.close()
+    if sys.platform == "win32":
+        _capture_windows(proc, stdout, stderr, timeout)
+    else:
+        _capture_posix(proc, stdout, stderr, timeout)
+    return stdout, stderr
+
+
+# Bounded post-exit drain: after the child exits, pipes still held by descendants get this much
+# grace before capture is declared incomplete. After a timeout kill, _CLEANUP_ALLOWANCE bounds
+# the final drain — total wall time is always <= timeout + _CLEANUP_ALLOWANCE.
+_POST_EXIT_DRAIN = 5.0
+_CLEANUP_ALLOWANCE = 5.0
+
+
+def _capture_posix(proc, stdout: BoundedBuffer, stderr: BoundedBuffer, timeout: int) -> None:
+    import selectors
+
+    deadline = time.monotonic() + timeout
+    end = deadline + _CLEANUP_ALLOWANCE
+    sel = selectors.DefaultSelector()
+    for stream, buf in ((proc.stdout, stdout), (proc.stderr, stderr)):
+        if stream is not None:
+            os.set_blocking(stream.fileno(), False)
+            sel.register(stream.fileno(), selectors.EVENT_READ, buf)
+    marked = timed_out = False
+    exit_grace_end = float("inf")
+    while sel.get_map():
+        now = time.monotonic()
+        if proc.poll() is not None and exit_grace_end == float("inf"):
+            exit_grace_end = now + _POST_EXIT_DRAIN
+        limit = min(end, exit_grace_end)
+        if now >= limit:
+            break
+        if now >= deadline and not marked:
+            marked = True
+            if proc.poll() is None:
+                kill_process_tree(proc)
+                timed_out = True
+        for key, _ in sel.select(timeout=max(0.05, min(0.25, limit - now))):
+            with suppress(BlockingIOError):
+                chunk = os.read(key.fd, 65536)
+                if chunk:
+                    key.data.feed(chunk)
+                else:
+                    sel.unregister(key.fd)
+    leftover = bool(sel.get_map())  # pipes still open when the loop gave up
+    sel.close()
+    for stream in (proc.stdout, proc.stderr, proc.stdin):
+        if stream is not None:
+            with suppress(OSError, ValueError):
+                stream.close()  # safe: this thread owns the reads; nothing else holds the lock
+    if proc.poll() is None:  # survived the tree kill — last-resort direct kill, still bounded
+        with suppress(OSError):
+            proc.kill()
+        with suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=2)
+    if timed_out:
+        raise subprocess.TimeoutExpired(proc.args, timeout)
+    if leftover:
+        # child exited but pipes never reached EOF within the post-exit drain window —
+        # a descendant still holds a write end open; the capture is INCOMPLETE.
+        kill_process_tree(proc)
+        raise IncompleteCaptureError(
+            "child exited but a descendant still holds an output pipe open; captured output is incomplete"
+        )
+
+
+def _capture_windows(proc, stdout: BoundedBuffer, stderr: BoundedBuffer, timeout: int) -> None:
+    """Windows capture: buffered streams + reader threads; pending reads are aborted via
+    CancelIoEx during incomplete-capture cleanup (closing a pipe handle with a pending read
+    would itself block). Bounded: joins are time-capped end-to-end."""
     readers = [
         threading.Thread(target=_drain_stream, args=(proc.stdout, stdout), daemon=True, name="opal-event-out"),
         threading.Thread(target=_drain_stream, args=(proc.stderr, stderr), daemon=True, name="opal-event-err"),
     ]
     for t in readers:
         t.start()
-    if stdin_data is not None:
-        threading.Thread(target=_feed_stdin, args=(proc.stdin, stdin_data), daemon=True, name="opal-event-in").start()
-    elif proc.stdin is not None:
-        proc.stdin.close()
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_process_tree(proc)
         with suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=5)
+            proc.wait(timeout=_CLEANUP_ALLOWANCE)
         for t in readers:
             t.join(timeout=2)
         raise
-    # The process exited; readers normally hit EOF promptly. If a detached grandchild inherited
-    # the pipe and keeps it open, the bounded join caps the wait — then the capture is INCOMPLETE
-    # (not merely bounded): we cannot tell output ends at the limit, so it is a distinct failure.
-    # Cleanup is bounded end-to-end: reader joins (5s) + tree kill + fd release + final joins (2s)
-    # — a caller never blocks on a descendant's lifetime beyond this documented interval.
     for t in readers:
-        t.join(timeout=5)
-    stuck = [t for t in readers if t.is_alive()]
-    if stuck:
-        kill_process_tree(proc)  # descendants in the child's process group die with it
-        # A surviving DETACHED descendant (separate process group — we deliberately do NOT kill
-        # unrelated processes) can keep the pipe write end open forever. Abort the readers'
-        # pending reads; only then is closing the streams guaranteed not to block.
-        for stream in (proc.stdout, proc.stderr, proc.stdin):
-            if stream is not None:
-                with suppress(OSError, ValueError):
-                    _release_pipe_reader(stream)
-        for t in readers:
-            t.join(timeout=2)
-        for stream in (proc.stdout, proc.stderr, proc.stdin):
-            if stream is not None:
-                with suppress(Exception):
-                    stream.close()
-        raise IncompleteCaptureError(
-            "child exited but a descendant still holds an output pipe open; captured output is incomplete"
-        )
-    return stdout, stderr
+        t.join(timeout=_POST_EXIT_DRAIN)
+    if not any(t.is_alive() for t in readers):
+        return
+    kill_process_tree(proc)
+    for stream in (proc.stdout, proc.stderr, proc.stdin):
+        if stream is not None:
+            with suppress(OSError, ValueError):
+                _release_pipe_reader(stream)
+    for t in readers:
+        t.join(timeout=2)
+    for stream in (proc.stdout, proc.stderr, proc.stdin):
+        if stream is not None:
+            with suppress(Exception):
+                stream.close()
+    raise IncompleteCaptureError("child exited but a descendant still holds an output pipe open; captured output is incomplete")
 
 
 def kill_process_tree(proc: subprocess.Popen) -> None:

@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("opal_event.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -22,10 +25,12 @@ CREATE TABLE IF NOT EXISTS events (
     topic TEXT NOT NULL,
     source TEXT NOT NULL,
     timestamp TEXT NOT NULL,
+    ts_us INTEGER,
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_topic ON events(topic);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_ts_us ON events(ts_us);
 
 CREATE TABLE IF NOT EXISTS executions (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +41,7 @@ CREATE TABLE IF NOT EXISTS executions (
     status TEXT NOT NULL,
     trigger_kind TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    created_us INTEGER,
     started_at TEXT,
     finished_at TEXT,
     duration_ms INTEGER,
@@ -52,17 +58,21 @@ CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
 CREATE INDEX IF NOT EXISTS idx_executions_rule ON executions(rule_id);
 CREATE INDEX IF NOT EXISTS idx_executions_action ON executions(action_id);
 CREATE INDEX IF NOT EXISTS idx_executions_event ON executions(event_id);
+CREATE INDEX IF NOT EXISTS idx_executions_created_us ON executions(created_us);
 """
 
 
-def _normalize_ts_param(value: str) -> str:
-    """Parses an RFC3339 timestamp filter parameter into the same fixed-width UTC string
-    ``_normalized_ts_sql`` produces for stored rows, making ``>=``/``<=`` comparisons exact
-    and chronological across differing offsets and fraction formats."""
-    dt = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+def _ts_to_us(value: str) -> int | None:
+    """Parses an RFC3339 timestamp into integer UTC microseconds since the Unix epoch.
+    Accepts ``Z``, ``±HH:MM`` offsets, variable-precision fractions, and legacy naive values
+    (interpreted as UTC). Returns ``None`` for unparseable input."""
+    try:
+        dt = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except (ValueError, AttributeError):
+        return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+    return int(dt.timestamp() * 1_000_000)
 
 
 def _encode_cursor(seq: int) -> str:
@@ -88,6 +98,27 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         with self._lock, self._conn:
             self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Idempotent schema migration: adds the canonical ``ts_us``/``created_us`` integer
+        microsecond columns (already in fresh SCHEMA) and backfills them from the stored
+        RFC3339 strings. Rows with unparseable timestamps stay NULL — never silently deleted
+        (retention and time filters simply do not match them)."""
+        for table, col, text_col in (("events", "ts_us", "timestamp"), ("executions", "created_us", "created_at")):
+            cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
+                self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table}({col})")
+            skipped = 0
+            for row in self._conn.execute(f"SELECT seq, {text_col} FROM {table} WHERE {col} IS NULL").fetchall():
+                us = _ts_to_us(row[text_col])
+                if us is None:
+                    skipped += 1
+                    continue
+                self._conn.execute(f"UPDATE {table} SET {col} = ? WHERE seq = ?", (us, row["seq"]))
+            if skipped:
+                logger.warning("migration left %d unparseable timestamp(s) NULL in %s", skipped, table)
 
     def close(self) -> None:
         with self._lock:
@@ -104,8 +135,15 @@ class Database:
     def insert_event(self, event: dict[str, Any]) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT OR IGNORE INTO events (id, topic, source, timestamp, data) VALUES (?, ?, ?, ?, ?)",
-                (event["id"], event["topic"], event["source"], event["timestamp"], json.dumps(event["data"])),
+                "INSERT OR IGNORE INTO events (id, topic, source, timestamp, ts_us, data) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    event["id"],
+                    event["topic"],
+                    event["source"],
+                    event["timestamp"],
+                    _ts_to_us(event["timestamp"]),
+                    json.dumps(event["data"]),
+                ),
             )
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
@@ -134,11 +172,15 @@ class Database:
             clauses.append("source = ?")
             params.append(source)
         if time_from:
-            clauses.append(f"{self._normalized_ts_sql('timestamp')} >= ?")
-            params.append(_normalize_ts_param(time_from))
+            us = _ts_to_us(time_from)
+            if us is not None:
+                clauses.append("ts_us >= ?")
+                params.append(us)
         if time_to:
-            clauses.append(f"{self._normalized_ts_sql('timestamp')} <= ?")
-            params.append(_normalize_ts_param(time_to))
+            us = _ts_to_us(time_to)
+            if us is not None:
+                clauses.append("ts_us <= ?")
+                params.append(us)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM events {where} ORDER BY seq DESC LIMIT ?"
         params.append(limit + 1)
@@ -176,9 +218,9 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute(
                 """INSERT INTO executions
-                (id, event_id, rule_id, action_id, status, trigger_kind, created_at, started_at, finished_at,
+                (id, event_id, rule_id, action_id, status, trigger_kind, created_at, created_us, started_at, finished_at,
                  duration_ms, exit_code, http_status, stdout, stderr, result, error_code, error_message, action_revision)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     execution["id"],
                     execution.get("event_id"),
@@ -187,6 +229,7 @@ class Database:
                     execution["status"],
                     execution["trigger"],
                     execution["created_at"],
+                    _ts_to_us(execution["created_at"]),
                     execution.get("started_at"),
                     execution.get("finished_at"),
                     execution.get("duration_ms"),
@@ -310,52 +353,16 @@ class Database:
 
     # -- retention --------------------------------------------------------------------
 
-    @staticmethod
-    def _normalized_ts_sql(column: str) -> str:
-        """SQL expression rendering ``column`` as a fixed-width ``YYYY-MM-DD HH:MM:SS.ffffff`` UTC
-        string (26 chars), so a plain lexical ``<`` is an exact microsecond comparison.
-
-        ``strftime('%Y-%m-%d %H:%M:%S')`` supplies the UTC-normalized date+time (whole seconds);
-        the sub-second digits are re-appended from the raw value — a numeric UTC offset is always
-        whole-minute, so the fraction survives the conversion unchanged and the reconstruct is
-        exact at microsecond precision regardless of how the local SQLite truncates ``%f``.
-        Rows SQLite cannot parse yield NULL, which never compares ``<`` — never deleted.
-        """
-        frac = f"substr({column}, instr({column}, '.')+1)"
-        end = (
-            f"min(coalesce(nullif(instr({frac},'Z'),0),99),"
-            f"coalesce(nullif(instr({frac},'+'),0),99),"
-            f"coalesce(nullif(instr({frac},'-'),0),99))"
-        )
-        return (
-            f"strftime('%Y-%m-%d %H:%M:%S', {column}) || '.' || "
-            f"CASE WHEN instr({column},'.')=0 THEN '000000' "
-            f"ELSE substr(substr({frac},1,{end}-1)||'000000',1,6) END"
-        )
-
     def cleanup_retention(self, retention_days: int) -> int:
         """Deletes events/executions strictly older than ``retention_days``; returns rows removed.
 
-        Comparison is microsecond-exact: each stored ISO-8601 timestamp (``T``, ``Z`` or a
-        numeric UTC offset, with or without fractional seconds) is normalized to a fixed-width
-        UTC string and compared lexically — ``julianday`` would lose sub-millisecond precision
-        (float day-number) and misjudge boundary rows. Rows exactly on the cutoff are kept
-        (strict ``<``). A UTC-normalized day prefilter (never a raw-string one — a stored
-        ``+HH:MM`` offset can put the raw local date after the UTC date) keeps the bulk-delete
-        path cheap on large histories.
+        Comparison is integer UTC microseconds — exact at microsecond precision, indexable, and
+        correct across ``Z``/offset/fraction formats (``ts_us``/``created_us`` are canonicalized
+        at insert/migration time). Rows exactly on the cutoff are kept (strict ``<``); rows with
+        unparseable legacy timestamps have NULL canonical columns and are never deleted.
         """
-        cutoff_dt = datetime.now(UTC) - timedelta(days=retention_days)
-        cutoff = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S.%f")
-        cutoff_day = cutoff_dt.strftime("%Y-%m-%d")
-        norm_events = self._normalized_ts_sql("timestamp")
-        norm_execs = self._normalized_ts_sql("created_at")
+        cutoff_us = int((datetime.now(UTC) - timedelta(days=retention_days)).timestamp() * 1_000_000)
         with self._lock, self._conn:
-            events = self._conn.execute(
-                f"DELETE FROM events WHERE strftime('%Y-%m-%d', timestamp) < ? OR {norm_events} < ?",
-                (cutoff_day, cutoff),
-            ).rowcount
-            executions = self._conn.execute(
-                f"DELETE FROM executions WHERE strftime('%Y-%m-%d', created_at) < ? OR {norm_execs} < ?",
-                (cutoff_day, cutoff),
-            ).rowcount
+            events = self._conn.execute("DELETE FROM events WHERE ts_us < ?", (cutoff_us,)).rowcount
+            executions = self._conn.execute("DELETE FROM executions WHERE created_us < ?", (cutoff_us,)).rowcount
             return events + executions

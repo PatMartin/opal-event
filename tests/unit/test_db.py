@@ -389,3 +389,40 @@ class TestTimeFilters:
         assert items[0]["id"] == "p2" and cursor is not None
         items2, _ = db.list_events(cursor=cursor, limit=10, time_from="2026-01-10T00:00:00Z")
         assert {e["id"] for e in items2} == {"p0", "p1"}  # 'out' never appears
+
+
+class TestCanonicalMicroseconds:
+    def test_backfill_on_reopen_and_idempotent(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_event({"id": "a", "topic": "a.b", "source": "s", "timestamp": "2026-01-10T12:00:00.5Z", "data": {}})
+        db._conn.execute("UPDATE events SET ts_us = NULL")  # simulate pre-migration row
+        db.close()
+        db = Database(tmp_path / "t.db")  # reopen -> migration backfills
+        us = db._conn.execute("SELECT ts_us FROM events WHERE id='a'").fetchone()[0]
+        assert us == int(datetime(2026, 1, 10, 12, 0, 0, 500000, tzinfo=UTC).timestamp() * 1_000_000)
+        db.close()
+        Database(tmp_path / "t.db")  # third open: idempotent, no error
+
+    def test_unparseable_row_never_deleted(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db._conn.execute("INSERT INTO events (id, topic, source, timestamp, data) VALUES ('bad','a.b','s','garbage','{}')")
+        assert db._conn.execute("SELECT ts_us FROM events WHERE id='bad'").fetchone()[0] is None
+        assert db.cleanup_retention(0) == 0
+        assert db.get_event("bad") is not None
+
+    def test_pre_epoch_and_microsecond_boundaries(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        db.insert_event({"id": "pre", "topic": "a.b", "source": "s", "timestamp": "1969-12-31T23:59:59.999999Z", "data": {}})
+        us = db._conn.execute("SELECT ts_us FROM events WHERE id='pre'").fetchone()[0]
+        assert us == -1
+        items, _ = db.list_events(time_to="1970-01-01T00:00:00Z")
+        assert [e["id"] for e in items] == ["pre"]
+        items, _ = db.list_events(time_from="1970-01-01T00:00:00Z")
+        assert items == []
+
+    def test_ts_us_index_used(self, tmp_path):
+        db = Database(tmp_path / "t.db")
+        plan = db._conn.execute("EXPLAIN QUERY PLAN SELECT * FROM events WHERE ts_us >= 0 AND ts_us <= 1").fetchall()
+        assert any("idx_events_ts_us" in r["detail"] for r in plan)
+        plan2 = db._conn.execute("EXPLAIN QUERY PLAN DELETE FROM events WHERE ts_us < 0").fetchall()
+        assert any("idx_events_ts_us" in r["detail"] for r in plan2)

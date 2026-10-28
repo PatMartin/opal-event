@@ -6,18 +6,35 @@ import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 
 from opal_event.auth import require_auth
+from opal_event.db import _ts_to_us
 from opal_event.deps import get_config, get_service
 from opal_event.errors import NotFoundError, PayloadTooLargeError, ServiceUnavailableError
 from opal_event.models import Event, EventInput, ListEvents, PublishReceipt, TopicList
-from opal_event.normalization import normalize_event
+from opal_event.normalization import is_rfc3339_datetime, normalize_event
 from opal_event.opal_context import get_opal_context
 from opal_event.pagination import decode_scoped_cursor, encode_scoped_cursor
 from opal_event.service import EventService
 from opal_event.zeromq_broker import PublisherQueueFullError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+
+def _check_time_filters(from_: str | None, to: str | None) -> None:
+    """Validates ``from``/``to`` at the REST boundary — full RFC3339 parse (not just the textual
+    pattern), preserving offsets and microsecond precision, plus reversed-range rejection.
+    Failures surface in the same FastAPI ``{"detail": [...]}`` shape as other 422s."""
+    for name, value in (("from", from_), ("to", to)):
+        if value is not None and not is_rfc3339_datetime(value):
+            raise RequestValidationError(
+                [{"type": "value_error", "loc": ("query", name), "msg": "invalid RFC3339 date-time", "input": value}]
+            )
+    if from_ is not None and to is not None and _ts_to_us(from_) > _ts_to_us(to):  # type: ignore[operator]
+        raise RequestValidationError(
+            [{"type": "value_error", "loc": ("query", "from"), "msg": "'from' must not be after 'to'", "input": from_}]
+        )
 
 
 @router.post("/api/v1/events/", status_code=202, response_model=PublishReceipt)
@@ -71,6 +88,7 @@ def list_events(
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = None,
 ):
+    _check_time_filters(from_, to)
     filters = {"topic": topic, "source": source, "from": from_, "to": to}
     inner_cursor = decode_scoped_cursor(cursor, filters) if cursor else None
     items, next_inner_cursor = service.db.list_events(

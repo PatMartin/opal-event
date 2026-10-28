@@ -89,6 +89,7 @@ class Executor:
         self._max_workers = max_workers
         self._started = False
         self._stop = threading.Event()
+        self._stopped = threading.Event()  # set when a stop() has fully completed
         self._lock = threading.Lock()
 
     def _start_worker(self) -> threading.Thread:
@@ -110,6 +111,9 @@ class Executor:
             if self._started:
                 return
             self._stop.clear()
+            # New completion event per generation — a caller still waiting on the previous
+            # shutdown's event must not hang if the executor is restarted.
+            self._stopped = threading.Event()
             for _ in range(self._max_workers):
                 self._start_worker()
             self._started = True
@@ -123,26 +127,37 @@ class Executor:
         timeout, and returning early would let workers write results after the database is closed.
         """
         with self._lock:
-            if self._stop.is_set() or not self._started:
+            if self._stop.is_set():
+                # Another caller owns the in-progress shutdown — wait for it to finish instead
+                # of returning while workers may still be writing results.
+                wait_for = self._stopped
+            elif not self._started:
                 return
-            self._stop.set()
-            pending: list[Job] = []
-            while True:
-                try:
-                    pending.append(self._queue.get_nowait())
-                    self._queue.task_done()
-                except queue.Empty:
-                    break
-            all_threads = list(self._workers) + list(self._retired_workers)
-            self._workers.clear()
-            self._worker_events.clear()
-            self._retired_workers.clear()
-            self._started = False
+            else:
+                wait_for = None
+                self._stop.set()
+                pending: list[Job] = []
+                while True:
+                    try:
+                        pending.append(self._queue.get_nowait())
+                        self._queue.task_done()
+                    except queue.Empty:
+                        break
+                all_threads = list(self._workers) + list(self._retired_workers)
+                self._workers.clear()
+                self._worker_events.clear()
+                self._retired_workers.clear()
+                self._started = False
+        if wait_for is not None:
+            wait_for.wait()
+            return
         for job in pending:
             self._drop_on_shutdown(job)
         for t in all_threads:
-            t.join()
+            if t is not threading.current_thread():  # never join a worker thread from itself
+                t.join()
         logger.info("executor stopped: %d queued job(s) dropped, %d worker thread(s) joined", len(pending), len(all_threads))
+        self._stopped.set()
 
     def resize(self, queue_size: int, max_workers: int) -> None:
         """Applies live ``execution.queue_size``/``execution.max_workers`` changes. Synchronized

@@ -837,3 +837,117 @@ class TestExecutorShutdown:
         finally:
             release.set()
             executor.stop()
+
+
+class TestConcurrentStop:
+    """stop() must synchronize callers: exactly one runs the shutdown sequence; every other
+    caller waits on the same completion event instead of returning early."""
+
+    @staticmethod
+    def _make(tmp_path, **kw):
+        return Executor(Database(tmp_path / "t.db"), Metrics(), **kw)
+
+    @staticmethod
+    def _sleep_action(secs, action_id="sleeper"):
+        import sys
+
+        return ShellAction(
+            id=action_id,
+            type="shell",
+            mode="exec",
+            executable=sys.executable,
+            args=["-c", f"import time;time.sleep({secs})"],
+            timeout_seconds=30,
+        )
+
+    @staticmethod
+    def _submit(ex, action):
+        return ex.submit(
+            action,
+            {"topic": "t", "data": {}},
+            event_id=None,
+            rule_id=None,
+            trigger="manual",
+            execution_settings=ExecutionSettings(),
+            security_settings=SecuritySettings(),
+        )
+
+    def test_two_simultaneous_stops_wait_for_completion(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=5, max_workers=1)
+        ex.start()
+        self._submit(ex, self._sleep_action(0.5))
+        results = []
+        t1 = threading.Thread(target=lambda: (ex.stop(), results.append("a")))
+        t2 = threading.Thread(target=lambda: (ex.stop(), results.append("b")))
+        t1.start()
+        t2.start()
+        t1.join(timeout=15)
+        t2.join(timeout=15)
+        assert sorted(results) == ["a", "b"], "a stop() caller did not wait for shutdown to finish"
+        assert not any(t.name.startswith("opal-event-worker") for t in threading.enumerate())
+
+    def test_many_simultaneous_stops(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=5, max_workers=1)
+        ex.start()
+        self._submit(ex, self._sleep_action(0.4))
+        done = []
+        threads = [threading.Thread(target=lambda: (ex.stop(), done.append(1))) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+        assert len(done) == 5
+
+    def test_repeated_stop_after_completion(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=5, max_workers=1)
+        ex.start()
+        ex.stop()
+        ex.stop()  # must not block or raise
+        ex.stop()
+
+    def test_stop_with_queued_jobs_drops_and_completes(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=5, max_workers=1)
+        ex.start()
+        self._submit(ex, self._sleep_action(0.5, "j1"))
+        r2 = self._submit(ex, self._sleep_action(0.5, "j2"))  # queued behind j1
+        ex.stop()
+        db = ex.db
+        assert db.get_execution(r2.id)["status"] == "dropped"  # queued job adjudicated, not abandoned
+
+    def test_stop_while_submissions_occurring(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=50, max_workers=1)
+        ex.start()
+        stop_done = threading.Event()
+        submitter_done = threading.Event()
+        accepted = []
+
+        def submitter():
+            for i in range(30):
+                try:
+                    accepted.append(self._submit(ex, self._sleep_action(0.05, f"s{i}")))
+                except Exception:
+                    break  # admission closed — expected during shutdown
+            submitter_done.set()
+
+        ts = threading.Thread(target=submitter)
+        ts.start()
+        stopper = threading.Thread(target=lambda: (ex.stop(), stop_done.set()))
+        stopper.start()
+        ts.join(timeout=15)
+        stopper.join(timeout=15)
+        assert submitter_done.is_set() and stop_done.is_set()
+
+    def test_worker_failure_during_shutdown_still_completes(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=5, max_workers=1)
+        ex.start()
+        bad = ShellAction(id="bad", type="shell", mode="exec", executable="nonexistent-binary-xyz", args=[], timeout_seconds=5)
+        self._submit(ex, bad)
+        ex.stop()  # worker error must not stall shutdown
+        assert not any(t.name.startswith("opal-event-worker") for t in threading.enumerate())
+
+    def test_submit_rejected_after_completed_shutdown(self, tmp_path):
+        ex = self._make(tmp_path, queue_size=5, max_workers=1)
+        ex.start()
+        ex.stop()
+        record = self._submit(ex, self._sleep_action(0.01))
+        assert record.status == "dropped" and record.error_code == "shutdown"

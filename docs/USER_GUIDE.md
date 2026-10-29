@@ -543,7 +543,7 @@ rules:
 
 ## 5. REST API reference
 
-The REST API implements OpenAPI 3.1 as defined in `opal_event.1.2.0.yaml`. All routes reside under
+The REST API implements OpenAPI 3.1 as defined in `opal_event.1.4.0.yaml`. All routes reside under
 `/api/v1`, collection endpoints use trailing slashes, and authentication uses standard bearer tokens:
 
 ```

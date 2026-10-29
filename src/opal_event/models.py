@@ -282,13 +282,6 @@ class ListExecutions(Strict):
 # --------------------------------------------------------------------------------------
 
 
-class Problem(Strict):
-    code: str
-    message: str
-    details: list[dict[str, Any]] | None = None
-    request_id: str | None = None
-
-
 class OpalErrorBody(Strict):
     """Nested error detail for :class:`OpalError` (contract v1.2 ``OpalError412``/``428``/``422``)."""
 
@@ -316,8 +309,9 @@ class Health(Strict):
     pending_restart: bool
 
 
-class HealthProbe(Strict):
+class OpalHealthProbe(Strict):
     status: Literal["ok", "degraded", "unavailable"]
+    ready: bool
     details: dict[str, str] | None = None
 
 

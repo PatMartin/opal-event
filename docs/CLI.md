@@ -6,7 +6,7 @@ event and topic inspection, rules and actions catalogs, execution history, live-
 settings, configuration backups, service health, and operational diagnostics.
 
 The CLI is a thin REST client. **Every command calls the Opal Event REST API** through the operations
-declared in the authoritative OpenAPI 3.1 specification (`opal_event.1.2.0.yaml`). It never accesses
+declared in the authoritative OpenAPI 3.1 specification (`opal_event.1.4.0.yaml`). It never accesses
 the SQLite database or ZeroMQ sockets directly. The server must therefore be running, either locally or
 on a remote host.
 
@@ -1483,7 +1483,7 @@ done
 ## 17. Appendix: CLI ↔ REST mapping
 
 All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 29 OpenAPI
-operations declared in `opal_event.1.2.0.yaml` are mapped below:
+operations declared in `opal_event.1.4.0.yaml` are mapped below:
 
 | CLI command | HTTP method | API endpoint | If-Match / ETag |
 |---|---|---|---|

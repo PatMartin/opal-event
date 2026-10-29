@@ -58,8 +58,8 @@ class TestEndToEndPipeline:
             resp4 = app_client.post("/api/v1/events/", json={"topic": "queue.e2e", "data": {"n": 4}})
             assert resp4.status_code == 503
             body4 = resp4.json()
-            assert body4["code"] == "unavailable"
-            assert "Publisher queue is full" in body4["message"]
+            assert body4["error"]["code"] == "unavailable"
+            assert "Publisher queue is full" in body4["error"]["message"]
             assert "request_id" in body4
 
             # Stats must reflect the rejected publication

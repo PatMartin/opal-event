@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from opal_event.auth import require_auth
 from opal_event.deps import get_config, get_service
-from opal_event.errors import ServiceUnavailableError
-from opal_event.models import Health, HealthProbe, Stats
+from opal_event.models import Health, OpalHealthProbe, Stats
 from opal_event.service import EventService
 
 logger = logging.getLogger("opal_event.routers.operations")
@@ -57,15 +56,22 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
     )
 
 
-@router.get("/api/v1/health/live", response_model=HealthProbe)
-def health_live():
-    return HealthProbe(status="ok")
+@router.get("/api/v1/health/live", response_model=OpalHealthProbe)
+def health_live(service: Annotated[EventService, Depends(get_service)]):
+    return OpalHealthProbe(status="ok", ready=service.is_ready())
 
 
-@router.get("/api/v1/health/ready", response_model=HealthProbe)
-def health_ready(service: Annotated[EventService, Depends(get_service)]):
+@router.get("/api/v1/health/ready", response_model=OpalHealthProbe)
+def health_ready(service: Annotated[EventService, Depends(get_service)], response: Response):
     # One authoritative readiness check shared with REST publication — a 503 here means
-    # POST /api/v1/events/ would also be refused, and vice versa.
+    # POST /api/v1/events/ would also be refused, and vice versa. Per opal_event.1.4.0.yaml the
+    # 503 body is the OpalHealthProbe itself (status "unavailable", ready false), not an error.
     if not service.is_ready():
-        raise ServiceUnavailableError("broker, persistence, or executor subsystem is not ready")
-    return HealthProbe(status="ok", details={"broker": "ok", "database": "ok", "executor": "ok"})
+        response.status_code = 503
+        details = {
+            "broker": "ok" if service.broker.running else "unavailable",
+            "database": "ok" if service.is_database_ready() else "unavailable",
+            "executor": "ok" if service.executor.healthy else "unavailable",
+        }
+        return OpalHealthProbe(status="unavailable", ready=False, details=details)
+    return OpalHealthProbe(status="ok", ready=True, details={"broker": "ok", "database": "ok", "executor": "ok"})

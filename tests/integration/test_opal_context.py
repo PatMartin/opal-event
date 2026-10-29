@@ -60,7 +60,7 @@ class TestOpalContextHeaders:
     def test_problem_error_request_id_matches_context_header(self, app_client):
         resp = app_client.get("/api/v1/rules/missing-rule")
         body = resp.json()
-        assert body["request_id"] == resp.headers["x-opal-request-id"]
+        assert body["error"]["request_id"] == resp.headers["x-opal-request-id"]
 
     def test_metadata_propagates_from_rest_publication_through_zeromq_observation(self, app_client, monkeypatch):
         observed = []

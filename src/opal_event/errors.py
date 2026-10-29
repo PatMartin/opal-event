@@ -1,12 +1,10 @@
-"""Structured ``Problem`` error responses and the exception types that carry them.
+"""Structured error responses and the exception types that carry them.
 
-``422`` validation errors keep FastAPI's default ``HTTPValidationError`` shape (``{"detail": [...]}
-``), which already matches the shared OPAL contract shape with no changes needed. Every other error
-status in the contract (400/401/403/404/409/413/429/500/503) uses the ``Problem`` schema instead.
-
-The v1.2 suite standard introduces a third shape, the nested ``OpalError`` (``{"error": {...}}``),
-used exclusively for strong-ETag precondition failures (412 stale / 428 missing) and OPAL-context
-header validation failures (422) -- see :mod:`opal_event.opal_context` for the header side.
+As of opal_event.1.4.0.yaml every error response uses the nested ``OpalError`` envelope
+(``{"error": {code, message, details, request_id, transaction_id, session_id?, causation_id?}}``):
+application errors (400/401/403/404/409/413/429/500/503) via :func:`problem_exception_handler`,
+request-validation 422s via the handlers in :mod:`opal_event.app`, and strong-ETag precondition
+failures (412/428) plus OPAL-context header validation (422) via :mod:`opal_event.opal_context`.
 """
 
 from __future__ import annotations
@@ -65,9 +63,15 @@ async def problem_exception_handler(request: Request, exc: ProblemError) -> JSON
     return JSONResponse(
         status_code=exc.status_code,
         content={
-            "code": exc.code,
-            "message": exc.message,
-            "request_id": context.request_id,
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": None,
+                "request_id": context.request_id,
+                "transaction_id": context.transaction_id,
+                "session_id": context.session_id,
+                "causation_id": context.causation_id,
+            }
         },
     )
 

@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 from opal_event.config import ConfigStore
 from opal_event.errors import OpalContextualError, ProblemError, opal_contextual_error_handler, problem_exception_handler
-from opal_event.opal_context import OpalContextMiddleware
+from opal_event.opal_context import OpalContextMiddleware, get_opal_context
 from opal_event.routers import actions, backup, events, executions, operations, rules, settings
 from opal_event.service import EventService
 from opal_event.validation import ValidationProblem
@@ -30,12 +30,31 @@ def _is_loopback(host: str) -> bool:
         return host in ("localhost",)
 
 
+def _opal_error_422(request: Request, message: str, details: object) -> JSONResponse:
+    """All 422 responses use the nested OpalError envelope per opal_event.1.4.0.yaml."""
+    ctx = get_opal_context(request)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "validation_error",
+                "message": message,
+                "details": jsonable_encoder(details),
+                "request_id": ctx.request_id,
+                "transaction_id": ctx.transaction_id,
+                "session_id": ctx.session_id,
+                "causation_id": ctx.causation_id,
+            }
+        },
+    )
+
+
 async def _validation_problem_handler(request: Request, exc: ValidationProblem) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.detail)})
+    return _opal_error_422(request, "request validation failed", exc.detail)
 
 
 async def _request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+    return _opal_error_422(request, "request validation failed", exc.errors())
 
 
 def create_app(config_path: str) -> FastAPI:
@@ -62,7 +81,7 @@ def create_app(config_path: str) -> FastAPI:
 
     app = FastAPI(
         title="Opal Event API",
-        version="1.2.0",
+        version="1.4.0",
         lifespan=lifespan,
     )
     app.add_middleware(OpalContextMiddleware)

@@ -1,0 +1,2926 @@
+openapi: 3.1.0
+info:
+  title: Opal Event API
+  version: 1.4.0
+  description: 'REST management and HTTP event ingress for opal-event-svc. API-first contract, release v1.
+
+
+    ZeroMQ XSUB/XPUB best-effort transport is separately specified in zeromq_protocol.md.
+
+    REST 202 means accepted for attempted publication or queued execution, NOT delivered/processed.
+
+    The broker forwards opaque frames; REST validates inputs before publication; the internal observer validates
+    them independently. Direct producers may forward invalid events to external subscribers.
+
+
+    Configuration: YAML is authoritative and editable via REST and filesystem. Rules/actions/persistence/worker
+    controls can activate without restart. Network listener endpoints, REST authorization settings, CURVE credentials
+    and database location changes are saved but pending restart. Pending-restart state is observable through
+    health/readiness information. Filesystem changes must be watched, validated and activated atomically; invalid
+    files leave last good configuration active and report reload errors. REST edits use optimistic revisions;
+    if external edits race, respond 409 and do not overwrite.
+
+
+    Policy: By default all interfaces bind 127.0.0.1; when bound to non-loopback, REST bearer authentication
+    and ZeroMQ CURVE SHALL be enabled. Local default auth can be disabled only on loopback. All configuration
+    mutation and manual execution routes are privileged. OpenAPI expresses potential Bearer security; deployment
+    can explicitly disable it on loopback. Tokens/secret keys are never returned.
+
+
+    Execution: four worker slots default, bounded queue, overflow drops with execution record and metrics.
+    Independent concurrent actions; no retry, no ordering guarantees. Execution terminal states: succeeded,
+    failed, timed_out, dropped. Subprocess groups are terminated on timeout as OS supports. Output capture
+    is truncated/redacted; event payloads are untrusted; logging must redact configured secrets.
+
+
+    Templating: placeholders {{data.path}} or {{event}}. Whole JSON values preserve types; interpolated strings
+    stringify values. Missing path causes template_error; no template expressions, evaluation, or control flow.
+    Shell executables use argv, never interpolate a command string into a shell. Explicit shell interpreter
+    modes require a configured static script/command template and are high-risk; do not concatenate raw event
+    values into interpreter code; positional args or stdin preferred. HTTP destinations are verified against
+    scheme/host/port allowlist after DNS resolution, on each connection, and redirects are disabled. Template
+    expansion must not alter scheme/hostname/port. Python plugins run separately, from registered module +
+    function only, with JSON stdin/stdout.
+
+
+    Rules: enabled exact topic or suffix .* prefix pattern, ANDed conditions, multiple actions independently
+    dispatched; no aggregation, timers, rule chains, or state. Prefix vision.* matches vision.foo and deeper
+    descendants, not visionary, and not bare vision. Conditions compare strictly typed JSON values; numeric
+    comparisons require numbers, missing fields evaluate false except exists(false). Event sizes max 1048576
+    bytes per two-frame message (sum of frame payload byte lengths), and same bound on canonical serialized
+    REST wire event.
+
+
+    OPAL shared conventions: /api/v1 prefix; trailing slash on collection roots; 201+Location for resource
+    creation; 204 for deletion; PATCH for partial updates; portable settings and backup endpoints. Full config
+    PUT remains for complete YAML replacement. Event publication and manual execution retain 202 for best-effort
+    admission. This revision introduces breaking path changes from /v1.
+
+
+    On PATCH /api/v1/settings/, max_event_bytes maps to zeromq.max_event_bytes; portable persistence fields
+    map to persistence excluding its database path. PATCH resources do not accept id or type replacement. Changes
+    to HTTP or ZeroMQ listener addresses, authentication, keys, or SQLite path are only activated after restart.
+
+
+
+    OPAL SUITE STANDARD v1.2 (normative)
+
+    X-Opal-Session-Id is an optional logical context identifier; it does not create a server-managed session
+    or grant authorization. Entry-point services generate one when absent where a workflow requires it, and
+    propagate it unchanged. A preexisting service-local session resource has a separate lifecycle. X-Opal-Transaction-Id
+    is a single logical end-to-end operation and is not an atomic distributed transaction. X-Opal-Request-Id
+    identifies one inbound HTTP exchange and is regenerated for each downstream HTTP hop (the incoming one
+    can be used for diagnostics); X-Opal-Causation-Id names the immediate parent event/request, where applicable.
+    For inbound requests, if a transaction ID is absent the service assigns one; all response types (including
+    errors, streamed headers, and binary bodies) return session ID if known and transaction/request IDs. Never
+    trust these values for access control. Propagate them into derived ZeroMQ envelope metadata. All identifiers
+    are opaque 1..128-character printable ASCII tokens with no control/whitespace characters; client-supplied
+    invalid values yield 422.
+
+    Standard health routes: /api/v1/health/, /api/v1/health/live, /api/v1/health/ready. Settings: GET and PATCH
+    /api/v1/settings/ exclusively; PATCH is atomic. Mutable configuration uses strong ETags and mandatory If-Match
+    with 428 missing, 412 stale. For bounded configuration catalogs return full arrays (subject to explicit
+    deployment caps); for growing histories use cursor pagination with stable deterministic ordering, opaque
+    next_cursor and has_more. Cursors are scoped to the exact filter set and invalidate on mismatch (422);
+    cursor values expire explicitly. Standard HTTP creation 201 Location, async admission 202, empty deletion
+    204. Streaming keeps media-specific transports but exposes correlation headers, defined failure behavior,
+    and no unsupported replay guarantee. Configuration export/import/validation excludes secrets and history.
+
+    '
+  license:
+    name: Internal use
+servers:
+- url: http://127.0.0.1:8080
+tags:
+- name: Events
+- name: Topics
+- name: Rules
+- name: Actions
+- name: Executions
+- name: Operations
+- name: settings
+  description: Portable settings shared across OPAL services.
+- name: backup
+  description: Validate, import, and export portable configuration.
+security:
+- BearerAuth: []
+paths:
+  /api/v1/events/:
+    post:
+      tags:
+      - Events
+      operationId: post_api_v1_events
+      summary: Publish event
+      description: Normalizes missing metadata, checks 1 MiB serialized wire payload, enqueues publication.
+        Does not guarantee observer storage or action execution. Returns 503 if the publisher queue is full.
+      responses:
+        '202':
+          description: Accepted, not guaranteed delivered/executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishReceipt'
+              example:
+                id: 7fe5d3fa-d326-41fd-9cce-5d76b69a6174
+                status: accepted
+                published_at: '2026-10-07T21:00:00Z'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventInput'
+    get:
+      tags:
+      - Events
+      operationId: get_api_v1_events
+      summary: List stored events
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEvents'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: topic
+        in: query
+        schema:
+          type: string
+      - name: source
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        schema:
+          type: string
+      - name: to
+        in: query
+        schema:
+          type: string
+    delete:
+      tags:
+      - Events
+      operationId: delete_api_v1_events
+      summary: Clear all stored events
+      description: Clear all events from all topics.
+      responses:
+        '204':
+          description: Successful operation
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/events/{event_id}:
+    get:
+      tags:
+      - Events
+      operationId: get_api_v1_events_id
+      summary: Get stored event
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    delete:
+      tags:
+      - Events
+      operationId: delete_api_v1_events_id
+      summary: Delete stored event
+      description: Delete an individual event given its ID.
+      responses:
+        '204':
+          description: Successful operation
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/topics/:
+    get:
+      tags:
+      - Topics
+      operationId: get_api_v1_topics
+      summary: List observed topics
+      description: '
+
+        Return the complete bounded configuration collection; pagination is not supported. An implementation
+        may reject catalog sizes over an advertised deployment cap, rather than silently truncate.
+
+        '
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicList'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters: []
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/rules/:
+    get:
+      tags:
+      - Rules
+      operationId: get_api_v1_rules
+      summary: List rules
+      description: '
+
+        Return the complete bounded configuration collection; pagination is not supported. An implementation
+        may reject catalog sizes over an advertised deployment cap, rather than silently truncate.
+
+        '
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRules'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters: []
+    post:
+      tags:
+      - Rules
+      operationId: post_api_v1_rules
+      summary: Create rule
+      description: ''
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+          headers:
+            Location:
+              description: Resource URL
+              schema:
+                type: string
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Rule'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/rules/{rule_id}:
+    get:
+      tags:
+      - Rules
+      operationId: get_api_v1_rules_id
+      summary: Get rule
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    delete:
+      tags:
+      - Rules
+      operationId: delete_api_v1_rules_id
+      summary: Delete rule
+      description: ''
+      responses:
+        '204':
+          description: Successful operation
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+        '412':
+          $ref: '#/components/responses/OpalError412'
+        '428':
+          $ref: '#/components/responses/OpalError428'
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
+          existence is still subject to the precondition.
+    patch:
+      tags:
+      - Rules
+      operationId: patch_api_v1_rules_rule_id
+      summary: Partially update rule
+      description: Atomically update the selected fields of a registered resource and persist to YAML. Omitted
+        fields are unchanged. Nested objects and arrays are replaced, not merged. ID and action type cannot
+        change. Existing executions keep their resolved action snapshot.
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+        '412':
+          $ref: '#/components/responses/OpalError412'
+        '428':
+          $ref: '#/components/responses/OpalError428'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RulePatch'
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
+          existence is still subject to the precondition.
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/rules/{rule_id}/test:
+    post:
+      tags:
+      - Rules
+      operationId: post_api_v1_rules_id_test
+      summary: Evaluate rule without execution
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleTestResult'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleTestInput'
+      parameters:
+      - name: rule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/actions/:
+    get:
+      tags:
+      - Actions
+      operationId: get_api_v1_actions
+      summary: List actions
+      description: '
+
+        Return the complete bounded configuration collection; pagination is not supported. An implementation
+        may reject catalog sizes over an advertised deployment cap, rather than silently truncate.
+
+        '
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListActions'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters: []
+    post:
+      tags:
+      - Actions
+      operationId: post_api_v1_actions
+      summary: Create action
+      description: ''
+      responses:
+        '201':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Action'
+          headers:
+            Location:
+              description: Resource URL
+              schema:
+                type: string
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Action'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/actions/{action_id}:
+    get:
+      tags:
+      - Actions
+      operationId: get_api_v1_actions_id
+      summary: Get action
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Action'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    delete:
+      tags:
+      - Actions
+      operationId: delete_api_v1_actions_id
+      summary: Delete unused action
+      description: 409 if referenced by a rule; delete or update referencing rules first.
+      responses:
+        '204':
+          description: Successful operation
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+        '412':
+          $ref: '#/components/responses/OpalError412'
+        '428':
+          $ref: '#/components/responses/OpalError428'
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
+          existence is still subject to the precondition.
+    patch:
+      tags:
+      - Actions
+      operationId: patch_api_v1_actions_action_id
+      summary: Partially update action
+      description: Atomically update the selected fields of a registered resource and persist to YAML. Omitted
+        fields are unchanged. Nested objects and arrays are replaced, not merged. ID and action type cannot
+        change. Existing executions keep their resolved action snapshot.
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Action'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+        '412':
+          $ref: '#/components/responses/OpalError412'
+        '428':
+          $ref: '#/components/responses/OpalError428'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionPatch'
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
+          existence is still subject to the precondition.
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/actions/{action_id}/execute:
+    post:
+      tags:
+      - Actions
+      operationId: post_api_v1_actions_id_execute
+      summary: Execute registered action manually
+      description: Enqueue one independent execution. Queue-full yields execution record status=dropped and
+        HTTP 202, never an automatic retry. Registered and enabled action only.
+      responses:
+        '202':
+          description: Accepted, not guaranteed delivered/executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutionRequest'
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/executions/:
+    get:
+      tags:
+      - Executions
+      operationId: get_api_v1_executions
+      summary: List executions
+      description: '
+
+        Use cursor pagination, stable descending time-plus-ID ordering; filters are bound into the cursor.
+        Invalid or mismatched cursors return 422. Response next_cursor is null at end.
+
+        '
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListExecutions'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+      - name: rule_id
+        in: query
+        schema:
+          type: string
+      - name: action_id
+        in: query
+        schema:
+          type: string
+      - name: event_id
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+        description: Maximum items per page.
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+        description: Opaque continuation token returned from the preceding page.
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/executions/{execution_id}:
+    get:
+      tags:
+      - Executions
+      operationId: get_api_v1_executions_id
+      summary: Get execution result
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Execution'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/health/:
+    get:
+      tags:
+      - Operations
+      operationId: get_api_v1_health
+      summary: Get readiness and health
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+      security: []
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/stats/:
+    get:
+      tags:
+      - Operations
+      operationId: get_api_v1_stats
+      summary: Get event and execution counters
+      description: ''
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+        '500':
+          $ref: '#/components/responses/OperationFailed'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/settings/:
+    get:
+      tags:
+      - settings
+      summary: Get portable settings
+      operationId: get_api_v1_settings
+      description: Return portable effective settings only; never returns secret material, transport bindings,
+        rule/action definitions, or history. Return ETag with the current YAML configuration revision; this
+        revision can be used in If-Match for subsequent writes.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortableSettings'
+          headers:
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400': &id001
+          $ref: '#/components/responses/BadRequest'
+        '401': &id002
+          $ref: '#/components/responses/Unauthorized'
+        '403': &id003
+          $ref: '#/components/responses/Forbidden'
+        '409': &id004
+          $ref: '#/components/responses/Conflict'
+        '422': &id005
+          $ref: '#/components/responses/OpalError422'
+        '500': &id006
+          $ref: '#/components/responses/OperationFailed'
+    patch:
+      tags:
+      - settings
+      summary: Update portable settings
+      operationId: patch_api_v1_settings
+      description: Atomically validate, persist in YAML, and activate portable live settings. Updates serialize
+        with direct YAML edits using an If-Match revision from GET /api/v1/settings/. Invalid or racing edits
+        leave prior active configuration unchanged.
+      parameters:
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+        description: Current configuration revision from GET /api/v1/settings/.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortableSettingsPatch'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortableSettings'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400': *id001
+        '401': *id002
+        '403': *id003
+        '409': *id004
+        '422': *id005
+        '500': *id006
+        '412':
+          $ref: '#/components/responses/OpalError412'
+        '428':
+          $ref: '#/components/responses/OpalError428'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/health/live:
+    get:
+      tags:
+      - health
+      operationId: get_api_v1_health_live
+      summary: Check liveness
+      description: Checks only that the server process can answer HTTP, without probing external services.
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpalHealthProbe'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpalHealthProbe'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/health/ready:
+    get:
+      tags:
+      - health
+      operationId: get_api_v1_health_ready
+      summary: Check readiness
+      description: Checks readiness of ZeroMQ broker, internal observer, and configuration. Unavailable subsystem
+        returns 503. Does not start or repair anything.
+      security: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpalHealthProbe'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpalHealthProbe'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '422':
+          $ref: '#/components/responses/OpalError422'
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/backup/export:
+    get:
+      tags:
+      - backup
+      operationId: get_api_v1_backup_export
+      summary: Export portable configuration
+      description: Export JSON portable settings, rules, and registered actions. Excludes secrets, histories,
+        runtime state and machine-specific listener bindings. May contain action paths; protect exports accordingly.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigBackup'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400': *id001
+        '401': *id002
+        '403': *id003
+        '409': *id004
+        '422': *id005
+        '500': *id006
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/backup/validate:
+    post:
+      tags:
+      - backup
+      operationId: post_api_v1_backup_validate
+      summary: Validate portable configuration
+      description: Validate a supplied portable backup without side effects; returns 200 with valid=false when
+        the check completes but content is invalid. Malformed requests return 422.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigBackup'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationReport'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400': *id001
+        '401': *id002
+        '403': *id003
+        '409': *id004
+        '422': *id005
+        '500': *id006
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+  /api/v1/backup/import:
+    post:
+      tags:
+      - backup
+      operationId: post_api_v1_backup_import
+      summary: Import portable configuration
+      description: Validate backup, replace portable rules/actions/settings atomically and persist to YAML.
+        Retains local network/security/database settings. Requires revision precondition to avoid racing file
+        edits. No action runs merely from import. No automatic files or scripts are installed.
+      parameters:
+      - name: If-Match
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupImportRequest'
+      responses:
+        '200':
+          description: Backup applied atomically
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupImportResult'
+          headers:
+            X-Opal-Session-Id:
+              $ref: '#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: '#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: '#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: '#/components/headers/OpalCausationIdHeader'
+        '400': *id001
+        '401': *id002
+        '403': *id003
+        '409': *id004
+        '422': *id005
+        '500': *id006
+    parameters:
+    - $ref: '#/components/parameters/OpalSessionIdHeader'
+    - $ref: '#/components/parameters/OpalTransactionIdHeader'
+    - $ref: '#/components/parameters/OpalRequestIdHeader'
+    - $ref: '#/components/parameters/OpalCausationIdHeader'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Optional only on loopback. Required on non-loopback interfaces; configured via token_env.
+  parameters:
+    OpalSessionIdHeader:
+      name: X-Opal-Session-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: ^[!-~]+$
+      description: OPAL suite context propagation; opaque and not an authentication credential.
+    OpalTransactionIdHeader:
+      name: X-Opal-Transaction-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: ^[!-~]+$
+      description: OPAL suite context propagation; opaque and not an authentication credential.
+    OpalRequestIdHeader:
+      name: X-Opal-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: ^[!-~]+$
+      description: OPAL suite context propagation; opaque and not an authentication credential.
+    OpalCausationIdHeader:
+      name: X-Opal-Causation-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: ^[!-~]+$
+      description: OPAL suite context propagation; opaque and not an authentication credential.
+  schemas:
+    EventInput:
+      type: object
+      description: Minimal event envelope. id/source/timestamp filled for REST ingress if missing; direct ZeroMQ
+        producers remain unmodified.
+      properties:
+        id: &id007
+          type: string
+          format: uuid
+        topic: &id008
+          type: string
+          pattern: ^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$
+          maxLength: 255
+        source: &id009
+          type: string
+          minLength: 1
+          maxLength: 128
+        timestamp: &id010
+          type: string
+          format: date-time
+        data: &id011
+          description: Any JSON value, including arrays and primitives
+      additionalProperties: false
+      required:
+      - topic
+      - data
+      example:
+        topic: intent.recognized
+        data:
+          intent: lights.turn_on
+          confidence: 0.96
+    Event:
+      type: object
+      description: Normalized event as known to REST or internal observer.
+      properties:
+        id: *id007
+        topic: *id008
+        source: *id009
+        timestamp: *id010
+        data: *id011
+      additionalProperties: false
+      required:
+      - id
+      - topic
+      - source
+      - timestamp
+      - data
+    PublishReceipt:
+      type: object
+      description: Attempted publication receipt; not a subscriber acknowledgement.
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - accepted
+        published_at:
+          type: string
+          format: date-time
+      additionalProperties: false
+      required:
+      - id
+      - status
+      - published_at
+    Condition:
+      type: object
+      description: Single stateless path predicate. Paths are dotted fields relative to normalized event; array
+        indices may be numeric segments. Missing path false except exists with value=false.
+      properties:
+        path:
+          type: string
+          example: data.confidence
+        operator:
+          type: string
+          enum:
+          - eq
+          - ne
+          - gt
+          - gte
+          - lt
+          - lte
+          - in
+          - not_in
+          - exists
+          - contains
+        value: *id011
+      additionalProperties: false
+      required:
+      - path
+      - operator
+      - value
+    Rule:
+      type: object
+      description: Rule resource persisted in YAML. Suffix .* permits hierarchical prefix matching; simple
+        AND conditions only.
+      properties:
+        id:
+          type: string
+          pattern: ^[a-zA-Z][a-zA-Z0-9_-]*$
+        enabled:
+          type: boolean
+          default: true
+        topic:
+          type: string
+          example: vision.*
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        actions:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+      required:
+      - id
+      - enabled
+      - topic
+      - conditions
+      - actions
+      example:
+        id: front_door_alert
+        enabled: true
+        topic: vision.*
+        conditions:
+        - path: data.object
+          operator: eq
+          value: person
+        actions:
+        - announce_person
+        - send_notification
+    ShellAction:
+      type: object
+      description: Static executable and argv with optional explicit interpreter. For interpreter modes script_path
+        is required; templated user data belongs in args/stdin, not arbitrary executable code.
+      properties:
+        id:
+          type: string
+        type:
+          const: shell
+        enabled:
+          type: boolean
+          default: true
+        mode:
+          type: string
+          enum:
+          - exec
+          - sh
+          - bash
+          - cmd
+          - powershell
+        executable:
+          type: string
+          description: Required for mode=exec; absolute registered executable path.
+        script_path:
+          type: string
+          description: Required for interpreter modes; static allowlisted script file path.
+        args:
+          type: array
+          items:
+            type: string
+          default: []
+        stdin:
+          type: string
+          enum:
+          - event_json
+          - none
+          default: event_json
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+      additionalProperties: false
+      required:
+      - id
+      - type
+      - enabled
+      - mode
+      allOf:
+      - if:
+          properties:
+            mode:
+              const: exec
+        then:
+          required:
+          - executable
+      - if:
+          properties:
+            mode:
+              enum:
+              - sh
+              - bash
+              - cmd
+              - powershell
+        then:
+          required:
+          - script_path
+      example:
+        id: announce_person
+        type: shell
+        enabled: true
+        mode: bash
+        script_path: /opt/opal/scripts/announce.sh
+        args:
+        - '{{data.camera}}'
+        stdin: event_json
+        timeout_seconds: 30
+    HttpAction:
+      type: object
+      description: HTTP request. Scheme/host/port must be fixed and allowlisted; only path/query/body/headers
+        may be templated, never authorization header from event values.
+      properties:
+        id:
+          type: string
+        type:
+          const: http
+        enabled:
+          type: boolean
+          default: true
+        method:
+          type: string
+          enum:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        url:
+          type: string
+          format: uri
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body: *id011
+        body_mode:
+          type: string
+          enum:
+          - template
+          - event_json
+          - none
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+      additionalProperties: false
+      required:
+      - id
+      - type
+      - enabled
+      - method
+      - url
+      - body_mode
+      example:
+        id: send_notification
+        type: http
+        enabled: true
+        method: POST
+        url: http://127.0.0.1:9000/notify
+        body_mode: template
+        body:
+          camera: '{{data.camera}}'
+          event: '{{event}}'
+        timeout_seconds: 15
+    PythonAction:
+      type: object
+      description: Registered module/function executed in a new Python subprocess. JSON stdin includes normalized
+        event, JSON stdout is optional result.
+      properties:
+        id:
+          type: string
+        type:
+          const: python
+        enabled:
+          type: boolean
+          default: true
+        module:
+          type: string
+          pattern: ^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$
+        function:
+          type: string
+          pattern: ^[a-zA-Z_]\w*$
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+      additionalProperties: false
+      required:
+      - id
+      - type
+      - enabled
+      - module
+      - function
+      example:
+        id: process_detection
+        type: python
+        enabled: true
+        module: opal_plugins.detection
+        function: handle_event
+        timeout_seconds: 30
+    Action:
+      description: Discriminated action definition
+      oneOf:
+      - $ref: '#/components/schemas/ShellAction'
+      - $ref: '#/components/schemas/HttpAction'
+      - $ref: '#/components/schemas/PythonAction'
+      discriminator:
+        propertyName: type
+        mapping:
+          shell: '#/components/schemas/ShellAction'
+          http: '#/components/schemas/HttpAction'
+          python: '#/components/schemas/PythonAction'
+    Execution:
+      type: object
+      description: Execution record. One per action dispatched or dropped.
+      properties:
+        id:
+          type: string
+        event_id:
+          type:
+          - string
+          - 'null'
+        rule_id:
+          type:
+          - string
+          - 'null'
+        action_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - dropped
+        trigger:
+          type: string
+          enum:
+          - rule
+          - manual
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        duration_ms:
+          type:
+          - integer
+          - 'null'
+        exit_code:
+          type:
+          - integer
+          - 'null'
+        http_status:
+          type:
+          - integer
+          - 'null'
+        stdout:
+          type:
+          - string
+          - 'null'
+        stderr:
+          type:
+          - string
+          - 'null'
+        result: *id011
+        error_code:
+          type:
+          - string
+          - 'null'
+        error_message:
+          type:
+          - string
+          - 'null'
+        action_revision:
+          type: string
+      additionalProperties: false
+      required:
+      - id
+      - action_id
+      - status
+      - trigger
+      - created_at
+    ExecutionRequest:
+      type: object
+      description: Optional manual input. Generated event metadata is normalized; trigger is manual, rule_id=null.
+      properties:
+        event:
+          $ref: '#/components/schemas/EventInput'
+      additionalProperties: false
+      required:
+      - event
+    RuleTestInput:
+      type: object
+      description: Dry run against the normalized event, no action execution.
+      properties:
+        event:
+          $ref: '#/components/schemas/EventInput'
+      additionalProperties: false
+      required:
+      - event
+    RuleTestResult:
+      type: object
+      description: Condition evaluation result.
+      properties:
+        matched:
+          type: boolean
+        action_ids:
+          type: array
+          items:
+            type: string
+        checks:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: false
+      required:
+      - matched
+      - action_ids
+      - checks
+    ListEvents:
+      type: object
+      description: Paginated events from SQLite. No delivery guarantee or replay.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+    ListRules:
+      type: object
+      description: Cursor-paginated list.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+    ListActions:
+      type: object
+      description: Cursor-paginated list.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Action'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+    ListExecutions:
+      type: object
+      description: Cursor-paginated list.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Execution'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+        has_more:
+          type: boolean
+      additionalProperties: false
+      required:
+      - items
+      - next_cursor
+      - has_more
+    TopicList:
+      type: object
+      description: Observed topic names; incomplete when persistence is off.
+      properties:
+        items:
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+      required:
+      - items
+    Settings:
+      type: object
+      description: YAML-managed service configuration, including rules and actions. Masked read excludes secrets;
+        pending_restart_fields show settings not yet activated.
+      properties:
+        version:
+          const: 1
+        server:
+          $ref: '#/components/schemas/ServerSettings'
+        zeromq:
+          $ref: '#/components/schemas/ZeroMqSettings'
+        security:
+          $ref: '#/components/schemas/SecuritySettings'
+        execution:
+          $ref: '#/components/schemas/ExecutionSettings'
+        persistence:
+          $ref: '#/components/schemas/PersistenceSettings'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Action'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+      additionalProperties: false
+      required:
+      - version
+      - server
+      - zeromq
+      - security
+      - execution
+      - persistence
+      - actions
+      - rules
+    Health:
+      type: object
+      description: Health including configuration reload status.
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - degraded
+        broker_running:
+          type: boolean
+        database_ready:
+          type: boolean
+        pending_restart:
+          type: boolean
+      additionalProperties: false
+      required:
+      - status
+      - broker_running
+      - database_ready
+      - pending_restart
+    Stats:
+      type: object
+      description: Counter snapshot since service start.
+      properties:
+        observed_events:
+          type: integer
+          minimum: 0
+        invalid_events:
+          type: integer
+          description: Events rejected by the internal observer as invalid.
+          minimum: 0
+        matched_events:
+          type: integer
+          minimum: 0
+        executions_succeeded:
+          type: integer
+          minimum: 0
+        executions_failed:
+          type: integer
+          minimum: 0
+        executions_dropped:
+          type: integer
+          minimum: 0
+        queue_depth:
+          type: integer
+          minimum: 0
+        active_workers:
+          type: integer
+          minimum: 0
+        rejected_publications:
+          type: integer
+          description: Publications rejected because the publisher queue was full.
+          minimum: 0
+      additionalProperties: false
+      required:
+      - observed_events
+      - invalid_events
+      - matched_events
+      - executions_succeeded
+      - executions_failed
+      - executions_dropped
+      - queue_depth
+      - active_workers
+      - rejected_publications
+    ServerSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        host:
+          type: string
+          default: 127.0.0.1
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 8080
+      required:
+      - host
+      - port
+    CurveSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        server_public_key_file:
+          type:
+          - string
+          - 'null'
+        server_secret_key_file:
+          type:
+          - string
+          - 'null'
+        authorized_client_keys_file:
+          type:
+          - string
+          - 'null'
+      required:
+      - enabled
+    ZeroMqSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        publishers:
+          type: string
+          default: tcp://127.0.0.1:5555
+        subscribers:
+          type: string
+          default: tcp://127.0.0.1:5556
+        max_event_bytes:
+          const: 1048576
+        curve:
+          $ref: '#/components/schemas/CurveSettings'
+        publisher_queue_size:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          default: 1000
+          description: Maximum number of events buffered in memory for ZeroMQ publication.
+      required:
+      - publishers
+      - subscribers
+      - max_event_bytes
+      - curve
+    RestAuthSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        token_env:
+          type: string
+          default: OPAL_EVENT_API_TOKEN
+      required:
+      - enabled
+      - token_env
+    AllowedHttpDestination:
+      type: object
+      additionalProperties: false
+      properties:
+        host:
+          type: string
+          minLength: 1
+        ports:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+        schemes:
+          type: array
+          items:
+            type: string
+            enum:
+            - http
+            - https
+      required:
+      - host
+      - ports
+      - schemes
+    SecuritySettings:
+      type: object
+      additionalProperties: false
+      properties:
+        rest_auth:
+          $ref: '#/components/schemas/RestAuthSettings'
+        http_action_allowlist:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllowedHttpDestination'
+      required:
+      - rest_auth
+      - http_action_allowlist
+    ExecutionSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        max_workers:
+          type: integer
+          minimum: 1
+          maximum: 128
+          default: 4
+        queue_size:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          default: 100
+        default_timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+          default: 30
+        overflow:
+          const: drop_and_log
+        retry_enabled:
+          const: false
+        max_output_bytes:
+          type: integer
+          minimum: 0
+          maximum: 10485760
+          default: 65536
+      required:
+      - max_workers
+      - queue_size
+      - default_timeout_seconds
+      - overflow
+      - retry_enabled
+      - max_output_bytes
+    PersistenceSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        database:
+          type: string
+          minLength: 1
+        event_mode:
+          type: string
+          enum:
+          - all
+          - matched
+          - none
+        retention_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          default: 7
+        execution_history_enabled:
+          const: true
+      required:
+      - database
+      - event_mode
+      - retention_days
+      - execution_history_enabled
+    RulePatch:
+      type: object
+      description: Partial rule update. Omitted properties unchanged; arrays replace in entirety. Identifier
+        is immutable.
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        topic:
+          type: string
+          example: vision.*
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        actions:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      additionalProperties: false
+      minProperties: 1
+    ShellActionPatch:
+      type: object
+      description: Partial update for existing shell action; ID and type are immutable. Omitted fields unchanged.
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        mode:
+          type: string
+          enum:
+          - exec
+          - sh
+          - bash
+          - cmd
+          - powershell
+        executable:
+          type: string
+          description: Required for mode=exec; absolute registered executable path.
+        script_path:
+          type: string
+          description: Required for interpreter modes; static allowlisted script file path.
+        args:
+          type: array
+          items:
+            type: string
+          default: []
+        stdin:
+          type: string
+          enum:
+          - event_json
+          - none
+          default: event_json
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+      additionalProperties: false
+      allOf:
+      - if:
+          properties:
+            mode:
+              const: exec
+        then:
+          required:
+          - executable
+      - if:
+          properties:
+            mode:
+              enum:
+              - sh
+              - bash
+              - cmd
+              - powershell
+        then:
+          required:
+          - script_path
+      minProperties: 1
+    HttpActionPatch:
+      type: object
+      description: Partial update for existing http action; ID and type are immutable. Omitted fields unchanged.
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        method:
+          type: string
+          enum:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        url:
+          type: string
+          format: uri
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          description: Any JSON value, including arrays and primitives
+        body_mode:
+          type: string
+          enum:
+          - template
+          - event_json
+          - none
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+      additionalProperties: false
+      minProperties: 1
+    PythonActionPatch:
+      type: object
+      description: Partial update for existing python action; ID and type are immutable. Omitted fields unchanged.
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        module:
+          type: string
+          pattern: ^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$
+        function:
+          type: string
+          pattern: ^[a-zA-Z_]\w*$
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 3600
+      additionalProperties: false
+      minProperties: 1
+    ActionPatch:
+      description: Partial update checked against the existing action type; omitted fields unchanged, ID and
+        type immutable. Schema uses anyOf because fields common to several action types are valid.
+      anyOf:
+      - $ref: '#/components/schemas/ShellActionPatch'
+      - $ref: '#/components/schemas/HttpActionPatch'
+      - $ref: '#/components/schemas/PythonActionPatch'
+    PortableSettings:
+      type: object
+      additionalProperties: false
+      description: Portable, non-secret live-adjustable service settings. Network bindings, CURVE credentials,
+        bearer tokens, database path, rules, and actions are excluded.
+      properties:
+        execution:
+          $ref: '#/components/schemas/ExecutionSettings'
+        persistence:
+          $ref: '#/components/schemas/PortablePersistenceSettings'
+        max_event_bytes:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+          description: Maps to zeromq.max_event_bytes in YAML; ceiling is 1024 KiB (1048576 bytes).
+    PortablePersistenceSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        event_mode:
+          type: string
+          enum:
+          - all
+          - matched
+          - none
+        retention_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          default: 7
+        execution_history_enabled:
+          const: true
+    PortableSettingsPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Partial portable settings update. Nested objects replace in entirety; omitted top-level
+        sections unchanged.
+      properties:
+        execution:
+          $ref: '#/components/schemas/ExecutionSettings'
+        persistence:
+          $ref: '#/components/schemas/PortablePersistenceSettings'
+        max_event_bytes:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+          description: Event size ceiling, limited to 1024 KiB by v1 protocol.
+    ConfigBackup:
+      type: object
+      additionalProperties: false
+      required:
+      - format_version
+      - settings
+      - actions
+      - rules
+      properties:
+        format_version:
+          type: integer
+          const: 1
+        settings:
+          $ref: '#/components/schemas/PortableSettings'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Action'
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+      description: Portable backup excludes host-bound endpoints, secrets, filesystem paths to databases, event/execution
+        records, and runtime state. Action definitions may contain local executable paths; operators must review
+        on import.
+    ValidationReport:
+      type: object
+      additionalProperties: false
+      required:
+      - valid
+      - errors
+      - warnings
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    BackupImportRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - backup
+      properties:
+        backup:
+          $ref: '#/components/schemas/ConfigBackup'
+    BackupImportResult:
+      type: object
+      additionalProperties: false
+      required:
+      - revision
+      - pending_restart
+      properties:
+        revision:
+          type: string
+        pending_restart:
+          type: boolean
+    OpalError:
+      type: object
+      additionalProperties: false
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+          - code
+          - message
+          - request_id
+          - transaction_id
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details: {}
+            request_id:
+              type: string
+            transaction_id:
+              type: string
+            session_id:
+              type:
+              - string
+              - 'null'
+            causation_id:
+              type:
+              - string
+              - 'null'
+    OpalCursorPageMetadata:
+      type: object
+      required:
+      - next_cursor
+      - has_more
+      properties:
+        next_cursor:
+          type:
+          - string
+          - 'null'
+        has_more:
+          type: boolean
+    OpalHealthProbe:
+      type: object
+      required:
+      - status
+      - ready
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - degraded
+          - unavailable
+        ready:
+          type: boolean
+        details:
+          type: object
+          additionalProperties: true
+  responses:
+    BadRequest:
+      description: Malformed JSON or invalid query.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    Forbidden:
+      description: Forbidden by server policy.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    NotFound:
+      description: Requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    Conflict:
+      description: Request is structurally valid but conflicts with current configuration or resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    PayloadTooLarge:
+      description: Event exceeds the configured maximum accepted size.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    OpalError422:
+      description: OPAL standard error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    TooManyRequests:
+      description: Rate or queue admission limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    OperationFailed:
+      description: Unexpected service error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    ServiceUnavailable:
+      description: Broker, persistence, or execution subsystem unavailable, or publisher queue is full.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    OpalError412:
+      description: OPAL standard error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+    OpalError428:
+      description: OPAL standard error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OpalError'
+      headers:
+        X-Opal-Session-Id:
+          $ref: '#/components/headers/OpalSessionIdHeader'
+        X-Opal-Transaction-Id:
+          $ref: '#/components/headers/OpalTransactionIdHeader'
+        X-Opal-Request-Id:
+          $ref: '#/components/headers/OpalRequestIdHeader'
+        X-Opal-Causation-Id:
+          $ref: '#/components/headers/OpalCausationIdHeader'
+  headers:
+    OpalSessionIdHeader:
+      description: Effective OPAL session context for this response. Returned when a session identifier is known; conditionally present.
+      required: false
+      schema:
+        type: string
+    OpalTransactionIdHeader:
+      description: Logical transaction identifier for this exchange. Always returned; generated when the inbound request lacks one.
+      required: true
+      schema:
+        type: string
+    OpalRequestIdHeader:
+      description: Identifier of this inbound HTTP exchange. Always returned; regenerated for each downstream hop.
+      required: true
+      schema:
+        type: string
+    OpalCausationIdHeader:
+      description: Immediate parent event/request identifier for this response. Returned when applicable; conditionally present.
+      required: false
+      schema:
+        type: string
+x-opal-context-standard:
+  version: '1.2'
+  headers:
+  - X-Opal-Session-Id
+  - X-Opal-Transaction-Id
+  - X-Opal-Request-Id
+  - X-Opal-Causation-Id
+  session_mode: context-only
+  id_format: opaque-printable-ascii-1-to-128
+  transaction_atomicity: false
+  events:
+    propagate:
+    - session_id
+    - transaction_id
+    - request_id
+    - causation_id
+    metadata_schema_version: '1.0'
+    zero_mq_frames: 2
+    compatibility: 'metadata_schema_version versions the optional data.metadata block only; the two-frame wire envelope (topic + JSON with topic/data) is unchanged across versions. Consumers extract known correlation keys (session_id, transaction_id, request_id, causation_id) and MUST ignore unknown metadata fields; producers may emit any metadata_schema_version without breaking the wire contract.'
+  pagination:
+    history: cursor
+    configuration: none
+    default_limit: 100
+    max_limit: 500
+  concurrency:
+    settings_and_config_mutations: strong-etag-if-match-required
+    missing_status: 428
+    stale_status: 412
+  streaming: Include HTTP context headers before bytes; after headers are sent, failures are represented by
+    transport-specific terminal events or stream termination; no invented resumability.

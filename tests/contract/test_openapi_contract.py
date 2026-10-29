@@ -10,7 +10,7 @@ import yaml
 
 from opal_event.cli.client import OPERATIONS as CLI_OPERATIONS
 
-CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.2.0.yaml"
+CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.4.0.yaml"
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
 

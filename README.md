@@ -2,12 +2,12 @@
 
 Event bus, lightweight rule engine, and bounded action-execution service for the OPAL stack, with a
 REST API (`opal-event-svc`), CLI (`opal` / `opal-event`), and a React SPA. The REST/CLI/SPA surface
-implements [`opal_event.1.2.0.yaml`](opal_event.1.2.0.yaml) (OpenAPI 3.1, "OPAL Suite Standard v1.2")
+implements [`opal_event.1.4.0.yaml`](opal_event.1.4.0.yaml) (OpenAPI 3.1, "OPAL Suite Standard v1.2")
 exactly; the ZeroMQ wire transport implements `specs/zeromq_protocol.md` exactly. Both documents are
 authoritative — see them for the full, normative request/response and wire-protocol details. This
 README explains how the implementation realizes that contract and how to run it.
 
-> **Versioning:** [`opal_event.1.2.0.yaml`](opal_event.1.2.0.yaml) is the only contract file in the
+> **Versioning:** [`opal_event.1.4.0.yaml`](opal_event.1.4.0.yaml) is the authoritative contract file in the
 > repository and is authoritative. See [Migrating from 1.1.0](#migrating-from-110) below for what
 > changed relative to the previous revision and why none of it touches the ZeroMQ wire protocol.
 
@@ -76,7 +76,8 @@ README explains how the implementation realizes that contract and how to run it.
 
 ```
 opal-event/
-├── opal_event.1.2.0.yaml        # authoritative OpenAPI 3.1 contract (do not modify)
+├── opal_event.1.4.0.yaml        # authoritative OpenAPI 3.1 contract (do not modify)
+├── opal_event.1.2.0.yaml        # previous contract revision, kept for diff reference
 ├── specs/zeromq_protocol.md     # authoritative ZeroMQ wire protocol (do not modify)
 ├── config/opal_event.example.yaml
 ├── examples/                    # sample event/rule/action JSON
@@ -238,7 +239,7 @@ secrets, network bindings, or the database path. `GET/POST /api/v1/backup/*` add
 `actions` and `rules`, still excluding secrets/bindings/history.
 
 > **Contract note:** `ZeroMqSettings.max_event_bytes` is annotated `const: 1048576` in
-> `opal_event.1.2.0.yaml`, while `PortableSettings.max_event_bytes` is documented as PATCHable up to
+> `opal_event.1.4.0.yaml`, while `PortableSettings.max_event_bytes` is documented as PATCHable up to
 > that same value. A literal `const` would make the documented PATCH behavior non-functional, so this
 > implementation treats `1048576` as the enforced **ceiling** rather than a fixed literal — the only
 > reasonable reading that keeps the PATCH operation meaningful, per the contract's own narrative.
@@ -262,7 +263,7 @@ topic semantics, CURVE, security, limitations). Summary:
 
 ## REST API
 
-Full contract: [`opal_event.1.2.0.yaml`](opal_event.1.2.0.yaml). All routes are under `/api/v1`, use
+Full contract: [`opal_event.1.4.0.yaml`](opal_event.1.4.0.yaml). All routes are under `/api/v1`, use
 trailing slashes on collection roots, bearer auth (`Authorization: Bearer <token>`) when
 `security.rest_auth.enabled` is true, and the shared OPAL error shapes: `Problem` for
 400/401/403/404/409/413/429/500/503, FastAPI's standard `HTTPValidationError` for request-body 422s,
@@ -411,7 +412,7 @@ stricter concurrency control. **None of it touches `ZeroMqSettings`, `CurveSetti
    omitted, `412` if it no longer matches the current revision (nested `OpalError` shape).
    `PATCH /api/v1/settings/` switched from an unconditional-409-on-mismatch model to the same
    428/412 scheme. `POST /api/v1/backup/import` is **unchanged** (still a required header at the
-   HTTP-validation level and `409` on a stale revision) because opal_event.1.2.0.yaml's `backup/import`
+   HTTP-validation level and `409` on a stale revision) because opal_event.1.4.0.yaml's `backup/import`
    operation does not declare 412/428 responses -- this implementation follows the literal,
    per-operation contract rather than the free-text summary where they disagree.
 4. **Executions gained `has_more`** (default limit 100, max 500; was 50/200). Events list pagination
@@ -424,9 +425,11 @@ stricter concurrency control. **None of it touches `ZeroMqSettings`, `CurveSetti
    -- the header's declared semantics are reused verbatim here since the contract offers no
    topic-specific alternative).
 
-Two schemas from the shared OPAL component library, `OpalHealthProbe` and `OpalCursorPageMetadata`,
-are defined in opal_event.1.2.0.yaml but never referenced by any path -- they are intentionally
-unused (dead boilerplate from the suite-wide schema set, not wired into this service's operations).
+One schema from the shared OPAL component library, `OpalCursorPageMetadata`, is defined in
+opal_event.1.4.0.yaml but never referenced by any path -- intentionally unused boilerplate from the
+suite-wide schema set. The 1.4.0 revision also removed the unused `Problem`, `HTTPValidationError`,
+and `HealthProbe` schemas: error responses now share the nested `OpalError` envelope, and
+`OpalHealthProbe` (with a required `ready` flag) backs `/health/live` and `/health/ready`.
 
 ## Known limitations
 

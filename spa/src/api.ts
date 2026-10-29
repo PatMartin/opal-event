@@ -112,7 +112,7 @@ function opPath(op: OpId, params?: Record<string, string>): string {
 
 /** Thin wrapper exposing one typed call per contract operationId, mirroring the CLI's client.
  * Methods/paths come from api.operations.json — the same manifest the contract tests verify
- * against opal_event.1.2.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
+ * against opal_event.1.4.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
 export const api = {
   publishEvent: (body: { topic: string; data: unknown; id?: string; source?: string; timestamp?: string }) =>
     request<{ id: string; status: string; published_at: string }>(

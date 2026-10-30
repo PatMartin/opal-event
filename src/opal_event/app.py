@@ -8,7 +8,7 @@ import ipaddress
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -30,14 +30,14 @@ def _is_loopback(host: str) -> bool:
         return host in ("localhost",)
 
 
-def _opal_error_422(request: Request, message: str, details: object) -> JSONResponse:
-    """All 422 responses use the nested OpalError envelope per opal_event.1.4.0.yaml."""
+def _opal_error(request: Request, status: int, code: str, message: str, details: object) -> JSONResponse:
+    """Every error response uses the nested OpalError envelope per opal_event.1.4.0.yaml."""
     ctx = get_opal_context(request)
     return JSONResponse(
-        status_code=422,
+        status_code=status,
         content={
             "error": {
-                "code": "validation_error",
+                "code": code,
                 "message": message,
                 "details": jsonable_encoder(details),
                 "request_id": ctx.request_id,
@@ -50,11 +50,41 @@ def _opal_error_422(request: Request, message: str, details: object) -> JSONResp
 
 
 async def _validation_problem_handler(request: Request, exc: ValidationProblem) -> JSONResponse:
-    return _opal_error_422(request, "request validation failed", exc.detail)
+    return _opal_error(request, 422, "validation_error", "request validation failed", exc.detail)
 
 
 async def _request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return _opal_error_422(request, "request validation failed", exc.errors())
+    return _opal_error(request, 422, "validation_error", "request validation failed", exc.errors())
+
+
+_HTTP_CODES = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    413: "payload_too_large",
+    429: "rate_limited",
+    500: "internal",
+    503: "unavailable",
+}
+
+
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Stray HTTPExceptions (auth 401/503, starlette 404/405) also emit the OpalError envelope."""
+    return _opal_error(
+        request,
+        exc.status_code,
+        _HTTP_CODES.get(exc.status_code, "error"),
+        str(exc.detail) if exc.detail else "request failed",
+        None,
+    )
+
+
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("unhandled error processing %s %s", request.method, request.url.path)
+    return _opal_error(request, 500, "internal", "internal server error", None)
 
 
 def create_app(config_path: str) -> FastAPI:
@@ -89,6 +119,8 @@ def create_app(config_path: str) -> FastAPI:
     app.add_exception_handler(ProblemError, problem_exception_handler)
     app.add_exception_handler(OpalContextualError, opal_contextual_error_handler)
     app.add_exception_handler(RequestValidationError, _request_validation_handler)
+    app.add_exception_handler(HTTPException, _http_exception_handler)
+    app.add_exception_handler(Exception, _unhandled_exception_handler)
 
     app.include_router(events.router)
     app.include_router(rules.router)

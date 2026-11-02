@@ -1,460 +1,694 @@
-# Opal Event
+![OPAL Event — event bus, rules, and actions](opal-event.png)
 
-Event bus, lightweight rule engine, and bounded action-execution service for the OPAL stack, with a
-REST API (`opal-event-svc`), CLI (`opal` / `opal-event`), and a React SPA. The REST/CLI/SPA surface
-implements [`opal_event.1.4.0.yaml`](opal_event.1.4.0.yaml) (OpenAPI 3.1, "OPAL Suite Standard v1.2")
-exactly; the ZeroMQ wire transport implements `specs/zeromq_protocol.md` exactly. Both documents are
-authoritative — see them for the full, normative request/response and wire-protocol details. This
-README explains how the implementation realizes that contract and how to run it.
+# OPAL Event
+### When something happens, make something useful happen.
 
-> **Versioning:** [`opal_event.1.4.0.yaml`](opal_event.1.4.0.yaml) is the authoritative contract file in the
-> repository and is authoritative. See [Migrating from 1.1.0](#migrating-from-110) below for what
-> changed relative to the previous revision and why none of it touches the ZeroMQ wire protocol.
+A camera spots a person. A microphone hears an intent. A sensor crosses a threshold. Something in your software says, **"Hey, this just happened."**
 
-## Architecture
+**OPAL Event** takes it from there: it moves events between services, checks simple rules, and kicks off useful actions. Think of it as the nervous system of [OPAL](https://github.com/PatMartin/opal)—a small, fast, understandable bridge between **noticing** and **doing**.
 
-```
-                 ┌───────────────┐        PUB         ┌───────────────┐
- External        │  PUB clients   │ ───────────────▶  │     XSUB       │
- producers       └───────────────┘                    │  (publishers   │
-                                                        │   endpoint)    │
-                                                        └───────┬───────┘
-                                                                │ zmq.proxy (forwards data;
-                                                                │ propagates subscriptions)
-                                                        ┌───────▼───────┐        SUB          ┌───────────────┐
-                                                        │     XPUB       │ ─────────────────▶  │ External SUB   │
-                                                        │ (subscribers   │                     │ consumers      │
-                                                        │   endpoint)    │                     └───────────────┘
-                                                        └───────┬───────┘
-                                                                │ SUB (subscribe to everything)
-                                                        ┌───────▼───────────────────────┐
-                                                        │   Internal observer            │
-                                                        │   - validate/normalize          │
-                                                        │   - persist (event_mode)        │
-                                                        │   - match rules                 │
-                                                        │   - submit matched actions       │
-                                                        └───────┬────────────────────────┘
-                                                                │
-                           ┌────────────────────────────────────┼─────────────────────────┐
-                           │                                     ▼                         │
-                  ┌────────▼────────┐                 ┌──────────────────┐        ┌────────▼────────┐
-                  │  SQLite (events,  │                 │ Bounded executor  │        │  REST API         │
-                  │  executions)      │                 │ pool (N workers,  │        │  (FastAPI)        │
-                  └───────────────────┘                 │ bounded queue)    │        │  - CLI / SPA       │
-                                                         └──────────────────┘        │    consume this    │
-                                                                                      └───────────────────┘
-```
+~~~text
+opal-look notices a person ───┐
+opal-listen recognizes intent ├──▶ OPAL EVENT ──▶ match rule ──▶ run action
+a sensor reports a reading ──┘         │                          │
+                                       ├── ZeroMQ event bus        ├── shell command
+                                       ├── REST API + Typer CLI    ├── HTTP webhook
+                                       └── SQLite history         └── Python function
+~~~
 
-* **REST ingress** (`POST /api/v1/events/`) does **not** call the rule engine directly. It normalizes
-  the event and publishes it through a service-owned PUB connector into the same XSUB endpoint
-  external producers use. The single internal observer then treats REST-originated and
-  directly-published ZeroMQ events identically — this matches zeromq_protocol.md exactly ("REST
-  POST /api/v1/events publishes through a service-owned PUB connector to the inbound XSUB endpoint").
-* The **XSUB/XPUB proxy** is a pure, best-effort forwarder: it does not validate, store, or
-  rate-limit. Only the internal observer's own copy is validated/stored/matched.
-* The **executor** is a fixed-size worker pool reading from a bounded queue. Overflow is dropped
-  (recorded as an `Execution` with `status=dropped`, `error_code=queue_full`) — never retried.
-* **SQLite** stores observed events (per `persistence.event_mode`) and all execution records
-  (independent of `event_mode`), with periodic retention cleanup.
-* **Configuration** is one YAML file, hot-reloaded on save (via a `watchfiles` filesystem watcher)
-  or via REST. Network bindings, REST auth, CURVE keys, and the database path require a restart;
-  rules/actions/execution/persistence settings apply live.
+OPAL Event is deliberately practical:
 
-## Technology stack
+- **Publish once, let interested services listen.** ZeroMQ XSUB/XPUB provides a lightweight topic-based bus.
+- **Express behavior as data.** Match an exact topic or a `prefix.*` pattern, optionally with conditions on JSON fields.
+- **Choose your action.** Launch a registered executable/script, call an allowlisted HTTP endpoint, or invoke a Python plugin.
+- **See what happened.** Inspect event history, rule tests, execution results, health, and counters.
+- **Operate it your way.** REST-first FastAPI service, a Typer CLI, and a browser-based SPA all work with the same API.
+- **Keep the brakes.** Bounded workers and queues, timeouts, restricted HTTP destinations, and no automatic retries.
 
-| Layer | Technology |
-|---|---|
-| REST | Python, FastAPI, Pydantic v2, Uvicorn |
-| Messaging | PyZMQ (XSUB/XPUB broker + CURVE) |
-| Persistence | SQLite (stdlib `sqlite3`) |
-| CLI | Typer |
-| SPA | React + TypeScript + Vite |
-| Configuration | YAML (`watchfiles` for hot reload) |
-| Packaging | `pyproject.toml` (setuptools) |
-
-## Project layout
-
-```
-opal-event/
-├── opal_event.1.4.0.yaml        # authoritative OpenAPI 3.1 contract (do not modify)
-├── opal_event.1.2.0.yaml        # previous contract revision, kept for diff reference
-├── specs/zeromq_protocol.md     # authoritative ZeroMQ wire protocol (do not modify)
-├── config/opal_event.example.yaml
-├── examples/                    # sample event/rule/action JSON
-├── scripts/announce.sh          # sample allowlisted shell action script
-├── src/opal_event/
-│   ├── models.py                 # pydantic schemas mirroring the OpenAPI contract
-│   ├── config.py                 # YAML load/validate/persist/hot-reload (ConfigStore)
-│   ├── db.py                     # SQLite events/executions persistence
-│   ├── rules.py                  # topic + condition matching
-│   ├── templating.py             # {{data.path}} / {{event}} rendering
-│   ├── security.py                # HTTP destination allowlist, subprocess env hardening
-│   ├── actions/                  # shell / http / python action runners
-│   ├── executor.py               # bounded worker pool
-│   ├── zeromq_broker.py          # XSUB/XPUB proxy + internal observer + CURVE
-│   ├── metrics.py                # in-memory counters for GET /api/v1/stats/
-│   ├── service.py                # wires config+db+executor+broker together
-│   ├── app.py / routers/         # FastAPI app and one router module per tag
-│   ├── cli/                      # Typer CLI (`opal event ...`)
-│   ├── plugins/                  # Python plugin runner + example plugin
-│   └── __main__.py                # `opal-event-svc` entrypoint
-├── spa/                           # React/TS/Vite SPA
-└── tests/{unit,integration,contract,security,e2e}/
-```
+> **Design promise:** It is a *best-effort* event bus, not a durable job queue. A `202 Accepted` publish receipt does **not** mean every subscriber received the event or an action finished. Use execution history to check what actually ran.
 
 ## Installation
 
-Requires Python ≥ 3.11 and Node.js ≥ 18 (for the SPA only).
+Requires **Python 3.11+**. The optional web UI also needs **Node.js and npm**. Examples below use Linux/macOS; Windows PowerShell instructions follow.
 
-### Linux / macOS
+### 1. Get the code and install the CLI + service
 
-```bash
+~~~bash
+git clone https://github.com/PatMartin/opal-event.git
 cd opal-event
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp config/opal_event.example.yaml config/opal_event.yaml
 mkdir -p var
-```
+~~~
 
-### Windows (PowerShell)
+For Windows PowerShell, substitute:
 
-```powershell
+~~~powershell
+git clone https://github.com/PatMartin/opal-event.git
 cd opal-event
+
 py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
 Copy-Item config\opal_event.example.yaml config\opal_event.yaml
 New-Item -ItemType Directory -Force -Path var
-```
+~~~
 
-### SPA dependencies (both platforms)
+The install gives you **three commands**:
 
-```bash
+| Command | What it does |
+| --- | --- |
+| `opal-event-svc` | Runs the FastAPI + ZeroMQ service |
+| `opal event ...` | Unified OPAL Typer command group |
+| `opal-event ...` | Shorter alias for the same Event CLI |
+
+The Python distribution currently declares version **1.2.0**; the repository also carries the newer **1.4.0 OpenAPI contract**. These are different version identifiers, not interchangeable names.
+
+### 2. Start the service
+
+~~~bash
+opal-event-svc --config config/opal_event.yaml --log-level info
+~~~
+
+Keep that terminal open. In a **second terminal**, activate the virtual environment from the repository directory:
+
+~~~bash
+source .venv/bin/activate
+opal event health
+opal event health --ready
+opal event rules list
+~~~
+
+Default local endpoints:
+
+| Purpose | Address |
+| --- | --- |
+| REST API | `http://127.0.0.1:8080` |
+| Swagger UI | `http://127.0.0.1:8080/docs` |
+| ZeroMQ producer connection (PUB → XSUB) | `tcp://127.0.0.1:5555` |
+| ZeroMQ consumer connection (SUB ← XPUB) | `tcp://127.0.0.1:5556` |
+
+Those ZeroMQ addresses are **not HTTP URLs**. You can change them in the [sample YAML configuration](config/opal_event.example.yaml).
+
+### 3. Publish your first event
+
+~~~bash
+opal event publish workshop.hello \
+  --data-json '{"message":"The nervous system is awake!"}' \
+  --source quickstart
+
+opal event list --topic workshop.hello
+opal event stats
+~~~
+
+The sample configuration stores observed events (`persistence.event_mode: all`). Event delivery and observation are asynchronous, so history may not appear instantly.
+
+> **Heads-up:** The example YAML already registers a `front_door_alert` rule and three example actions. Explore them with `opal event rules list` and `opal event actions list`; do not recreate those IDs unless you first remove the existing definitions.
+
+### 4. Optional: run the web console
+
+~~~bash
 cd spa
 npm install
-```
+npm run dev
+~~~
 
-## Development
+Open `http://127.0.0.1:5173`. The Vite dev server proxies API requests to the local service by default. Build for deployment with `npm run build` (output: `spa/dist`).
 
-Run the REST/ZeroMQ service:
+## The complete Typer command tree
 
-```bash
-opal-event-svc --config config/opal_event.yaml --log-level info
-```
+Everything under `opal event` is also available under **`opal-event`**. This tree reflects [the actual Typer implementation](src/opal_event/cli/main.py), not a proposed future interface.
 
-Run the SPA dev server (proxies `/api` to the REST server):
+~~~text
+opal
+└── event                                      (alias: opal-event)
+    │
+    │  GLOBAL OPTIONS (place after "event", before the subcommand)
+    ├── --api-url URL                           default: http://127.0.0.1:8080
+    ├── --token TOKEN                           bearer auth, when enabled
+    ├── --json                                  raw JSON output
+    ├── --timeout SECONDS                       default: 30
+    ├── --opal-session-id ID                    correlation header
+    ├── --opal-transaction-id ID                correlation header
+    ├── --opal-causation-id ID                  correlation header
+    │
+    ├── publish TOPIC --data-json JSON          [--id UUID] [--source TEXT]
+    │                                          [--timestamp RFC3339]
+    ├── list                                    [--cursor TOKEN] [--limit N]
+    │                                          [--topic TOPIC] [--source TEXT]
+    │                                          [--from RFC3339] [--to RFC3339]
+    ├── get EVENT_ID
+    ├── delete EVENT_ID
+    ├── clear                                   delete ALL stored events
+    ├── topics
+    ├── health                                  [--live | --ready]
+    ├── stats
+    │
+    ├── rules
+    │   ├── list
+    │   ├── get RULE_ID
+    │   ├── create                              [--json JSON | --file PATH | stdin]
+    │   ├── update RULE_ID                      [--json JSON | --file PATH | stdin]
+    │   │                                      [--if-match ETAG]
+    │   ├── delete RULE_ID                      [--if-match ETAG]
+    │   └── test RULE_ID --event-json JSON
+    │
+    ├── actions
+    │   ├── list
+    │   ├── get ACTION_ID
+    │   ├── create                              [--json JSON | --file PATH | stdin]
+    │   ├── update ACTION_ID                    [--json JSON | --file PATH | stdin]
+    │   │                                      [--if-match ETAG]
+    │   ├── delete ACTION_ID                    [--if-match ETAG]
+    │   └── execute ACTION_ID --event-json JSON
+    │
+    ├── executions
+    │   ├── list                                [--cursor TOKEN] [--limit N]
+    │   │                                      [--status STATUS] [--rule-id ID]
+    │   │                                      [--action-id ID] [--event-id ID]
+    │   └── get EXECUTION_ID
+    │
+    ├── settings
+    │   ├── get
+    │   └── update                              [--json JSON | --file PATH | stdin]
+    │                                          [--if-match ETAG]
+    │
+    └── backup
+        ├── export                              [--output PATH]
+        ├── validate                            [--json JSON | --file PATH | stdin]
+        └── import                              [--json JSON | --file PATH | stdin]
+                                               [--if-match ETAG]
+~~~
 
-```bash
-cd spa
-OPAL_EVENT_API_URL=http://127.0.0.1:8080 npm run dev     # Linux/macOS
-$env:OPAL_EVENT_API_URL="http://127.0.0.1:8080"; npm run dev   # Windows PowerShell
-```
+Every level supports `--help`:
 
-Open http://127.0.0.1:5173.
+~~~bash
+opal event --help
+opal event rules --help
+opal event actions execute --help
+opal-event --help
+~~~
 
-Use the CLI against a running service:
+**Global option gotcha:** `opal event --json rules list` requests machine-readable output; `opal event rules create --json '{"id":...}'` sends a JSON *payload*. The same flag name serves two different purposes depending on its position.
 
-```bash
-export OPAL_EVENT_API_URL=http://127.0.0.1:8080     # Linux/macOS
-$env:OPAL_EVENT_API_URL="http://127.0.0.1:8080"      # Windows PowerShell
+## CLI guide: from first event to useful automations
+
+### Learn the three building blocks
+
+| Building block | Think of it as | Example |
+| --- | --- | --- |
+| **Event** | "Something happened." | `vision.object.detected` with `{"object":"person"}` |
+| **Rule** | "When this event matches these conditions…" | A person appears on a `vision.*` topic |
+| **Action** | "…do this." | Run a script, POST a webhook, call Python |
+
+An event is a **topic** and a JSON **data** value, with optional ID, source, and timestamp. A rule combines a topic match with zero or more **AND** conditions. Each matching rule schedules its referenced enabled actions independently.
+
+You don't need to register topics first. Choose descriptive lower-case dotted names like `intent.recognized`, `vision.object.detected`, and `sensor.temperature.reading`.
+
+### Connect to a different service
+
+~~~bash
+# Instead of typing the URL for every command:
+export OPAL_EVENT_API_URL=http://127.0.0.1:8080
+# Only set a token if REST bearer authentication is enabled:
+# export OPAL_EVENT_API_TOKEN='your-token'
 
 opal event health
-opal event publish vision.object.detected --data-json '{"object":"person","camera":"front_door"}'
-opal event rules list
-opal event actions execute announce_person --event-json '{"topic":"manual.test","data":{"camera":"front_door"}}'
-```
 
-Run tests / lint:
+# Or override the endpoint for one call:
+opal event --api-url http://127.0.0.1:8080 --timeout 10 stats
 
-```bash
+# Use raw JSON output when scripting:
+opal event --json rules list
+~~~
+
+Supported variables: `OPAL_EVENT_API_URL`, `OPAL_EVENT_API_TOKEN`, `OPAL_SESSION_ID`, `OPAL_TRANSACTION_ID`, and `OPAL_CAUSATION_ID`.
+
+For create/update/import requests, supply a JSON body three ways:
+
+~~~bash
+opal event rules create --json '{"id":"example","enabled":false,"topic":"demo.test","conditions":[],"actions":[]}'
+opal event rules create --file my-rule.json
+cat my-rule.json | opal event rules create
+~~~
+
+These are **alternative** ways to send a payload; don't run all three with the same rule ID.
+
+### Use case 1: Give your event bus a voice (a harmless hello)
+
+Let's connect a real event to a real action. First register an action that runs `/bin/echo`. Then add a rule that calls it when someone is greeted.
+
+~~~bash
+# Register an action. Shell mode "exec" uses an argv array, not a shell command string.
+opal event actions create --json '{
+  "id": "demo_greet",
+  "type": "shell",
+  "enabled": true,
+  "mode": "exec",
+  "executable": "/bin/echo",
+  "args": ["Hello, {{data.name}}!"],
+  "stdin": "none",
+  "timeout_seconds": 10
+}'
+
+# Connect that action to a topic with a simple condition.
+opal event rules create --json '{
+  "id": "demo_greeting_rule",
+  "enabled": true,
+  "topic": "demo.greeting",
+  "conditions": [
+    {"path":"data.name","operator":"exists","value":true}
+  ],
+  "actions": ["demo_greet"]
+}'
+
+# Dry-run the rule: check the match WITHOUT running the action.
+opal event rules test demo_greeting_rule \
+  --event-json '{"topic":"demo.greeting","data":{"name":"Ada"}}'
+
+# Now make it happen.
+opal event publish demo.greeting --data-json '{"name":"Ada"}' --source demo
+
+# Observe the execution record (it may arrive shortly after publishing).
+opal event executions list --rule-id demo_greeting_rule
+~~~
+
+You should see a rule-test result with `"matched": true`, followed by an execution record. Use `opal event executions get EXECUTION_ID` to inspect the exact status, output, and any error.
+
+Or invoke the action directly—no matching rule needed:
+
+~~~bash
+opal event actions execute demo_greet \
+  --event-json '{"topic":"demo.manual","data":{"name":"Grace"}}'
+~~~
+
+An execute request **schedules** work; the returned execution record and its later status tell you how it went.
+
+When you're finished:
+
+~~~bash
+opal event rules delete demo_greeting_rule
+opal event actions delete demo_greet
+~~~
+
+Delete the rule first because it references the action. These cleanup commands leave unrelated events intact.
+
+### Use case 2: Your camera sees someone at the front door
+
+The sample configuration comes with an illustrative OPAL Look → OPAL Event path: `front_door_alert` matches `vision.*` events when `data.object` is `person`.
+
+~~~bash
+# Inspect the preconfigured pieces.
+opal event rules get front_door_alert
+opal event actions get announce_person
+opal event actions get send_notification
+
+# Test the rule safely.
+opal event rules test front_door_alert --event-json '{
+  "topic": "vision.object.detected",
+  "source": "opal-look",
+  "data": {"object":"person","camera":"front_door","confidence":0.94}
+}'
+
+# Publish a simulated detection.
+opal event publish vision.object.detected \
+  --source opal-look \
+  --data-json '{"object":"person","camera":"front_door","confidence":0.94}'
+
+# Inspect activity and failures, if any.
+opal event executions list --rule-id front_door_alert
+opal event executions list --status failed
+~~~
+
+The sample `announce_person` action writes a message with `/bin/echo`; the sample `send_notification` action POSTs to `http://127.0.0.1:9000/notify`. **That receiver isn't included or started by this project.** The HTTP execution may fail until you run a receiver there. A successful rule match does not guarantee successful actions.
+
+This is the same flow you can use with a genuine OPAL Look producer—just send the real camera's normalized event instead of the CLI simulation.
+
+### Use case 3: A garage sensor raises an alert above a threshold
+
+Make an independent rule that reacts only to a sufficiently hot garage. This shows **numeric comparisons**, **multiple conditions**, and **topic specificity**.
+
+~~~bash
+opal event actions create --json '{
+  "id":"demo_heat_log",
+  "type":"shell",
+  "enabled":true,
+  "mode":"exec",
+  "executable":"/bin/echo",
+  "args":["Garage heat alert: {{data.celsius}} C"],
+  "stdin":"none"
+}'
+
+opal event rules create --json '{
+  "id":"demo_garage_hot",
+  "enabled":true,
+  "topic":"sensor.temperature.reading",
+  "conditions":[
+    {"path":"data.zone","operator":"eq","value":"garage"},
+    {"path":"data.celsius","operator":"gte","value":35}
+  ],
+  "actions":["demo_heat_log"]
+}'
+
+# This should NOT match.
+opal event rules test demo_garage_hot \
+  --event-json '{"topic":"sensor.temperature.reading","data":{"zone":"garage","celsius":24}}'
+
+# This should match, still without executing anything.
+opal event rules test demo_garage_hot \
+  --event-json '{"topic":"sensor.temperature.reading","data":{"zone":"garage","celsius":38.5}}'
+
+# Live event: now the action can run.
+opal event publish sensor.temperature.reading \
+  --source garage-sensor \
+  --data-json '{"zone":"garage","celsius":38.5}'
+~~~
+
+Need to quiet it temporarily? Disable the rule without deleting it:
+
+~~~bash
+opal event rules update demo_garage_hot --json '{"enabled":false}'
+opal event rules get demo_garage_hot
+# When ready: opal event rules update demo_garage_hot --json '{"enabled":true}'
+~~~
+
+Clean up by deleting `demo_garage_hot` and then `demo_heat_log`.
+
+### Use case 4: Route an OPAL Listen intent into an automation
+
+Voice is more useful when a recognized phrase can *cause* something. Suppose OPAL Listen emits `intent.recognized` with the structured intent `lights.turn_on`.
+
+~~~bash
+opal event actions create --json '{
+  "id":"demo_voice_ack",
+  "type":"shell",
+  "enabled":true,
+  "mode":"exec",
+  "executable":"/bin/echo",
+  "args":["Recognized intent: {{data.intent}}"],
+  "stdin":"none"
+}'
+
+opal event rules create --json '{
+  "id":"demo_lights_intent",
+  "enabled":true,
+  "topic":"intent.recognized",
+  "conditions":[
+    {"path":"data.intent","operator":"eq","value":"lights.turn_on"}
+  ],
+  "actions":["demo_voice_ack"]
+}'
+
+opal event publish intent.recognized --source opal-listen \
+  --data-json '{"intent":"lights.turn_on","room":"office"}'
+
+opal event executions list --rule-id demo_lights_intent
+~~~
+
+The example *acknowledges* the intent with an echo. It does **not** actually switch on a light. To do that, replace the action with a trusted local script, an HTTP action targeting your own approved home-automation endpoint, or a Python plugin. This separation is intentional: **recognition, decision, execution** stay independently testable.
+
+### Use case 5: Call an HTTP webhook when a rule matches
+
+HTTP actions are great for a home-automation service, dashboard, notification gateway, or another OPAL component.
+
+~~~bash
+opal event actions create --json '{
+  "id":"demo_notify_webhook",
+  "type":"http",
+  "enabled":true,
+  "method":"POST",
+  "url":"http://127.0.0.1:9000/notify",
+  "body_mode":"template",
+  "body":{
+    "kind":"heat_alert",
+    "zone":"{{data.zone}}",
+    "celsius":"{{data.celsius}}"
+  },
+  "timeout_seconds":15
+}'
+
+# Try it manually with sample event data.
+opal event actions execute demo_notify_webhook --event-json '{
+  "topic":"sensor.temperature.reading",
+  "data":{"zone":"garage","celsius":38.5}
+}'
+~~~
+
+The example configuration **allows HTTP actions only to** `http://127.0.0.1:9000`. You must supply a server handling `POST /notify` for success. To route this action automatically, add its ID to a matching rule's `actions` list, e.g. the garage rule from Use case 3, and re-enable that rule.
+
+> Template values like `{{data.celsius}}` preserve their JSON number type when they occupy the entire string. Text such as `"Alert: {{data.celsius}}"` is rendered as a string. Missing fields cause a template error rather than silently inventing a value.
+
+### Use case 6: Use Python instead of shell or HTTP
+
+The repository includes a small runnable example module:
+
+~~~bash
+opal event actions get process_detection
+
+opal event actions execute process_detection --event-json '{
+  "topic":"vision.object.detected",
+  "data":{"object":"person","camera":"driveway"}
+}'
+~~~
+
+The preconfigured `process_detection` action calls `opal_event.plugins.example.handle_event`. Custom Python actions register an importable `module` and `function`, with the function receiving the event dictionary and returning JSON-serializable output. They run in a separate child interpreter; that is **process isolation, not a sandbox** for untrusted code.
+
+### Use case 7: Explore what happened (and why)
+
+The CLI is also a compact troubleshooting console.
+
+~~~bash
+# Recent observed events
+opal event list --limit 20
+opal event list --topic vision.object.detected --source opal-look
+opal event topics
+
+# Recent action runs
+opal event executions list --limit 20
+opal event executions list --status failed
+opal event executions list --action-id announce_person
+opal event executions get EXECUTION_ID
+
+# Operational view
+opal event health
+opal event health --live
+opal event health --ready
+opal event stats
+opal event settings get
+~~~
+
+Useful details:
+
+- Event history supports `--cursor`, `--limit` (up to 200), `--topic`, `--source`, `--from`, and `--to`. Timestamps use RFC3339.
+- Execution history supports `--cursor`, `--limit` (up to 500), `--status`, `--rule-id`, `--action-id`, and `--event-id`.
+- Rules and actions are **bounded catalogs**, not cursor-paginated lists.
+- `opal event --json executions list` and the other formatted collection commands print JSON arrays, making them convenient for `jq` pipelines.
+- `opal event clear` deletes **all stored event history**. It does not disable rules; use it cautiously.
+
+With `jq` installed:
+
+~~~bash
+opal event --json executions list | jq '.[] | {id, action_id, status}'
+opal event --json rules list | jq '.[] | select(.enabled) | .id'
+~~~
+
+If the rule never matches, start with `rules test`. If it matches but nothing runs, inspect whether its actions are enabled and whether executions were dropped. If an action runs but fails, inspect its execution record and the server logs.
+
+### Use case 8: Tune the service while it's running
+
+Portable settings can be updated through the REST API without editing YAML by hand.
+
+~~~bash
+opal event settings get
+
+# Increase the number of execution workers and change timeout.
+opal event settings update --json '{
+  "execution":{"max_workers":6,"default_timeout_seconds":20}
+}'
+
+# Record only events that matched rules.
+opal event settings update --json '{
+  "persistence":{"event_mode":"matched","retention_days":7}
+}'
+~~~
+
+`event_mode` supports `all`, `matched`, or `none`. Execution history is a separate setting. Updates to workers, queues, rules, actions, and other portable settings are applied live; changes to network bindings, REST authorization, CURVE credentials, or the SQLite path need a restart.
+
+**Concurrency protection:** `rules update/delete`, `actions update/delete`, `settings update`, and `backup import` use strong ETags. The CLI normally fetches the current ETag for you. Use `--if-match ETAG` when you specifically need to reject a change if someone else edited the resource.
+
+### Use case 9: Take a configuration snapshot before experimenting
+
+~~~bash
+# Save a portable snapshot (rules, actions, portable settings).
+opal event backup export --output opal-event-backup.json
+
+# Check that the snapshot is structurally valid; makes no changes.
+opal event backup validate --file opal-event-backup.json
+~~~
+
+To **import**, the API expects a wrapper shaped `{"backup": <exported-config>}`, not the raw export. For example, with `jq`:
+
+~~~bash
+jq -n --slurpfile b opal-event-backup.json '{backup:$b[0]}' \
+  > opal-event-import.json
+
+opal event backup import --file opal-event-import.json
+~~~
+
+**Important:** Import replaces the portable settings/rules/actions catalog atomically. The backup **does not** include database history, bearer tokens, CURVE secrets, network bindings, or the database path. Treat it as a *configuration* snapshot, not a full disaster-recovery backup.
+
+### A quick rule-writing cheat sheet
+
+| Feature | Meaning | Example |
+| --- | --- | --- |
+| Exact topic | One topic only | `vision.object.detected` |
+| Hierarchical wildcard | Descendant topics; not the bare prefix | `vision.*` |
+| Field path | Dotted path within event JSON | `data.camera` |
+| `eq` / `ne` | Strict equality / inequality | Person vs. vehicle |
+| `gt` / `gte` / `lt` / `lte` | Numeric comparison | Temperature ≥ 35 |
+| `in` / `not_in` | Membership in a list | One of several intents |
+| `exists` | Field present or absent | `{"value":true}` |
+| `contains` | String substring or array element | A tag or message fragment |
+
+All conditions in a rule must pass. There is no OR expression language in the current rule model; split different scenarios into separate rules.
+
+## How it works under the hood
+
+~~~text
+             external ZeroMQ PUB clients
+                        │
+                        ▼  port 5555 (default)
+                      XSUB  ─────── ZeroMQ proxy ─────── XPUB ──▶ external SUB clients
+                                                    port 5556
+                        │
+                        └── internal observer (its own copy)
+                                 │
+                                 ├── validate + normalize
+                                 ├── match enabled rules ──▶ bounded executor ──▶ actions
+                                 └── store history (by persistence mode)
+                                              │
+                                            SQLite
+
+     REST POST /api/v1/events/ ──▶ service-owned PUB ──▶ XSUB
+     Typer CLI ──────────────────▶ REST API
+     React SPA ──────────────────▶ REST API
+~~~
+
+The ZeroMQ proxy forwards messages as a best-effort transport. The internal observer validates and processes its own copy. REST publications enter through the same ZeroMQ ingress as external producers; they do **not** bypass the observer to call rules directly.
+
+### REST-first by design
+
+The [OpenAPI contract](opal_event.1.4.0.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
+
+| Interface | Role |
+| --- | --- |
+| `/api/v1/events/` | Publish and inspect stored events |
+| `/api/v1/topics/` | List observed topics |
+| `/api/v1/rules/` | Manage and test rules |
+| `/api/v1/actions/` | Manage and manually execute actions |
+| `/api/v1/executions/` | Inspect execution history |
+| `/api/v1/settings/` | Read/update portable settings |
+| `/api/v1/backup/*` | Export/validate/import portable configuration |
+| `/api/v1/health/`, `/api/v1/stats/` | Operational health and counters |
+
+### If you publish or subscribe over raw ZeroMQ
+
+The wire format is **two multipart frames**: an ASCII topic and a UTF-8 JSON envelope. For example:
+
+~~~text
+frame 1: vision.object.detected
+frame 2: {"topic":"vision.object.detected","source":"opal-look","data":{"object":"person","camera":"front_door"}}
+~~~
+
+A publisher connects a ZeroMQ `PUB` socket to `tcp://127.0.0.1:5555`; a subscriber connects `SUB` to `tcp://127.0.0.1:5556`. Raw SUB filtering is **byte-prefix-based** (subscribe to `vision.`), whereas OPAL rules use application patterns like `vision.*`. Those are related, but **not identical**.
+
+Messages are limited to 1 MiB total across both frames. There are no subscriber acknowledgments, replay guarantees, exactly-once semantics, or automatic retries. A newly connected PUB/SUB peer can lose early messages while subscriptions propagate ("slow joiner"). See the [wire protocol](specs/zeromq_protocol.md) for framing, security, and Python examples.
+
+## Configuration, safety, and operations
+
+The example YAML has the main knobs in one place:
+
+~~~yaml
+server:
+  host: 127.0.0.1
+  port: 8080
+execution:
+  max_workers: 4
+  queue_size: 100
+  default_timeout_seconds: 30
+  overflow: drop_and_log
+  retry_enabled: false
+persistence:
+  database: var/opal_event.db
+  event_mode: all
+  retention_days: 7
+  execution_history_enabled: true
+~~~
+
+- **Keep external access deliberate.** Default bindings are loopback-only. Exposing the service beyond localhost requires REST bearer authentication; secure external ZeroMQ access with CURVE and trusted client keys.
+- **Shell actions use argv, not an interpolated shell command.** The `exec` mode uses a registered executable; interpreter modes use a registered script path. Event text must not become executable code.
+- **HTTP actions use destination allowlists.** A URL must pass scheme/host/port and address checks. An arbitrary event cannot select an arbitrary internet destination.
+- **Python plugins are trusted code.** A child process is not a hostile-code sandbox.
+- **The queue has limits.** Excess work can be recorded as `dropped` (`queue_full`). Action execution can fail or time out; it is not automatically retried.
+- **History is observability, not replay.** SQLite holds observed events according to the persistence mode and records executions separately; retention cleanup runs periodically.
+- **Reload behavior matters.** Rule/action and portable changes can take effect live. Transport bindings, CURVE settings, REST auth, and database path changes require a restart.
+
+For deployments and troubleshooting, see [the full user guide](docs/USER_GUIDE.md), [CLI reference](docs/CLI.md), and [ZeroMQ specification](specs/zeromq_protocol.md).
+
+## Develop, test, and measure
+
+~~~bash
+# Python tests and static checks
 pytest
 ruff check src tests
-cd spa && npx tsc -b   # SPA typecheck
-```
 
-## Production startup
+# Standalone regression script
+python regression_test.py
 
-### Linux (systemd example)
+# Optional isolated performance probe (not part of normal CI)
+python benchmark.py --duration 15 --rule-counts 1,25
 
-```ini
-# /etc/systemd/system/opal-event.service
-[Unit]
-Description=Opal Event service
-After=network.target
-
-[Service]
-Type=simple
-User=opal
-WorkingDirectory=/opt/opal-event
-Environment=OPAL_EVENT_API_TOKEN=change-me
-ExecStart=/opt/opal-event/.venv/bin/opal-event-svc --config /opt/opal-event/config/opal_event.yaml --log-level info
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-cd spa && npm run build   # outputs spa/dist; serve it with any static file server / reverse proxy
-```
-
-### Windows (service via NSSM, or run directly)
-
-```powershell
-# Direct foreground run:
-.venv\Scripts\opal-event-svc.exe --config config\opal_event.yaml --log-level info
-
-# Or register as a Windows service with NSSM:
-nssm install OpalEvent "C:\opal-event\.venv\Scripts\opal-event-svc.exe" --config C:\opal-event\config\opal_event.yaml
-nssm start OpalEvent
-```
-
-Serve `spa/dist` (after `npm run build`) with any static web server or reverse proxy (e.g. IIS,
-nginx, Caddy) that forwards `/api` to the REST server's host:port.
-
-## Configuration
-
-A single YAML file (`config/opal_event.yaml`) holds the full `Settings` schema: `server`, `zeromq`,
-`security`, `execution`, `persistence`, `actions`, `rules`. See
-[`config/opal_event.example.yaml`](config/opal_event.example.yaml) for a complete annotated example.
-
-* **Restart-only fields:** `server.*`, `zeromq.publishers`/`subscribers`/`curve`,
-  `security.rest_auth`, `persistence.database`. Changing these on disk is saved but only activated
-  after a service restart; `GET /api/v1/health/` reports `pending_restart: true` until then.
-* **Hot-reloadable fields:** `execution.*`, `persistence.event_mode`/`retention_days`, `actions`,
-  `rules`. Edit the file directly (a filesystem watcher picks it up) or use the REST API
-  (`PATCH /api/v1/settings/`, the rules/actions CRUD endpoints) — both paths validate atomically and
-  leave the last-good configuration active on any validation failure.
-* **Policy:** binding any interface to a non-loopback address requires `security.rest_auth.enabled:
-  true` (enforced at startup) and should also enable `zeromq.curve.enabled: true`.
-
-### Portable settings vs. full settings
-
-`GET/PATCH /api/v1/settings/` exposes only the **portable** subset (`execution`,
-`persistence.event_mode`/`retention_days`/`execution_history_enabled`, `max_event_bytes`) — never
-secrets, network bindings, or the database path. `GET/POST /api/v1/backup/*` additionally carries
-`actions` and `rules`, still excluding secrets/bindings/history.
-
-> **Contract note:** `ZeroMqSettings.max_event_bytes` is annotated `const: 1048576` in
-> `opal_event.1.4.0.yaml`, while `PortableSettings.max_event_bytes` is documented as PATCHable up to
-> that same value. A literal `const` would make the documented PATCH behavior non-functional, so this
-> implementation treats `1048576` as the enforced **ceiling** rather than a fixed literal — the only
-> reasonable reading that keeps the PATCH operation meaningful, per the contract's own narrative.
-
-## ZeroMQ
-
-See [`specs/zeromq_protocol.md`](specs/zeromq_protocol.md) for the full wire protocol (framing,
-topic semantics, CURVE, security, limitations). Summary:
-
-* Producers: `PUB` socket, `connect()` to `zeromq.publishers` (default `tcp://127.0.0.1:5555`).
-* Consumers: `SUB` socket, `connect()` to `zeromq.subscribers` (default `tcp://127.0.0.1:5556`).
-* Two-frame multipart messages: `[topic_bytes, json_envelope_bytes]`, envelope `{"topic", "data",
-  "id"?, "source"?, "timestamp"?}`, combined size ≤ 1 MiB.
-* Best-effort, no acknowledgments, no delivery ordering guarantees, no replay.
-* CURVE: set `zeromq.curve.enabled: true` with `server_public_key_file`/`server_secret_key_file`
-  (a `zmq.auth`-format certificate pair — generate with
-  `python -c "import zmq.auth; zmq.auth.create_certificates('config/curve', 'server')"`) and
-  `authorized_client_keys_file` (a directory of `*.key` public-key certificate files, one per
-  authorized external client, per `zmq.auth` conventions). The service's own internal connectors
-  (REST publisher, internal observer) use an ephemeral keypair that is always implicitly authorized.
-
-## REST API
-
-Full contract: [`opal_event.1.4.0.yaml`](opal_event.1.4.0.yaml). All routes are under `/api/v1`, use
-trailing slashes on collection roots, bearer auth (`Authorization: Bearer <token>`) when
-`security.rest_auth.enabled` is true, and the shared OPAL error shapes: `Problem` for
-400/401/403/404/409/413/429/500/503, FastAPI's standard `HTTPValidationError` for request-body 422s,
-and the nested `OpalError` (`{"error": {...}}`) shape for strong-ETag preconditions (412/428) and
-malformed OPAL context headers (422) -- see [Migrating from 1.1.0](#migrating-from-110).
-
-| Resource | Operations |
-|---|---|
-| Events | `POST/GET/DELETE /api/v1/events/`, `GET/DELETE /api/v1/events/{id}` (cursor-paginated history; DELETE clears all events / one event) |
-| Topics | `GET /api/v1/topics/` (full catalog, strong ETag) |
-| Rules | `GET/POST /api/v1/rules/`, `GET/PATCH/DELETE /api/v1/rules/{id}`, `POST /api/v1/rules/{id}/test` (full catalog, strong ETag, PATCH/DELETE require `If-Match`) |
-| Actions | `GET/POST /api/v1/actions/`, `GET/PATCH/DELETE /api/v1/actions/{id}`, `POST /api/v1/actions/{id}/execute` (full catalog, strong ETag, PATCH/DELETE require `If-Match`) |
-| Executions | `GET /api/v1/executions/`, `GET /api/v1/executions/{id}` (cursor-paginated history, `has_more`) |
-| Operations | `GET /api/v1/health/`, `GET /api/v1/stats/`, `GET /api/v1/health/live`, `GET /api/v1/health/ready` |
-| Settings | `GET/PATCH /api/v1/settings/` (strong ETag, PATCH requires `If-Match`) |
-| Backup | `GET /api/v1/backup/export`, `POST /api/v1/backup/validate`, `POST /api/v1/backup/import` |
-
-Every request/response additionally carries the four OPAL correlation headers
-(`X-Opal-Session-Id`, `X-Opal-Transaction-Id`, `X-Opal-Request-Id`, `X-Opal-Causation-Id`); see
-[Migrating from 1.1.0](#migrating-from-110).
-
-Interactive docs: `http://127.0.0.1:8080/docs` (Swagger UI) once the service is running.
-
-## CLI
-
-`opal event ...` (or the standalone `opal-event ...` entrypoint) exposes every applicable REST
-operation with hyphenated options and snake_case Python identifiers, e.g.:
-
-```bash
-opal event publish <topic> --data-json '<json>' [--id] [--source] [--timestamp]
-opal event list [--cursor] [--limit] [--topic] [--source] [--from] [--to]
-opal event get <event_id>
-opal event topics
-opal event health [--live | --ready]
-opal event stats
-
-opal event rules list                         # full catalog; no cursor/limit (v1.2 bounded catalog)
-opal event rules create|get [--json|--file]
-opal event rules update|delete <rule_id> [--if-match]   # If-Match auto-fetched via GET when omitted
-opal event rules test <rule_id> --event-json '<json>'
-
-opal event actions list                       # full catalog; no cursor/limit (v1.2 bounded catalog)
-opal event actions create|get [--json|--file]
-opal event actions update|delete <action_id> [--if-match]  # If-Match auto-fetched via GET when omitted
-opal event actions execute <action_id> --event-json '<json>'
-
-opal event executions list [--status] [--rule-id] [--action-id] [--event-id]  # default/max limit 100/500
-opal event executions get <execution_id>
-
-opal event settings get
-opal event settings update [--json|--file] [--if-match]
-
-opal event backup export [--output]
-opal event backup validate [--json|--file]
-opal event backup import [--json|--file] [--if-match]
-```
-
-Global options: `--api-url` (env `OPAL_EVENT_API_URL`, default `http://127.0.0.1:8080`), `--token`
-(env `OPAL_EVENT_API_TOKEN`), `--json` (raw JSON output instead of tables), `--timeout`, and the
-optional OPAL correlation-ID passthroughs `--opal-session-id`, `--opal-transaction-id`,
-`--opal-causation-id` (env `OPAL_SESSION_ID`/`OPAL_TRANSACTION_ID`/`OPAL_CAUSATION_ID`).
-
-Action/rule/backup create and update commands accept a full JSON payload via `--json '<text>'`,
-`--file <path>`, or stdin — this is the simplest reliable way to expose the three polymorphic action
-types (shell/http/python) and nested rule conditions without re-implementing every field as a flag.
-
-## Benchmarking
-
-`benchmark.py` is an **opt-in** throughput probe (not run in CI or pytest). It provisions an
-isolated throwaway service on ephemeral `127.0.0.1` ports, drives sustained publication at 100 /
-1000 / 10000 events per minute over REST and raw ZeroMQ, and measures each pipeline stage
-separately — publisher acceptance, observer processing, rule matching, and execution completion:
-
-```bash
-.venv/bin/python benchmark.py                          # defaults (10s per scenario)
-.venv/bin/python benchmark.py --duration 15 --rule-counts 1,25 --json bench.json
-```
-
-Interpreting the columns: `pub/min` is what the publisher path actually accepted, `obs/min` is
-what the observer processed — a gap (or growing `drain_s`) means the observer lags ingress.
-`match/m`/`exec/m` show rule-match and execution-completion rates; `qpeak`/`drop` expose executor
-backpressure. `--rule-counts` scales rule-evaluation cost (non-matching rules still force
-evaluation). Numbers are host-relative — compare runs on the same machine, not to absolutes.
-
-## SPA
-
-`spa/` is a React + TypeScript + Vite single-page app with tabs for **Health**, **Events**,
-**Rules**, **Actions**, **Executions**, **Settings**, and **Backup**. It talks only to the REST API (no business
-logic is duplicated client-side): publishing events, creating/enabling/disabling/deleting rules and
-actions, running rule dry-tests and manual action executions, browsing event/execution history, and
-editing portable settings. A bearer token field in the sidebar is stored in `localStorage` and sent
-as `Authorization: Bearer <token>` when set. Optional `X-Opal-Session-Id`/`-Transaction-Id`/
-`-Causation-Id` fields are also available in the sidebar and, when set, are sent on every request;
-rule/action enable/disable and delete actions transparently fetch the resource's current strong
-ETag first and send it as `If-Match` (v1.2 requires this; see [Migrating from 1.1.0](#migrating-from-110)).
-
-```bash
+# Frontend checks
 cd spa
-npm run dev      # development server with /api proxy
-npm run build    # production build to spa/dist
 npm run typecheck
-```
+npm run build
+~~~
 
-## Security notes
+The test suite has unit, integration, contract, security, and end-to-end coverage. The benchmarking script measures publication, observation, matching, execution, and queue pressure; throughput is host-dependent.
 
-* **HTTP actions**: destination is checked against `security.http_action_allowlist`
-  (host+scheme+port), then DNS-resolved and re-checked against blocked ranges (link-local/metadata,
-  IPv6 loopback/link-local) on every call; redirects are disabled.
-* **Shell actions**: always `argv`, never a concatenated shell string (`shell=False`); templated
-  event values become individual argv entries or JSON on stdin, never interpreted command source.
-  Interpreter modes (`sh`/`bash`/`cmd`/`powershell`) require a statically registered `script_path`.
-  Subprocesses run in their own session/process-group so a timeout can kill the whole tree.
-* **Python plugin actions**: run in a separate, unprivileged child interpreter
-  (`opal_event.plugins.runner`); the registered `module.function(event) -> JSON value` contract
-  receives the event via stdin JSON and must return via stdout JSON — this is process isolation, not
-  a security sandbox against a malicious plugin.
-* **CURVE** authenticates and encrypts the ZeroMQ transport but is not a per-topic publisher ACL —
-  v1 has no fine-grained publish permissions, matching zeromq_protocol.md.
-* **REST bearer auth** is required by this implementation whenever `server.host` is non-loopback
-  (enforced at startup).
+## Project map
 
-## Migrating from 1.1.0
+~~~text
+opal-event/
+├── opal-event.png                 project artwork
+├── README.md                      this guide
+├── pyproject.toml                 package + CLI entry points
+├── opal_event.1.4.0.yaml          OpenAPI contract
+├── config/opal_event.example.yaml
+├── examples/                      sample JSON payloads
+├── docs/CLI.md                    detailed command reference
+├── docs/USER_GUIDE.md             extended operator guide
+├── specs/zeromq_protocol.md       wire protocol and delivery semantics
+├── src/opal_event/
+│   ├── cli/                       Typer REST client
+│   ├── routers/                   FastAPI routes
+│   ├── zeromq_broker.py           event transport and observer
+│   ├── rules.py                   topic/condition matching
+│   ├── actions/                   shell, HTTP, Python runners
+│   ├── executor.py                bounded work pool
+│   ├── config.py                  YAML settings and reload
+│   └── db.py                      SQLite persistence
+├── spa/                           React + TypeScript + Vite
+└── tests/                         unit, integration, contract, security, E2E
+~~~
 
-opal_event.1.2.0.yaml adds the "OPAL Suite Standard v1.2": cross-cutting correlation headers and
-stricter concurrency control. **None of it touches `ZeroMqSettings`, `CurveSettings`, `Event`/
-`EventInput`, `Rule`/`Action`, or `Execution`** -- those schemas, and the two-frame wire format in
-`specs/zeromq_protocol.md`, are byte-for-byte unchanged from 1.1.0. The migration is entirely a REST-surface tightening:
+---
 
-1. **Correlation headers.** `X-Opal-Session-Id`, `X-Opal-Transaction-Id`, `X-Opal-Request-Id`,
-   `X-Opal-Causation-Id` are optional, opaque, 1-128 printable-ASCII tokens accepted on every
-   request and echoed on every response (success or error). The service assigns a
-   `X-Opal-Transaction-Id` when absent and always generates a fresh `X-Opal-Request-Id` for the
-   current hop; malformed values are rejected with a 422 in the nested `OpalError` shape
-   (`{"error": {"code", "message", "request_id", "transaction_id", "session_id", "causation_id"}}`),
-   handled by `opal_event.opal_context.OpalContextMiddleware`. When REST publishes an event, the
-   current request's session/transaction/causation IDs are added as additional, optional keys
-   (`opal_session_id`, `opal_transaction_id`, `opal_causation_id`) on the outbound two-frame ZeroMQ
-   envelope -- an additive-only extension zeromq_protocol.md's "optional id/source/timestamp"
-   wording already permits; the stored/REST `Event` shape is untouched (it forbids extra properties).
-2. **Rules and Actions became bounded configuration catalogs.** `GET /api/v1/rules/` and
-   `GET /api/v1/actions/` no longer accept `cursor`/`limit` and always return the complete
-   collection (`next_cursor` stays `null`), with a strong `ETag` header. An internal cap (10,000
-   entries; not part of the portable/REST schema) guards against unbounded growth per the
-   contract's "may reject catalog sizes over an advertised deployment cap" note.
-3. **Strong-ETag preconditions.** Rule/Action `PATCH`/`DELETE` now require `If-Match`: `428` if
-   omitted, `412` if it no longer matches the current revision (nested `OpalError` shape).
-   `PATCH /api/v1/settings/` switched from an unconditional-409-on-mismatch model to the same
-   428/412 scheme. `POST /api/v1/backup/import` is **unchanged** (still a required header at the
-   HTTP-validation level and `409` on a stale revision) because opal_event.1.4.0.yaml's `backup/import`
-   operation does not declare 412/428 responses -- this implementation follows the literal,
-   per-operation contract rather than the free-text summary where they disagree.
-4. **Executions gained `has_more`** (default limit 100, max 500; was 50/200). Events list pagination
-   is unchanged (schema wasn't updated to add `has_more` there, so it isn't returned). Both lists'
-   cursors are now scoped to their exact filter set and expire after one hour; a cursor reused with
-   different filters, or an expired/garbled one, returns `422` (`HTTPValidationError` shape, matching
-   each endpoint's already-declared 422 response).
-5. `GET /api/v1/topics/` gained a strong `ETag` header (same config-revision value as rules/actions,
-   even though topics are a derived read-only projection with no corresponding `If-Match` write path
-   -- the header's declared semantics are reused verbatim here since the contract offers no
-   topic-specific alternative).
+**OPAL Event doesn't need to be the smartest service in the room.** It just needs to reliably connect the services that notice things with the ones that can do something useful about them—while making every rule, action, and failure easy to understand.
 
-One schema from the shared OPAL component library, `OpalCursorPageMetadata`, is defined in
-opal_event.1.4.0.yaml but never referenced by any path -- intentionally unused boilerplate from the
-suite-wide schema set. The 1.4.0 revision also removed the unused `Problem`, `HTTPValidationError`,
-and `HealthProbe` schemas: error responses now share the nested `OpalError` envelope, and
-`OpalHealthProbe` (with a required `ready` flag) backs `/health/live` and `/health/ready`.
-
-## Known limitations
-
-* CURVE authorization is directory-based (`zmq.auth` certificate files), per standard pyzmq
-  conventions; the contract does not specify an exact file format for `authorized_client_keys_file`.
-* No durable queues, delivery acknowledgments, exactly-once semantics, replay, rule chaining, or
-  action retries — all explicitly out of scope per `zeromq_protocol.md`.
-* SQLite is a single-writer store; this is appropriate for the bounded worker-pool write volume this
-  service targets, not for very high-throughput deployments.
-* Graceful shutdown waits for in-flight actions to finish under their own `timeout_seconds` policy
-  (queued jobs are recorded `dropped`/`shutdown` instead of running). There is no overall shutdown
-  deadline, so a runner that ignores its own timeout kill could still delay shutdown.
-* After an *ungraceful* termination, the next startup reconciles stale execution rows before
-  accepting work: `queued` -> `dropped` and `running` -> `failed`, both with
-  `error_code=service_restart`. Interrupted actions are never retried or rerun.
-* `POST /api/v1/events/` returning `202 Accepted` means only that the event was normalized and
-  handed to the local publisher. It does **not** acknowledge subscriber delivery, persistence,
-  rule matching, or action completion — ZeroMQ delivery is best-effort with no deduplication
-  guarantee, so consumers should treat IDs as advisory, not dedup keys.
-* The observer rejects malformed ZeroMQ messages for its own processing (frame count, topic
-  syntax/255-char cap, JSON shape, UUID/RFC3339 metadata, `max_event_bytes`) and counts them in
-  `invalid_events`; the transparent proxy still forwards the original frames to subscribers.
-* Retention (`persistence.retention_days`) deletes stored events and executions strictly older
-  than the cutoff — once at startup and then hourly — using UTC-aware timestamp comparisons.
-* `GET /api/v1/health/` reports `degraded` if the broker is down, the database is unreachable, an
-  executor worker died, or the last config reload was rejected (last-good still active).
-  `GET /api/v1/health/ready` fails (503) only when the broker, database, or executor cannot
-  actually serve — a rejected config edit alone does not affect readiness.
+**Explore the rest of OPAL:** [OPAL](https://github.com/PatMartin/opal) · [OPAL Look](https://github.com/PatMartin/opal-look) · [OPAL Listen](https://github.com/PatMartin/opal-listen) · [OPAL Talk](https://github.com/PatMartin/opal-talk) · [OPAL Think](https://github.com/PatMartin/opal-think)

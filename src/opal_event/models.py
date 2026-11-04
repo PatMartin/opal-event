@@ -451,6 +451,9 @@ class ZeroMqSettings(Strict):
 class RestAuthSettings(Strict):
     enabled: bool = False
     token_env: str = "OPAL_EVENT_API_TOKEN"
+    # Optional second credential: callers holding this token may only list/show
+    # actions, execute actions, and read executions — never administration.
+    execute_token_env: str | None = None
 
 
 class AllowedHttpDestination(Strict):

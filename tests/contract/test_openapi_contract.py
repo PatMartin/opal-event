@@ -125,3 +125,37 @@ class TestContractCoverage:
         assert "401" in delete_single_op["responses"]
         assert "403" in delete_single_op["responses"]
         assert "404" in delete_single_op["responses"]
+
+
+V141_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.4.1.yaml"
+
+
+class TestV141SelfDescribingActions:
+    """v1.4.1 proposal adds four optional self-description fields to all action types.
+
+    The historical 1.4.0 file stays authoritative; this validates the proposal adds
+    exactly description/input_schema/keywords/suggested_prompts without route drift.
+    """
+
+    def _spec(self) -> dict:
+        return yaml.safe_load(V141_PATH.read_text(encoding="utf-8"))
+
+    def test_v141_parses_and_routes_match_v140(self) -> None:
+        new = self._spec()
+        old = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+        assert new["openapi"].startswith("3.1")
+        assert new["info"]["version"] == "1.4.1"
+        ops = lambda s: {(m, p) for p, i in s["paths"].items() for m in i if m in {"get", "post", "put", "patch", "delete"}}
+        assert ops(new) == ops(old), "v1.4.1 route drift vs 1.4.0"
+
+    def test_all_action_types_have_four_optional_fields(self) -> None:
+        spec = self._spec()
+        for action_type in ("ShellAction", "HttpAction", "PythonAction"):
+            schema = spec["components"]["schemas"][action_type]
+            props, required = schema["properties"], schema.get("required", [])
+            for field in ("description", "input_schema", "keywords", "suggested_prompts"):
+                assert field in props, f"{action_type} missing {field}"
+                assert field not in required, f"{action_type}.{field} must be optional"
+            assert props["keywords"]["uniqueItems"] is True
+            assert props["keywords"]["maxItems"] == 16
+            assert props["suggested_prompts"]["maxItems"] == 8

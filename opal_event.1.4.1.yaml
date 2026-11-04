@@ -1772,6 +1772,27 @@ components:
             constraints. Informational metadata, not an authorization grant.
         input_schema:
           $ref: '#/components/schemas/ActionInputSchema'
+        keywords:
+          type: array
+          description: >-
+            Search/discovery hints that help an agent or operator select this action.
+            Informational metadata, not an authorization grant.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          maxItems: 16
+          uniqueItems: true
+        suggested_prompts:
+          type: array
+          description: >-
+            Example natural-language prompts that could legitimately lead to this
+            action. Informational metadata, never an authorization grant.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          maxItems: 8
         mode:
           type: string
           enum:
@@ -1866,6 +1887,27 @@ components:
             constraints. Informational metadata, not an authorization grant.
         input_schema:
           $ref: '#/components/schemas/ActionInputSchema'
+        keywords:
+          type: array
+          description: >-
+            Search/discovery hints that help an agent or operator select this action.
+            Informational metadata, not an authorization grant.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          maxItems: 16
+          uniqueItems: true
+        suggested_prompts:
+          type: array
+          description: >-
+            Example natural-language prompts that could legitimately lead to this
+            action. Informational metadata, never an authorization grant.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          maxItems: 8
         method:
           type: string
           enum:
@@ -1940,6 +1982,27 @@ components:
             constraints. Informational metadata, not an authorization grant.
         input_schema:
           $ref: '#/components/schemas/ActionInputSchema'
+        keywords:
+          type: array
+          description: >-
+            Search/discovery hints that help an agent or operator select this action.
+            Informational metadata, not an authorization grant.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          maxItems: 16
+          uniqueItems: true
+        suggested_prompts:
+          type: array
+          description: >-
+            Example natural-language prompts that could legitimately lead to this
+            action. Informational metadata, never an authorization grant.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          maxItems: 8
         module:
           type: string
           pattern: ^[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*$

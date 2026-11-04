@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
+import jsonschema
 from fastapi import APIRouter, Body, Depends, Header, Response
 
 from opal_event.auth import require_auth
@@ -144,6 +145,15 @@ def execute_action(
         raise ValidationProblem.from_message(["body", "action_id"], f"action '{action_id}' is disabled", "value_error")
 
     event = normalize_event(body.event)
+    if action.input_schema:
+        try:
+            jsonschema.validate(event.get("data"), action.input_schema)
+        except jsonschema.ValidationError as exc:
+            raise ValidationProblem.from_message(
+                ["body", "event", "data"],
+                f"event.data does not satisfy action '{action_id}' input_schema: {exc.message}",
+                "value_error",
+            ) from exc
     settings = config.settings
     record = service.executor.submit(
         action,

@@ -6,6 +6,8 @@ OpenAPI contract. The contract is authoritative; do not add fields here that are
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -137,6 +139,42 @@ class RuleTestResult(Strict):
 # Actions
 # --------------------------------------------------------------------------------------
 
+
+_DESCRIPTION_FIELD = Annotated[str, Field(min_length=1, max_length=2048)]
+_KEYWORDS_FIELD = Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=16)]
+_SUGGESTED_FIELD = Annotated[list[Annotated[str, Field(min_length=1, max_length=512)]], Field(max_length=8)]
+_MAX_INPUT_SCHEMA_BYTES = 16384
+
+
+def _validate_declared_schema(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fail closed on malformed declared input_schema; reject remote $ref targets."""
+    if schema is None:
+        return None
+    if not isinstance(schema, dict):
+        raise ValueError("input_schema must be a JSON Schema object")
+    text = json.dumps(schema)
+    if len(text.encode()) > _MAX_INPUT_SCHEMA_BYTES:
+        raise ValueError("input_schema exceeds 16 KiB")
+    import jsonschema
+
+    for match in re.finditer(r'"\$ref"\s*:\s*"([^"]+)"', text):
+        if "://" in match.group(1) or not match.group(1).startswith("#"):
+            raise ValueError("input_schema may only use local $ref targets")
+    try:
+        jsonschema.validators.validator_for(schema).check_schema(schema)
+    except jsonschema.SchemaError as exc:
+        raise ValueError(f"input_schema is not a valid JSON Schema: {exc.message}") from exc
+    return schema
+
+
+def _action_metadata_fields() -> dict:
+    return {
+        "description": (_DESCRIPTION_FIELD | None, None),
+        "input_schema": (dict[str, Any] | None, None),
+        "keywords": (_KEYWORDS_FIELD | None, None),
+        "suggested_prompts": (_SUGGESTED_FIELD | None, None),
+    }
+
 ShellMode = Literal["exec", "sh", "bash", "cmd", "powershell"]
 _SCRIPT_MODES = {"sh", "bash", "cmd", "powershell"}
 
@@ -145,6 +183,16 @@ class ShellAction(Strict):
     id: str
     type: Literal["shell"]
     enabled: bool = True
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
+    @field_validator("input_schema")
+    @classmethod
+    def _check_declared_schema(cls, v):
+        return _validate_declared_schema(v)
+
     mode: ShellMode
     executable: str | None = None
     script_path: str | None = None
@@ -165,6 +213,16 @@ class HttpAction(Strict):
     id: str
     type: Literal["http"]
     enabled: bool = True
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
+    @field_validator("input_schema")
+    @classmethod
+    def _check_declared_schema(cls, v):
+        return _validate_declared_schema(v)
+
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
     url: str
     headers: dict[str, str] | None = None
@@ -177,6 +235,16 @@ class PythonAction(Strict):
     id: str
     type: Literal["python"]
     enabled: bool = True
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
+    @field_validator("input_schema")
+    @classmethod
+    def _check_declared_schema(cls, v):
+        return _validate_declared_schema(v)
+
     module: Annotated[str, Field(pattern=MODULE_PATTERN)]
     function: Annotated[str, Field(pattern=FUNCTION_PATTERN)]
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
@@ -194,6 +262,11 @@ class ShellActionPatch(Strict):
     stdin: Literal["event_json", "none"] | None = None
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
 
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
     @model_validator(mode="after")
     def _at_least_one(self) -> ShellActionPatch:
         if not self.model_fields_set:
@@ -210,6 +283,11 @@ class HttpActionPatch(Strict):
     body_mode: Literal["template", "event_json", "none"] | None = None
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
 
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
     @model_validator(mode="after")
     def _at_least_one(self) -> HttpActionPatch:
         if not self.model_fields_set:
@@ -222,6 +300,11 @@ class PythonActionPatch(Strict):
     module: Annotated[str, Field(pattern=MODULE_PATTERN)] | None = None
     function: Annotated[str, Field(pattern=FUNCTION_PATTERN)] | None = None
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
+
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
 
     @model_validator(mode="after")
     def _at_least_one(self) -> PythonActionPatch:

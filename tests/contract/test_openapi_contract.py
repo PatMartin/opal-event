@@ -145,7 +145,9 @@ class TestV141SelfDescribingActions:
         old = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
         assert new["openapi"].startswith("3.1")
         assert new["info"]["version"] == "1.4.1"
-        ops = lambda s: {(m, p) for p, i in s["paths"].items() for m in i if m in {"get", "post", "put", "patch", "delete"}}
+        def ops(spec: dict) -> set:
+            return {(m, p) for p, i in spec["paths"].items() for m in i if m in {"get", "post", "put", "patch", "delete"}}
+
         assert ops(new) == ops(old), "v1.4.1 route drift vs 1.4.0"
 
     def test_all_action_types_have_four_optional_fields(self) -> None:

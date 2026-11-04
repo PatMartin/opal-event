@@ -17,10 +17,11 @@ dependencies = [
     "httpx>=0.27",
     "pyzmq>=25.1",
     "watchfiles>=0.21",
+    "jsonschema>=4.21",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "jsonschema>=4.21", "ruff>=0.4"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4"]
 
 [project.scripts]
 opal = "opal_event.cli.main:app"

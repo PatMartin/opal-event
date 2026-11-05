@@ -10,9 +10,10 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import jsonschema
-from fastapi import APIRouter, Body, Depends, Header, Response
+from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from fastapi.responses import JSONResponse
 
-from opal_event.auth import require_auth
+from opal_event.auth import discovery_projection, is_execute_scope, require_auth
 from opal_event.config import ConcurrentUpdateError
 from opal_event.deps import get_config, get_service
 from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
@@ -44,8 +45,12 @@ ACTIONS_MAX_COUNT = 10_000
 
 
 @router.get("/api/v1/actions/", response_model=ListActions)
-def list_actions(response: Response, config=Depends(get_config)):
+def list_actions(request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
+    if is_execute_scope(request):
+        return JSONResponse(
+            {"items": [discovery_projection(a) for a in config.settings.actions], "next_cursor": None}
+        )
     return ListActions(items=config.settings.actions, next_cursor=None)
 
 
@@ -67,10 +72,12 @@ def create_action(action: Action, response: Response, config=Depends(get_config)
 
 
 @router.get("/api/v1/actions/{action_id}", response_model=Action)
-def get_action(action_id: str, response: Response, config=Depends(get_config)):
+def get_action(action_id: str, request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     for action in config.settings.actions:
         if action.id == action_id:
+            if is_execute_scope(request):
+                return JSONResponse(discovery_projection(action))
             return action
     raise NotFoundError(f"action '{action_id}' not found")
 

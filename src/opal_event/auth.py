@@ -34,6 +34,21 @@ def _route_path(request: Request) -> str | None:
     return getattr(route, "path", None)
 
 
+# Discovery metadata an execute-scoped caller may see — the self-description
+# surface THINK consumes, never operational detail (paths, URLs, headers,
+# modules, args) or secret references.
+_DISCOVERY_FIELDS = ("id", "type", "enabled", "description", "input_schema", "keywords", "suggested_prompts")
+
+
+def is_execute_scope(request: Request) -> bool:
+    return getattr(request.state, "scope", None) == "execute"
+
+
+def discovery_projection(action) -> dict:
+    """Execute-scope view of an action definition: discovery metadata only."""
+    return {field: getattr(action, field, None) for field in _DISCOVERY_FIELDS}
+
+
 def require_auth(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme)) -> None:
     config: ConfigStore = request.app.state.config
     auth_settings = config.settings.security.rest_auth

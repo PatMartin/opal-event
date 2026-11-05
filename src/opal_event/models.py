@@ -10,7 +10,7 @@ import json
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TOPIC_PATTERN = r"^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$"
 RULE_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -140,8 +140,16 @@ class RuleTestResult(Strict):
 # --------------------------------------------------------------------------------------
 
 
+def _unique_keywords(values: list[str]) -> list[str]:
+    if len(set(values)) != len(values):
+        raise ValueError("keywords must be unique")
+    return values
+
+
 _DESCRIPTION_FIELD = Annotated[str, Field(min_length=1, max_length=2048)]
-_KEYWORDS_FIELD = Annotated[list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=16)]
+_KEYWORDS_FIELD = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=16), AfterValidator(_unique_keywords)
+]
 _SUGGESTED_FIELD = Annotated[list[Annotated[str, Field(min_length=1, max_length=512)]], Field(max_length=8)]
 _MAX_INPUT_SCHEMA_BYTES = 16384
 

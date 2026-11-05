@@ -3,6 +3,7 @@ implemented by the REST app and exposed by the CLI client, with no drift in eith
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -128,6 +129,12 @@ class TestContractCoverage:
 
 
 V141_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.4.1.yaml"
+# Byte-identity guard: this file is a verbatim copy of the central contract
+# opal-api:openapi/opal_event.v1.4.1.yaml @ 6677f0130b8939e0f7700cea20deac3f5e3a6f30
+# (proposal/event-self-describing-actions-1.4.1). SHA256 is computed on the
+# LF-normalized bytes so CRLF checkouts still match. Re-sync with:
+#   git -C ../opal-api show <commit>:openapi/opal_event.v1.4.1.yaml > opal_event.1.4.1.yaml
+V141_CENTRAL_SHA256 = "033aed324558221b2c30f8a56460178b8f39918f8591cab75adc4c6099bff9a9"
 
 
 class TestV141SelfDescribingActions:
@@ -161,3 +168,12 @@ class TestV141SelfDescribingActions:
             assert props["keywords"]["uniqueItems"] is True
             assert props["keywords"]["maxItems"] == 16
             assert props["suggested_prompts"]["maxItems"] == 8
+
+    def test_v141_byte_identical_to_central_spec(self) -> None:
+        """Local file must be a verbatim copy of the published central contract."""
+        normalized = V141_PATH.read_bytes().replace(b"\r\n", b"\n")
+        digest = hashlib.sha256(normalized).hexdigest()
+        assert digest == V141_CENTRAL_SHA256, (
+            f"opal_event.1.4.1.yaml drifted from the central spec: sha256 {digest} "
+            f"!= {V141_CENTRAL_SHA256} (re-sync from opal-api; see V141_CENTRAL_SHA256 comment)"
+        )

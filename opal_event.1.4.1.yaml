@@ -86,6 +86,13 @@ info:
     204. Streaming keeps media-specific transports but exposes correlation headers, defined failure behavior,
     and no unsupported replay guarantee. Configuration export/import/validation excludes secrets and history.
 
+
+    v1.4.1 revision: registered actions (shell/http/python) gain optional self-description
+    metadata — description, input_schema, keywords, suggested_prompts — with no endpoint,
+    discriminator, or required-field changes. Declared input_schema describes EventInput.data
+    only and is validated server-side before execution (invalid submissions yield 422);
+    the remaining fields are untrusted discovery hints, never authorization or instructions.
+
     '
   license:
     name: Internal use
@@ -1735,13 +1742,18 @@ components:
       type: object
       description: >-
         Optional, self-contained JSON Schema Draft 2020-12 document describing
-        the expected JSON value in EventInput.data for this action. Clients
-        such as OPAL-THINK may use this metadata to construct arguments.
-        Internal local references are permitted; remote references are not.
-        This field does not change the EventInput envelope, rule matching,
-        execution authorization, or templating. In 1.4.1 the schema is
-        descriptive; EVENT is not required to validate runtime input against
-        it, and clients must not use it as a security boundary.
+        the expected JSON value in EventInput.data for this action — nothing
+        else. Absent means legacy permissive behavior: event.data is unchecked
+        by shape. When declared, EVENT validates event.data against it and
+        rejects invalid submissions with the standard 422 error before
+        execution, independently of any client-side prevalidation (such as
+        OPAL-THINK's); the server is the validating authority. Implementations
+        bound schema size/depth and reject remote $ref targets — internal local
+        references only — but exact limits are implementation-defined and not
+        guaranteed by this schema. Clients such as OPAL-THINK may use this
+        metadata to construct arguments. This field does not change the
+        EventInput envelope, rule matching, execution authorization, or
+        templating, and is not an authorization control.
       additionalProperties: true
       example:
         type: object
@@ -1775,8 +1787,9 @@ components:
         keywords:
           type: array
           description: >-
-            Search/discovery hints that help an agent or operator select this action.
-            Informational metadata, not an authorization grant.
+            Search/discovery hints that help an agent or operator select this
+            action. Untrusted informational metadata: never executable
+            instructions, not an authorization grant, not a security control.
           items:
             type: string
             minLength: 1
@@ -1786,8 +1799,9 @@ components:
         suggested_prompts:
           type: array
           description: >-
-            Example natural-language prompts that could legitimately lead to this
-            action. Informational metadata, never an authorization grant.
+            Example natural-language prompts that could legitimately lead to
+            this action. Untrusted informational metadata: never executable
+            instructions, never an authorization grant, not a security control.
           items:
             type: string
             minLength: 1
@@ -1890,8 +1904,9 @@ components:
         keywords:
           type: array
           description: >-
-            Search/discovery hints that help an agent or operator select this action.
-            Informational metadata, not an authorization grant.
+            Search/discovery hints that help an agent or operator select this
+            action. Untrusted informational metadata: never executable
+            instructions, not an authorization grant, not a security control.
           items:
             type: string
             minLength: 1
@@ -1901,8 +1916,9 @@ components:
         suggested_prompts:
           type: array
           description: >-
-            Example natural-language prompts that could legitimately lead to this
-            action. Informational metadata, never an authorization grant.
+            Example natural-language prompts that could legitimately lead to
+            this action. Untrusted informational metadata: never executable
+            instructions, never an authorization grant, not a security control.
           items:
             type: string
             minLength: 1
@@ -1985,8 +2001,9 @@ components:
         keywords:
           type: array
           description: >-
-            Search/discovery hints that help an agent or operator select this action.
-            Informational metadata, not an authorization grant.
+            Search/discovery hints that help an agent or operator select this
+            action. Untrusted informational metadata: never executable
+            instructions, not an authorization grant, not a security control.
           items:
             type: string
             minLength: 1
@@ -1996,8 +2013,9 @@ components:
         suggested_prompts:
           type: array
           description: >-
-            Example natural-language prompts that could legitimately lead to this
-            action. Informational metadata, never an authorization grant.
+            Example natural-language prompts that could legitimately lead to
+            this action. Untrusted informational metadata: never executable
+            instructions, never an authorization grant, not a security control.
           items:
             type: string
             minLength: 1

@@ -69,6 +69,8 @@ The install gives you **three commands**:
 
 The Python distribution currently declares version **1.2.0**; the repository also carries the newer **1.4.0 OpenAPI contract**. These are different version identifiers, not interchangeable names.
 
+`opal_event.1.4.0.yaml` remains the authoritative contract. `opal_event.1.4.1.yaml` is a byte-identical copy of the central `opal-api` versioned proposal adding optional action self-description metadata (`description`, `input_schema`, `keywords`, `suggested_prompts`). The file advertises schema support only — corresponding runtime behavior (metadata round-trip, server-side `input_schema` validation) is a separate implementation concern; do not treat the contract's presence as a support declaration on releases that do not implement it.
+
 ### 2. Start the service
 
 ~~~bash

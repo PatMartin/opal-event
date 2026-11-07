@@ -1505,3 +1505,320 @@ cd spa && npx tsc -b
 | `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event stats` | Health tab → Metrics counters | None |
 | `opal_health_live_get` | `GET /api/v1/health/live` | `opal event health --live` | Health tab → Liveness badge | None |
 | `opal_health_ready_get`| `GET /api/v1/health/ready` | `opal event health --ready` | Health tab → Readiness badge | None |
+
+## 14. Cookbook: twenty field expeditions
+
+> **DON'T PANIC.** Every expedition below runs with *only* `opal-event` installed —
+> the service, the CLI, Python, and `pyzmq` (which opal-event already pulls in).
+> Start the service once (`opal-event-svc`, REST `:8080`, ZMQ `:5555/:5556`),
+> open a second terminal, and follow along.
+>
+> **Re-running an expedition?** `create` rejects a duplicate `id` with
+> `409 conflict` — pick a new id, `delete` the old object first, or `update`
+> it in place (`actions update` / `rules update`).
+
+### 1. Hello, Galaxy — tail the whole event bus
+
+Attach a subscriber and watch every event the service sees, in five lines:
+
+```bash
+python -c "
+import zmq
+s = zmq.Context().socket(zmq.SUB)
+s.connect('tcp://127.0.0.1:5556')     # consumer side
+s.subscribe('')                        # empty prefix = EVERYTHING
+print('listening for transmissions…')
+while True:
+    topic, payload = s.recv_multipart()
+    print(topic.decode(), '→', payload.decode())
+"
+```
+
+```bash
+opal event publish hitchhiker.arrival --data-json '{"who": "Ford Prefect", "towel": true}'
+```
+
+Topic frame + JSON envelope, live. The single most useful debugging move in the
+whole cookbook.
+
+### 2. The Vogon Alarm — a rule that makes noise
+
+```bash
+# Windows
+opal event actions create --json '{
+  "id": "honk", "type": "shell", "enabled": true, "mode": "exec",
+  "executable": "powershell",
+  "args": ["-c", "[console]::beep(880,300); [console]::beep(660,300)"],
+  "stdin": "none", "timeout_seconds": 5}'
+
+# macOS: "afplay" / ["/System/Library/Sounds/Glass.aiff"]
+# Linux: "sh" / ["-c", "echo -e '\a'"]
+
+opal event rules create --json '{
+  "id": "vogon_siren", "enabled": true, "topic": "alarm.vogon",
+  "conditions": [], "actions": ["honk"]}'
+
+opal event rules test vogon_siren --event-json '{"topic": "alarm.vogon", "data": {}}'   # dry-run
+opal event publish alarm.vogon --data-json '{"captain": "Prostetnic Vogon Jeltz"}'      # listen
+opal event executions list                                                            # succeeded
+```
+
+### 3. Ford Prefect's Field Journal — event-sourced notes
+
+```bash
+opal event publish journal.entry --data-json '{"day": 1, "note": "Earthman is adapting well"}'
+opal event publish journal.entry --data-json '{"day": 2, "note": "taught him about towels"}'
+opal event events list --limit 10
+opal event topics                  # journal.entry appears
+opal event events get <event_id>   # full envelope, metadata and all
+```
+
+A durable write-ahead log in three commands.
+
+### 4. The Infinite Improbability Drive — condition routing
+
+```bash
+opal event actions create --json '{
+  "id": "log_improbable", "type": "python", "enabled": true,
+  "module": "opal_event.plugins.example", "function": "handle_event",
+  "timeout_seconds": 5}'
+
+opal event rules create --json '{
+  "id": "improbability_gate", "enabled": true, "topic": "dice.roll",
+  "conditions": [{"path": "data.p_improbability", "operator": "gte", "value": 1000}],
+  "actions": ["log_improbable"]}'
+
+opal event publish dice.roll --data-json '{"p_improbability": 999}'   # nothing fires
+opal event publish dice.roll --data-json '{"p_improbability": 1042}'  # action runs
+opal event executions get <execution_id>                              # plugin stdout
+```
+
+### 5. Zaphod's Two-Headed Fan-Out — one rule, two actions
+
+```bash
+opal event rules create --json '{
+  "id": "two_heads", "enabled": true, "topic": "zaphod.quote",
+  "conditions": [], "actions": ["honk", "log_improbable"]}'
+
+opal event publish zaphod.quote --data-json '{"line": "Hey, you sass that hoopy Ford Prefect?"}'
+opal event executions list --limit 5     # TWO executions, one event
+```
+
+Each action got its own worker slot, timeout, and audit record — neither knows
+the other exists. Very on-brand for Zaphod.
+
+### 6. The S.E.P. Field — watch events vanish politely
+
+```bash
+opal event stats                              # note observed_events / matched_events
+opal event publish somebody.elses.problem --data-json '{}'
+opal event stats                              # observed +1, matched unchanged
+opal event events list | head                 # …but it IS in history
+```
+
+Invisible to actions, perfectly visible to the event log — Somebody Else's
+Problem, exactly as advertised.
+
+### 7. Kill the Dolphins — live rule surgery, no restart
+
+```bash
+opal event rules update vogon_siren --json '{"enabled": false}'
+opal event publish alarm.vogon --data-json '{}'   # silence. blessed silence.
+opal event rules update vogon_siren --json '{"enabled": true}'
+```
+
+`rules update` auto-fetches `If-Match` — optimistic concurrency without the
+paperwork.
+
+### 8. Marvin's Complaint Line — the execution audit trail
+
+```bash
+opal event publish marvin.complaint --data-json '{"brain_size": "planet-sized"}'
+opal event executions list --status succeeded
+opal event executions list --status dropped     # the queue-overflow graveyard
+opal event executions get <id>                  # stdout, stderr, exit_code, timings
+```
+
+Marvin has a brain the size of a planet and they ask him to grep the execution
+log. He could do it with his eyes shut. Both of them.
+
+### 9. Hotline to Mission Control — the HTTP action
+
+The config allowlists `http://127.0.0.1:9000` — run Mission Control there:
+
+```bash
+python -c "
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers['Content-Length']))
+        print('MISSION CONTROL:', body.decode()); self.send_response(200); self.end_headers()
+HTTPServer(('127.0.0.1', 9000), H).serve_forever()
+" &
+
+opal event actions create --json '{
+  "id": "notify_hq", "type": "http", "enabled": true, "method": "POST",
+  "url": "http://127.0.0.1:9000/notify", "body_mode": "template",
+  "body": {"ship": "{{data.ship}}", "status": "improbable"},
+  "timeout_seconds": 10}'
+
+opal event rules create --json '{
+  "id": "ship_spotted", "enabled": true, "topic": "radar.contact",
+  "conditions": [{"path": "data.ship", "operator": "exists", "value": true}],
+  "actions": ["notify_hq"]}'
+
+opal event publish radar.contact --data-json '{"ship": "Heart of Gold"}'
+# MISSION CONTROL: {"ship": "Heart of Gold", "status": "improbable"}
+```
+
+`{{data.ship}}` substituted into the body — templating without template
+injection (the allowlist is enforced after DNS, redirects refused).
+
+### 10. The Big Red Button — manual execution
+
+```bash
+opal event actions execute log_improbable \
+  --event-json '{"topic": "manual.test", "data": {"object": "towel"}}'
+opal event executions list --limit 5            # trigger=manual, auditable
+```
+
+For testing, re-runs, and pressing buttons labeled DO NOT PRESS.
+
+### 11. The 1 MiB Towel — payload bounds
+
+```bash
+python -c "print('{\"padding\": \"' + 'x'*1100000 + '\"}')" > /tmp/big.json
+opal event publish towel.oversized --data-json "$(cat /tmp/big.json)"
+# Error: HTTP 413 payload_too_large — the towel is simply too large
+opal event stats     # invalid_events untouched; it never got in the door
+```
+
+Same bound on the ZMQ wire and at the REST edge.
+
+### 12. Deep Thought's Memory Palace — settings as a service
+
+```bash
+opal event settings get                            # the whole map + ETag
+opal event settings get-key execution.queue_size   # one key + default + is_default
+opal event settings set-key execution.queue_size --value 200
+opal event settings reset-key execution.queue_size # back to schema default 100
+```
+
+Every mutation is ETag-guarded — racing writers get a 412 and a story.
+
+### 13. Vogsphere Customs — backup, validate, import
+
+```bash
+opal event backup export --output snapshot.json    # secrets never travel
+opal event backup validate --file snapshot.json    # exits 1 on failure — CI-friendly
+opal event backup import --file snapshot.json      # atomic apply, If-Match guarded
+```
+
+### 14. The Babel Fish — write a real Python plugin
+
+```bash
+cat > babel.py <<'EOF'
+def handle_event(event):
+    d = event.get("data") or {}
+    return {"translated": f"[in your own language]: {d.get('phrase', '')}"}
+EOF
+PYTHONPATH="$PWD" opal-event-svc   # restart with your plugin dir on the path
+```
+
+```bash
+opal event actions create --json '{
+  "id": "translate", "type": "python", "enabled": true,
+  "module": "babel", "function": "handle_event", "timeout_seconds": 5}'
+
+opal event actions execute translate   --event-json '{"topic": "fish.speak", "data": {"phrase": "so long, and thanks"}}'
+opal event executions get <id>    # stdout holds the JSON result
+```
+
+### 15. Time Traveler's Receipts — explicit IDs and timestamps
+
+```bash
+opal event publish flashback --id "42" --timestamp "1979-10-12T11:00:00Z"   --source "the-guide" --data-json '{"era": "BBC Radio 4"}'
+opal event events list --from "1979-01-01T00:00:00Z" --to "1980-01-01T00:00:00Z"
+```
+
+Canonical UTC-microsecond comparisons — offsets and fractional seconds all land
+correctly. Your event from 1979 stays findable.
+
+### 16. Slartibartfast's Quality Gate — the suffix wildcard
+
+`coastline.*` matches `coastline.norway` and deeper — NOT `coastlineX`, NOT bare
+`coastline`:
+
+```bash
+opal event rules create --json '{
+  "id": "fjord_inspector", "enabled": true, "topic": "coastline.*",
+  "conditions": [{"path": "data.crinkle", "operator": "gt", "value": 7}],
+  "actions": ["log_improbable"]}'
+
+opal event publish coastline.norway --data-json '{"crinkle": 9}'    # matches
+opal event publish coastlineX --data-json '{"crinkle": 9}'          # nope
+opal event publish coastline --data-json '{"crinkle": 9}'           # bare parent: no
+```
+
+Award yourself a fjord.
+
+### 17. The Pan Galactic Pub — publish straight onto the wire
+
+```bash
+python -c "
+import zmq, json, time
+p = zmq.Context().socket(zmq.PUB)
+p.connect('tcp://127.0.0.1:5555')   # producer side
+time.sleep(0.3)                     # slow-joiner: give the handshake a beat
+p.send_multipart([b'pub.gargle_blaster', json.dumps({'data': {'slices': 1}}).encode()])
+time.sleep(0.2)
+"
+opal event events list --topic pub.gargle_blaster   # stored like any other event
+```
+
+The observer validates independently — send `source` > 128 chars and watch
+`invalid_events` tick up in `stats` while the broker stays up.
+
+### 18. The Total Perspective Vortex — replay an event
+
+```bash
+opal event events list --topic alarm.vogon --limit 1   # find it
+opal event events get <event_id>                        # copy the data field
+opal event publish alarm.vogon --data-json '{"captain": "Prostetnic Vogon Jeltz", "replay": true}'
+```
+
+New envelope, new execution, same payload — history is a source, not a museum.
+
+### 19. Mostly Harmless — the drop graveyard
+
+Give an action an `input_schema` that rejects, then publish:
+
+```bash
+opal event actions create --json '{
+  "id": "picky", "type": "python", "enabled": true,
+  "module": "opal_event.plugins.example", "function": "handle_event",
+  "input_schema": {"type": "object", "required": ["sarcasm"]},
+  "timeout_seconds": 5}'
+
+opal event rules create --json '{
+  "id": "sarcasm_gate", "enabled": true, "topic": "tone.check",
+  "conditions": [], "actions": ["picky"]}'
+
+opal event publish tone.check --data-json '{"enthusiasm": "high"}'
+opal event executions list --status dropped
+# error_code: input_validation_failed — Marvin approves of the rejection
+```
+
+### 20. Share and Enjoy — the complete circuit in 60 seconds
+
+```bash
+opal event rules test improbability_gate   --event-json '{"topic": "dice.roll", "data": {"p_improbability": 5000}}'  # dry-run
+opal event publish dice.roll --data-json '{"p_improbability": 5000}'      # live fire
+opal event executions list                                                # audit
+opal event stats                                                          # counters
+opal event events list --topic dice.roll                                  # storage
+opal event backup export --output before_the_guide_vanishes.json          # insurance
+```
+
+Dry-run → publish → dispatch → audit → persist → export. Six commands, one
+mostly-harmless event bus. So long, and thanks for all the events.

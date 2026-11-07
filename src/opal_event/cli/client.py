@@ -63,7 +63,10 @@ class ApiCallError(Exception):
 
     def describe(self) -> str:
         body = self.body
-        if isinstance(body, dict) and "code" in body:
+        err = body.get("error") if isinstance(body, dict) else None
+        if isinstance(err, dict) and "code" in err:  # OpalError envelope
+            return f"HTTP {self.status} {err['code']}: {err.get('message', '')}"
+        if isinstance(body, dict) and "code" in body:  # legacy flat shape
             return f"HTTP {self.status} {body['code']}: {body.get('message', '')}"
         if isinstance(body, dict) and isinstance(body.get("detail"), list):
             parts = [f"{'.'.join(map(str, d.get('loc', [])))}: {d.get('msg')}" for d in body["detail"]]

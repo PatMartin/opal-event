@@ -432,10 +432,21 @@ class TestCanonicalMicroseconds:
         the columns — opening a pre-migration db used to die at executescript time."""
         path = tmp_path / "legacy.db"
         conn = sqlite3.connect(path)
-        conn.execute("CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, topic TEXT, source TEXT, timestamp TEXT, data TEXT)")
-        conn.execute("CREATE TABLE executions (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, event_id TEXT, rule_id TEXT, action_id TEXT, status TEXT, trigger_kind TEXT, created_at TEXT, started_at TEXT, finished_at TEXT, error_code TEXT, error_message TEXT, stdout TEXT, stderr TEXT, exit_code INTEGER, timed_out INTEGER)")
-        conn.execute("INSERT INTO events (id, topic, source, timestamp, data) VALUES ('e1', 't', 's', '2026-01-01T00:00:00Z', '{}')")
-        conn.commit(); conn.close()
+        conn.execute(
+            "CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, topic TEXT, "
+            "source TEXT, timestamp TEXT, data TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE executions (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, event_id TEXT, "
+            "rule_id TEXT, action_id TEXT, status TEXT, trigger_kind TEXT, created_at TEXT, "
+            "started_at TEXT, finished_at TEXT, error_code TEXT, error_message TEXT, stdout TEXT, "
+            "stderr TEXT, exit_code INTEGER, timed_out INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO events (id, topic, source, timestamp, data) VALUES ('e1', 't', 's', '2026-01-01T00:00:00Z', '{}')"
+        )
+        conn.commit()
+        conn.close()
 
         db = Database(path)  # must not raise OperationalError: no such column: ts_us
         idx = {r[1] for r in db._conn.execute("PRAGMA index_list(events)")}

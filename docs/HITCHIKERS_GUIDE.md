@@ -61,6 +61,10 @@ opal event actions create --json '{
 # Linux: "sh" / ["-c", "echo -e '\\a'"]
 ```
 
+> **Re-running examples?** `create` rejects a duplicate `id` with `409 conflict` —
+> either pick a new id, `opal event actions delete honk` first, or use
+> `actions update honk --json '{...}'` to change it in place. Same for rules.
+
 Now the rule:
 
 ```bash

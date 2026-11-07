@@ -1493,12 +1493,15 @@ cd spa && npx tsc -b
 | `post_api_v1_actions_id_execute`| `POST /api/v1/actions/{id}/execute`| `opal event actions execute`| Actions tab → Execute modal | None |
 | `get_api_v1_executions` | `GET /api/v1/executions/` | `opal event executions list`| Executions tab → History | None |
 | `get_api_v1_executions_id`| `GET /api/v1/executions/{id}`| `opal event executions get` | Executions tab → Details modal | None |
-| `get_api_v1_settings` | `GET /api/v1/settings/` | `opal event settings get` | Settings tab → View settings | ETag |
-| `patch_api_v1_settings`| `PATCH /api/v1/settings/` | `opal event settings update`| Settings tab → Save settings | `If-Match` |
-| `get_api_v1_backup_export`| `GET /api/v1/backup/export` | `opal event backup export` | Settings tab → Export button | None |
-| `post_api_v1_backup_validate`| `POST /api/v1/backup/validate`| `opal event backup validate`| Settings tab → Validate modal | None |
-| `post_api_v1_backup_import`| `POST /api/v1/backup/import` | `opal event backup import` | Settings tab → Import modal | `If-Match` |
-| `get_api_v1_health` | `GET /api/v1/health/` | `opal event health` | Health tab → Summary | None |
+| `opal_settings_get` | `GET /api/v1/settings/` | `opal event settings get` | Settings tab → View settings | ETag |
+| `opal_settings_patch`| `PATCH /api/v1/settings/` | `opal event settings update`| Settings tab → Save settings | `If-Match` |
+| `opal_setting_get` | `GET /api/v1/settings/{key}` | `opal event settings get-key KEY` | Settings tab → Key editor | None |
+| `opal_setting_put` | `PUT /api/v1/settings/{key}` | `opal event settings set-key KEY --value JSON` | Settings tab → Key editor | `If-Match` |
+| `opal_setting_delete`| `DELETE /api/v1/settings/{key}` | `opal event settings reset-key KEY` | Settings tab → Key editor | `If-Match` |
+| `opal_backup_export`| `GET /api/v1/backup/export` | `opal event backup export` | Settings tab → Export button | None |
+| `opal_backup_validate_post`| `POST /api/v1/backup/validate`| `opal event backup validate`| Settings tab → Validate modal | None |
+| `opal_backup_import`| `POST /api/v1/backup/import` | `opal event backup import` | Settings tab → Import modal | `If-Match` |
+| `opal_health_get` | `GET /api/v1/health/` | `opal event health` | Health tab → Summary | None |
 | `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event stats` | Health tab → Metrics counters | None |
-| `get_api_v1_health_live` | `GET /api/v1/health/live` | `opal event health --live` | Health tab → Liveness badge | None |
-| `get_api_v1_health_ready`| `GET /api/v1/health/ready` | `opal event health --ready` | Health tab → Readiness badge | None |
+| `opal_health_live_get` | `GET /api/v1/health/live` | `opal event health --live` | Health tab → Liveness badge | None |
+| `opal_health_ready_get`| `GET /api/v1/health/ready` | `opal event health --ready` | Health tab → Readiness badge | None |

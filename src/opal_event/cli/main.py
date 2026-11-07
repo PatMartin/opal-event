@@ -135,7 +135,7 @@ def _event_input(event_json: str) -> dict[str, Any]:
 
 
 def _current_revision(ctx: typer.Context) -> str:
-    resp = _call(ctx, "get_api_v1_settings")
+    resp = _call(ctx, "opal_settings_get")
     return resp.headers["etag"]
 
 
@@ -229,7 +229,7 @@ def health(
     """Get service health, or run the liveness (--live) or readiness (--ready) probe."""
     if live and ready:
         raise typer.BadParameter("--live and --ready are mutually exclusive")
-    op = "get_api_v1_health_live" if live else "get_api_v1_health_ready" if ready else "get_api_v1_health"
+    op = "opal_health_live_get" if live else "opal_health_ready_get" if ready else "opal_health_get"
     _emit(ctx, _call(ctx, op).json())
 
 
@@ -409,7 +409,7 @@ def executions_get(ctx: typer.Context, execution_id: str = typer.Argument(...)) 
 @settings_app.command("get")
 def settings_get(ctx: typer.Context) -> None:
     """Get portable settings."""
-    _emit(ctx, _call(ctx, "get_api_v1_settings").json())
+    _emit(ctx, _call(ctx, "opal_settings_get").json())
 
 
 @settings_app.command("update")
@@ -422,7 +422,44 @@ def settings_update(
     """Update portable settings (execution/persistence subset, max_event_bytes)."""
     body = _read_payload(json_str, file)
     revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "patch_api_v1_settings", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "opal_settings_patch", json=body, headers={"If-Match": revision}).json())
+
+
+@settings_app.command("get-key")
+def settings_get_key(ctx: typer.Context, key: str = typer.Argument(..., help="Dotted portable setting key")) -> None:
+    """Get a single portable setting (e.g. execution.queue_size)."""
+    _emit(ctx, _call(ctx, "opal_setting_get", path_params={"key": key}).json())
+
+
+@settings_app.command("set-key")
+def settings_set_key(
+    ctx: typer.Context,
+    key: str = typer.Argument(..., help="Dotted portable setting key"),
+    value: str = typer.Option(..., "--value", help="JSON value to set"),
+    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
+) -> None:
+    """Set a single portable setting to a JSON value."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        typer.echo("Error: --value must be valid JSON", err=True)
+        raise typer.Exit(1) from None
+    revision = if_match or _current_revision(ctx)
+    _emit(
+        ctx,
+        _call(ctx, "opal_setting_put", path_params={"key": key}, json={"value": parsed}, headers={"If-Match": revision}).json(),
+    )
+
+
+@settings_app.command("reset-key")
+def settings_reset_key(
+    ctx: typer.Context,
+    key: str = typer.Argument(..., help="Dotted portable setting key"),
+    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
+) -> None:
+    """Reset a single portable setting to its schema default."""
+    revision = if_match or _current_revision(ctx)
+    _emit(ctx, _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision}).json())
 
 
 # -- `opal event backup` -------------------------------------------------------------------------
@@ -433,7 +470,7 @@ def backup_export(
     ctx: typer.Context, output: str = typer.Option(None, "--output", help="Write to a file instead of stdout")
 ) -> None:
     """Export portable configuration (settings, actions, rules)."""
-    data = _call(ctx, "get_api_v1_backup_export").json()
+    data = _call(ctx, "opal_backup_export").json()
     if output:
         Path(output).write_text(json.dumps(data, indent=2), encoding="utf-8")
         typer.echo(f"exported configuration to {output}", err=True)
@@ -449,7 +486,7 @@ def backup_validate(
 ) -> None:
     """Validate a portable backup without side effects."""
     body = _read_payload(json_str, file)
-    data = _call(ctx, "post_api_v1_backup_validate", json=body).json()
+    data = _call(ctx, "opal_backup_validate_post", json=body).json()
     _emit(ctx, data)
     if not data["valid"]:
         raise typer.Exit(1)
@@ -465,7 +502,7 @@ def backup_import(
     """Import a portable backup atomically (replaces portable rules/actions/settings)."""
     body = _read_payload(json_str, file)
     revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "post_api_v1_backup_import", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "opal_backup_import", json=body, headers={"If-Match": revision}).json())
 
 
 # -- `opal` root -----------------------------------------------------------------------------

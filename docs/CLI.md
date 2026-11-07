@@ -1106,6 +1106,18 @@ opal event settings update --json '{
 }'
 ```
 
+### `settings get-key` / `set-key` / `reset-key`
+
+Read, set, or reset a single portable setting by its dotted key (the same key space
+as the Portable Settings Reference below). `set-key` takes a JSON `--value`;
+`set-key` and `reset-key` auto-fetch the current revision unless `--if-match` is given.
+
+```bash
+opal event settings get-key execution.queue_size
+opal event settings set-key execution.queue_size --value 150
+opal event settings reset-key execution.queue_size
+```
+
 #### Portable Settings Reference
 
 | Field | Range / Values | Description |

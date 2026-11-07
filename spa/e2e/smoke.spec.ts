@@ -27,7 +27,11 @@ test("health page shows live status", async ({ page }) => {
   await expect(page.locator("body")).toContainText(/ok|ready|healthy/i, { timeout: 5000 });
 });
 
-test("events page lists the published event", async ({ page }) => {
+test("events page lists a published event", async ({ page }) => {
+  // self-seed — don't depend on pre-existing rows (other specs may clear events)
+  await page.request.post("http://127.0.0.1:8080/api/v1/events/", {
+    data: { topic: "demo.cli", data: { via: "playwright" } },
+  });
   await page.goto("/");
   await page.getByRole("button", { name: "Events", exact: true }).or(page.getByRole("link", { name: "Events", exact: true })).click();
   await expect(page.locator("body")).toContainText("demo.cli", { timeout: 5000 });

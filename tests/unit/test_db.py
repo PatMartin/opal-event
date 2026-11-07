@@ -426,3 +426,19 @@ class TestCanonicalMicroseconds:
         assert any("idx_events_ts_us" in r["detail"] for r in plan)
         plan2 = db._conn.execute("EXPLAIN QUERY PLAN DELETE FROM events WHERE ts_us < 0").fetchall()
         assert any("idx_events_ts_us" in r["detail"] for r in plan2)
+
+    def test_index_created_when_columns_migrate(self, tmp_path):
+        """Regression: SCHEMA must not create ts_us/created_us indexes before _migrate can add
+        the columns — opening a pre-migration db used to die at executescript time."""
+        path = tmp_path / "legacy.db"
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, topic TEXT, source TEXT, timestamp TEXT, data TEXT)")
+        conn.execute("CREATE TABLE executions (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, event_id TEXT, rule_id TEXT, action_id TEXT, status TEXT, trigger_kind TEXT, created_at TEXT, started_at TEXT, finished_at TEXT, error_code TEXT, error_message TEXT, stdout TEXT, stderr TEXT, exit_code INTEGER, timed_out INTEGER)")
+        conn.execute("INSERT INTO events (id, topic, source, timestamp, data) VALUES ('e1', 't', 's', '2026-01-01T00:00:00Z', '{}')")
+        conn.commit(); conn.close()
+
+        db = Database(path)  # must not raise OperationalError: no such column: ts_us
+        idx = {r[1] for r in db._conn.execute("PRAGMA index_list(events)")}
+        assert "idx_events_ts_us" in idx
+        assert db._conn.execute("SELECT ts_us FROM events").fetchone()[0] is not None
+        db.close()

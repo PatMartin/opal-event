@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_topic ON events(topic);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
-CREATE INDEX IF NOT EXISTS idx_events_ts_us ON events(ts_us);
 
 CREATE TABLE IF NOT EXISTS executions (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,7 +57,6 @@ CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
 CREATE INDEX IF NOT EXISTS idx_executions_rule ON executions(rule_id);
 CREATE INDEX IF NOT EXISTS idx_executions_action ON executions(action_id);
 CREATE INDEX IF NOT EXISTS idx_executions_event ON executions(event_id);
-CREATE INDEX IF NOT EXISTS idx_executions_created_us ON executions(created_us);
 """
 
 
@@ -109,7 +107,9 @@ class Database:
             cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if col not in cols:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
-                self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table}({col})")
+            # Unconditional: the SCHEMA script cannot create these indexes for legacy
+            # tables (no such column at executescript time), and fresh tables need them too.
+            self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table}({col})")
             skipped = 0
             for row in self._conn.execute(f"SELECT seq, {text_col} FROM {table} WHERE {col} IS NULL").fetchall():
                 us = _ts_to_us(row[text_col])

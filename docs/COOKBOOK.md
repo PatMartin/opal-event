@@ -73,9 +73,9 @@ Events persist to SQLite — you get a write-ahead log for free.
 ```bash
 opal event publish journal.entry --data-json '{"day": 1, "note": "started"}'
 opal event publish journal.entry --data-json '{"day": 2, "note": "progress"}'
-opal event events list --limit 10
+opal event list --limit 10
 opal event topics                  # journal.entry shows up
-opal event events get <event_id>   # full envelope with metadata
+opal event get <event_id>   # full envelope with metadata
 ```
 
 ---
@@ -126,7 +126,7 @@ Best-effort means observe-and-store, not fire-and-forget.
 opal event stats                              # note observed_events / matched_events
 opal event publish unhandled.topic --data-json '{}'
 opal event stats                              # observed +1, matched unchanged
-opal event events list | head                 # still persisted to history
+opal event list | head                 # still persisted to history
 ```
 
 ---
@@ -281,7 +281,7 @@ RFC3339 with offsets and fractional seconds:
 ```bash
 opal event publish flashback --id "42" --timestamp "2020-01-01T11:00:00Z" \
   --source "backfill" --data-json '{"batch": "january"}'
-opal event events list --from "2020-01-01T00:00:00Z" --to "2020-12-31T23:59:59Z"
+opal event list --from "2020-01-01T00:00:00Z" --to "2020-12-31T23:59:59Z"
 ```
 
 Canonical UTC-microsecond comparisons underneath — every format lands right.
@@ -320,7 +320,7 @@ time.sleep(0.3)                     # slow-joiner: let the handshake land
 p.send_multipart([b'demo.direct', json.dumps({'data': {'route': 'wire'}}).encode()])
 time.sleep(0.2)
 "
-opal event events list --topic demo.direct   # persisted like any other event
+opal event list --topic demo.direct   # persisted like any other event
 ```
 
 The internal observer validates independently — publish `source` > 128 chars
@@ -333,8 +333,8 @@ and watch `invalid_events` climb in `stats` while the broker keeps running.
 History is a source, not a museum:
 
 ```bash
-opal event events list --topic alarm.test --limit 1   # find the event
-opal event events get <event_id>                       # copy its data field
+opal event list --topic alarm.test --limit 1   # find the event
+opal event get <event_id>                       # copy its data field
 opal event publish alarm.test --data-json '{"severity": "high", "replay": true}'
 ```
 
@@ -374,7 +374,7 @@ opal event rules test high_roller \
 opal event publish dice.roll --data-json '{"score": 5000}'              # live fire
 opal event executions list                                                # audit
 opal event stats                                                          # counters
-opal event events list --topic dice.roll                                  # storage
+opal event list --topic dice.roll                                  # storage
 opal event backup export --output checkpoint.json                         # insurance
 ```
 

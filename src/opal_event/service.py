@@ -9,6 +9,8 @@ import logging
 import threading
 from typing import Any
 
+import jsonschema
+
 from opal_event.config import ConfigStore
 from opal_event.db import Database
 from opal_event.executor import Executor
@@ -106,6 +108,14 @@ class EventService:
                 if action is None or not action.enabled:
                     logger.warning("rule %s references missing/disabled action %s", rule.id, action_id)
                     continue
+                if action.input_schema:
+                    try:
+                        jsonschema.validate(event.get("data"), action.input_schema)
+                    except jsonschema.ValidationError as exc:
+                        # Contract (v1.5.0): invalid input for the matched action -> a dropped
+                        # execution record with error_code=input_validation_failed, no retry.
+                        self._drop_input_schema(event, rule, action, exc)
+                        continue
                 self.executor.submit(
                     action,
                     event,
@@ -122,6 +132,34 @@ class EventService:
         mode = settings.persistence.event_mode
         if mode == "all" or (mode == "matched" and matched_any):
             self.db.insert_event(event)
+
+    def _drop_input_schema(self, event: dict, rule, action, exc) -> None:
+        """Persist a dropped execution for a rule-dispatched action whose input_schema rejected
+        the event data (contract v1.5.0 ``input_validation_failed``)."""
+        import uuid
+        from hashlib import sha256
+
+        from opal_event.executor import ExecutionRecord, _now, _record_to_dict
+
+        execution_id = str(uuid.uuid4())
+        record = ExecutionRecord(
+            id=execution_id,
+            event_id=event.get("id"),
+            rule_id=rule.id,
+            action_id=action.id,
+            status="queued",
+            trigger="rule",
+            created_at=_now(),
+            action_revision=sha256(action.model_dump_json().encode("utf-8")).hexdigest()[:16],
+        )
+        self.db.insert_execution(_record_to_dict(record))
+        self.db.update_execution(
+            execution_id,
+            status="dropped",
+            error_code="input_validation_failed",
+            error_message=f"event.data does not satisfy action '{action.id}' input_schema: {exc.message}",
+        )
+        self.metrics.incr("executions_dropped")
 
     # -- publish entrypoint used by REST POST /api/v1/events/ --------------------------------------
 

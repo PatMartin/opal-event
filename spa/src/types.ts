@@ -169,3 +169,10 @@ export interface HealthProbe {
   status: "ok" | "degraded" | "unavailable";
   details?: Record<string, string> | null;
 }
+
+export interface SettingRead {
+  key: string;
+  value: unknown;
+  default?: unknown;
+  is_default: boolean;
+}

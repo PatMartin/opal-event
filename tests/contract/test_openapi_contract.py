@@ -163,10 +163,25 @@ class TestV141SelfDescribingActions:
         assert new["openapi"].startswith("3.1")
         assert new["info"]["version"] == "1.4.1"
 
-        def ops(spec: dict) -> set:
-            return {(m, p) for p, i in spec["paths"].items() for m in i if m in {"get", "post", "put", "patch", "delete"}}
+        def ops(spec: dict, resolve_kernel: bool = False) -> set:
+            kernel = (
+                yaml.safe_load((CONTRACT_PATH.parent / "shared" / "opal_kernel.yaml").read_text(encoding="utf-8"))
+                if resolve_kernel
+                else {}
+            )
+            path_items = kernel.get("components", {}).get("pathItems", {})
+            out = set()
+            for p, i in spec["paths"].items():
+                if "$ref" in i and resolve_kernel:
+                    i = path_items[i["$ref"].rsplit("/", 1)[1]]
+                for m in i:
+                    if m in {"get", "post", "put", "patch", "delete"}:
+                        out.add((m, p))
+            return out
 
-        assert ops(new) == ops(old), "v1.4.1 route drift vs 1.4.0"
+        # v1.5.0 declares shared endpoints via kernel pathItem refs and adds /settings/{key};
+        # every route the older contract declared must still exist.
+        assert ops(new) <= ops(old, resolve_kernel=True), "v1.4.1 routes missing from v1.5.0"
 
     def test_all_action_types_have_four_optional_fields(self) -> None:
         spec = self._spec()

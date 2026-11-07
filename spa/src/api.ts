@@ -207,6 +207,16 @@ export const api = {
     request<import("./types").PortableSettings>(opMethod("opal_settings_patch"), opPath("opal_settings_patch"), patch, {
       "If-Match": ifMatch,
     }),
+  getSetting: (key: string) =>
+    request<import("./types").SettingRead>(opMethod("opal_setting_get"), opPath("opal_setting_get", { key })),
+  putSetting: (key: string, value: unknown, ifMatch: string) =>
+    request<import("./types").SettingRead>(opMethod("opal_setting_put"), opPath("opal_setting_put", { key }), { value }, {
+      "If-Match": ifMatch,
+    }),
+  deleteSetting: (key: string, ifMatch: string) =>
+    request<import("./types").SettingRead>(opMethod("opal_setting_delete"), opPath("opal_setting_delete", { key }), undefined, {
+      "If-Match": ifMatch,
+    }),
 
   exportBackup: () => request<import("./types").ConfigBackup>(opMethod("opal_backup_export"), opPath("opal_backup_export")),
   validateBackup: (backup: unknown) =>

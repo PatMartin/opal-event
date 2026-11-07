@@ -3,6 +3,7 @@ implemented by the REST app and exposed by the CLI client, with no drift in eith
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -15,6 +16,7 @@ CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event_v1.5.0.yaml"
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
 
+@functools.lru_cache(maxsize=1)
 def load_contract_operations() -> dict[str, tuple[str, str]]:
     """operationId -> (method, path) for the whole contract. opal_event_v1.5.0.yaml declares
     shared endpoints as path-level ``$ref`` into ``shared/opal_kernel.yaml``'s

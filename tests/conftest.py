@@ -49,7 +49,7 @@ def base_config(tmp_path: Path, **overrides) -> dict:
         "execution": {
             "max_workers": 2,
             "queue_size": 10,
-            "default_timeout_seconds": 5,
+            "default_timeout_seconds": 2,
             "overflow": "drop_and_log",
             "retry_enabled": False,
             "max_output_bytes": 65536,
@@ -69,7 +69,7 @@ def base_config(tmp_path: Path, **overrides) -> dict:
                 "executable": "/bin/echo",
                 "args": ["{{data.camera}}"],
                 "stdin": "none",
-                "timeout_seconds": 5,
+                "timeout_seconds": 2,
             },
             {
                 "id": "python_action",
@@ -77,7 +77,7 @@ def base_config(tmp_path: Path, **overrides) -> dict:
                 "enabled": True,
                 "module": "opal_event.plugins.example",
                 "function": "handle_event",
-                "timeout_seconds": 5,
+                "timeout_seconds": 2,
             },
         ],
         "rules": [

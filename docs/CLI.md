@@ -1494,8 +1494,9 @@ done
 
 ## 17. Appendix: CLI ↔ REST mapping
 
-All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 29 OpenAPI
-operations declared in `opal_event.1.4.0.yaml` are mapped below:
+All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 32 OpenAPI
+operations declared in `opal_event_v1.5.0.yaml` (including `shared/opal_kernel.yaml`) are
+mapped below:
 
 | CLI command | HTTP method | API endpoint | If-Match / ETag |
 |---|---|---|---|
@@ -1521,6 +1522,9 @@ operations declared in `opal_event.1.4.0.yaml` are mapped below:
 | `opal event executions get` | `GET` | `/api/v1/executions/{execution_id}` | None |
 | `opal event settings get` | `GET` | `/api/v1/settings/` | Response carries strong `ETag` |
 | `opal event settings update` | `PATCH` | `/api/v1/settings/` | Required (`If-Match`; auto-fetched) |
+| `opal event settings get-key` | `GET` | `/api/v1/settings/{key}` | None |
+| `opal event settings set-key` | `PUT` | `/api/v1/settings/{key}` | Required (`If-Match`; auto-fetched) |
+| `opal event settings reset-key` | `DELETE` | `/api/v1/settings/{key}` | Required (`If-Match`; auto-fetched) |
 | `opal event backup export` | `GET` | `/api/v1/backup/export` | None |
 | `opal event backup validate` | `POST` | `/api/v1/backup/validate` | None |
 | `opal event backup import` | `POST` | `/api/v1/backup/import` | Required (`If-Match`; auto-fetched) |

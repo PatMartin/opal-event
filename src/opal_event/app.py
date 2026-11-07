@@ -111,7 +111,7 @@ def create_app(config_path: str) -> FastAPI:
 
     app = FastAPI(
         title="Opal Event API",
-        version="1.4.0",
+        version="1.5.0",
         lifespan=lifespan,
     )
     app.add_middleware(OpalContextMiddleware)

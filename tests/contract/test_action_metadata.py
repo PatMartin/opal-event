@@ -105,9 +105,7 @@ def test_execute_validates_declared_schema(app_client: TestClient) -> None:
     assert app_client.post("/api/v1/actions/", json=_shell_action()).status_code in (200, 201)
     missing = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
     assert missing.status_code == 422, missing.text
-    wrong_type = app_client.post(
-        "/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": 42}}}
-    )
+    wrong_type = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": 42}}})
     assert wrong_type.status_code == 422
     ok = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}})
     assert ok.status_code == 202
@@ -159,13 +157,9 @@ def test_patch_requires_and_verifies_etag(app_client: TestClient) -> None:
     etag = app_client.get("/api/v1/actions/schema_action").headers.get("etag")
     missing = app_client.patch("/api/v1/actions/schema_action", json={"description": "x"})
     assert missing.status_code == 428
-    stale = app_client.patch(
-        "/api/v1/actions/schema_action", json={"description": "x"}, headers={"If-Match": '"bogus-revision"'}
-    )
+    stale = app_client.patch("/api/v1/actions/schema_action", json={"description": "x"}, headers={"If-Match": '"bogus-revision"'})
     assert stale.status_code == 412
-    ok = app_client.patch(
-        "/api/v1/actions/schema_action", json={"description": "x"}, headers={"If-Match": etag}
-    )
+    ok = app_client.patch("/api/v1/actions/schema_action", json={"description": "x"}, headers={"If-Match": etag})
     assert ok.status_code == 200
 
 
@@ -220,20 +214,27 @@ def test_execute_schema_enforced_for_all_types(app_client: TestClient, atype) ->
     action = _shell_action()
     if atype == "http":
         action = {
-            "id": "schema_action", "type": "http", "enabled": True,
-            "method": "POST", "url": "http://127.0.0.1:9/x", "body_mode": "none",
-            "input_schema": _SCHEMA, **_META,
+            "id": "schema_action",
+            "type": "http",
+            "enabled": True,
+            "method": "POST",
+            "url": "http://127.0.0.1:9/x",
+            "body_mode": "none",
+            "input_schema": _SCHEMA,
+            **_META,
         }
     elif atype == "python":
         action = {
-            "id": "schema_action", "type": "python", "enabled": True,
-            "module": "opal_plugins.x", "function": "run",
-            "input_schema": _SCHEMA, **_META,
+            "id": "schema_action",
+            "type": "python",
+            "enabled": True,
+            "module": "opal_plugins.x",
+            "function": "run",
+            "input_schema": _SCHEMA,
+            **_META,
         }
     assert app_client.post("/api/v1/actions/", json=action).status_code in (200, 201)
     bad = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
     assert bad.status_code == 422, bad.text
-    good = app_client.post(
-        "/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}}
-    )
+    good = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}})
     assert good.status_code == 202, good.text

@@ -191,28 +191,28 @@ export const api = {
       opPath("get_api_v1_executions_id", { execution_id: executionId }),
     ),
 
-  getHealth: () => request<import("./types").Health>(opMethod("get_api_v1_health"), opPath("get_api_v1_health")),
-  getHealthLive: () => request<import("./types").HealthProbe>(opMethod("get_api_v1_health_live"), opPath("get_api_v1_health_live")),
+  getHealth: () => request<import("./types").Health>(opMethod("opal_health_get"), opPath("opal_health_get")),
+  getHealthLive: () => request<import("./types").HealthProbe>(opMethod("opal_health_live_get"), opPath("opal_health_live_get")),
   getHealthReady: () =>
-    request<import("./types").HealthProbe>(opMethod("get_api_v1_health_ready"), opPath("get_api_v1_health_ready")),
+    request<import("./types").HealthProbe>(opMethod("opal_health_ready_get"), opPath("opal_health_ready_get")),
   getStats: () => request<import("./types").Stats>(opMethod("get_api_v1_stats"), opPath("get_api_v1_stats")),
 
   getSettings: async (): Promise<{ settings: import("./types").PortableSettings; etag: string }> => {
-    const resp = await fetch(opPath("get_api_v1_settings"), { headers: { ...contextHeaders(), ...authHeaders() } });
+    const resp = await fetch(opPath("opal_settings_get"), { headers: { ...contextHeaders(), ...authHeaders() } });
     const data = await resp.json();
     if (!resp.ok) throw new ApiError(resp.status, data);
     return { settings: data, etag: resp.headers.get("etag") || "" };
   },
   patchSettings: (patch: Record<string, unknown>, ifMatch: string) =>
-    request<import("./types").PortableSettings>(opMethod("patch_api_v1_settings"), opPath("patch_api_v1_settings"), patch, {
+    request<import("./types").PortableSettings>(opMethod("opal_settings_patch"), opPath("opal_settings_patch"), patch, {
       "If-Match": ifMatch,
     }),
 
-  exportBackup: () => request<import("./types").ConfigBackup>(opMethod("get_api_v1_backup_export"), opPath("get_api_v1_backup_export")),
+  exportBackup: () => request<import("./types").ConfigBackup>(opMethod("opal_backup_export"), opPath("opal_backup_export")),
   validateBackup: (backup: unknown) =>
-    request<import("./types").ValidationReport>(opMethod("post_api_v1_backup_validate"), opPath("post_api_v1_backup_validate"), backup),
+    request<import("./types").ValidationReport>(opMethod("opal_backup_validate_post"), opPath("opal_backup_validate_post"), backup),
   importBackup: (backup: unknown, ifMatch: string) =>
-    request<import("./types").BackupImportResult>(opMethod("post_api_v1_backup_import"), opPath("post_api_v1_backup_import"), { backup }, {
+    request<import("./types").BackupImportResult>(opMethod("opal_backup_import"), opPath("opal_backup_import"), { backup }, {
       "If-Match": ifMatch,
     }),
 } satisfies Record<ClientKey, unknown>;

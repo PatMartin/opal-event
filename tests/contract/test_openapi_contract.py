@@ -11,14 +11,24 @@ import yaml
 
 from opal_event.cli.client import OPERATIONS as CLI_OPERATIONS
 
-CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.4.0.yaml"
+CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event_v1.5.0.yaml"
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
 
 def load_contract_operations() -> dict[str, tuple[str, str]]:
+    """operationId -> (method, path) for the whole contract. opal_event_v1.5.0.yaml declares
+    shared endpoints as path-level ``$ref`` into ``shared/opal_kernel.yaml``'s
+    ``components/pathItems`` — resolve those references so shared ops get the same parity
+    checks as service-local ones."""
     spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    kernel = yaml.safe_load((CONTRACT_PATH.parent / "shared" / "opal_kernel.yaml").read_text(encoding="utf-8"))
+    path_items = kernel.get("components", {}).get("pathItems", {})
     operations: dict[str, tuple[str, str]] = {}
     for path, methods in spec["paths"].items():
+        if "$ref" in methods:  # pathItem reference into the kernel
+            ref = methods["$ref"]
+            assert ref.startswith("./shared/opal_kernel.yaml#/components/pathItems/"), f"unexpected ref {ref}"
+            methods = path_items[ref.rsplit("/", 1)[1]]
         for method, operation in methods.items():
             if method not in ("get", "post", "put", "patch", "delete"):
                 continue
@@ -152,6 +162,7 @@ class TestV141SelfDescribingActions:
         old = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
         assert new["openapi"].startswith("3.1")
         assert new["info"]["version"] == "1.4.1"
+
         def ops(spec: dict) -> set:
             return {(m, p) for p, i in spec["paths"].items() for m in i if m in {"get", "post", "put", "patch", "delete"}}
 

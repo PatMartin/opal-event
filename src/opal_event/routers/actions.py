@@ -48,9 +48,7 @@ ACTIONS_MAX_COUNT = 10_000
 def list_actions(request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     if is_execute_scope(request):
-        return JSONResponse(
-            {"items": [discovery_projection(a) for a in config.settings.actions], "next_cursor": None}
-        )
+        return JSONResponse({"items": [discovery_projection(a) for a in config.settings.actions], "next_cursor": None})
     return ListActions(items=config.settings.actions, next_cursor=None)
 
 

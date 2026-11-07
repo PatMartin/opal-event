@@ -134,8 +134,15 @@ class TestDiscoveryProjection:
             # admin registers one of each action type with rich detail
             for action in (
                 {"id": "sh", "type": "shell", "enabled": True, "mode": "exec", "executable": "/opt/x"},
-                {"id": "ht", "type": "http", "enabled": True, "method": "POST",
-                 "url": "https://internal.local/x", "body_mode": "none", "headers": {"x-api-key": "s"}},
+                {
+                    "id": "ht",
+                    "type": "http",
+                    "enabled": True,
+                    "method": "POST",
+                    "url": "https://internal.local/x",
+                    "body_mode": "none",
+                    "headers": {"x-api-key": "s"},
+                },
                 {"id": "py", "type": "python", "enabled": True, "module": "opal_plugins.m", "function": "run"},
             ):
                 action["description"] = "d"
@@ -160,8 +167,9 @@ class TestExecuteScopeEdgeCases:
     def test_disabled_action_execute_rejected(self, scoped_client, tmp_path, monkeypatch) -> None:
         with scoped_client as c:
             assert c.post(
-                "/api/v1/actions/", json={"id": "off", "type": "shell", "enabled": False,
-                                          "mode": "exec", "executable": "/x"}, headers=_ADMIN,
+                "/api/v1/actions/",
+                json={"id": "off", "type": "shell", "enabled": False, "mode": "exec", "executable": "/x"},
+                headers=_ADMIN,
             ).status_code in (200, 201)
             resp = c.post("/api/v1/actions/off/execute", json={"event": {"topic": "t", "data": {}}}, headers=_EXEC)
             assert resp.status_code == 422  # allowed route, denied by action state

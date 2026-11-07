@@ -32,15 +32,15 @@ OPERATIONS: dict[str, tuple[str, str]] = {
     "post_api_v1_actions_id_execute": ("POST", "/api/v1/actions/{action_id}/execute"),
     "get_api_v1_executions": ("GET", "/api/v1/executions/"),
     "get_api_v1_executions_id": ("GET", "/api/v1/executions/{execution_id}"),
-    "get_api_v1_health": ("GET", "/api/v1/health/"),
+    "opal_health_get": ("GET", "/api/v1/health/"),
     "get_api_v1_stats": ("GET", "/api/v1/stats/"),
-    "get_api_v1_settings": ("GET", "/api/v1/settings/"),
-    "patch_api_v1_settings": ("PATCH", "/api/v1/settings/"),
-    "get_api_v1_health_live": ("GET", "/api/v1/health/live"),
-    "get_api_v1_health_ready": ("GET", "/api/v1/health/ready"),
-    "get_api_v1_backup_export": ("GET", "/api/v1/backup/export"),
-    "post_api_v1_backup_validate": ("POST", "/api/v1/backup/validate"),
-    "post_api_v1_backup_import": ("POST", "/api/v1/backup/import"),
+    "opal_settings_get": ("GET", "/api/v1/settings/"),
+    "opal_settings_patch": ("PATCH", "/api/v1/settings/"),
+    "opal_health_live_get": ("GET", "/api/v1/health/live"),
+    "opal_health_ready_get": ("GET", "/api/v1/health/ready"),
+    "opal_backup_export": ("GET", "/api/v1/backup/export"),
+    "opal_backup_validate_post": ("POST", "/api/v1/backup/validate"),
+    "opal_backup_import": ("POST", "/api/v1/backup/import"),
 }
 
 

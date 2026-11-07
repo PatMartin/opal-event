@@ -183,6 +183,7 @@ def _action_metadata_fields() -> dict:
         "suggested_prompts": (_SUGGESTED_FIELD | None, None),
     }
 
+
 ShellMode = Literal["exec", "sh", "bash", "cmd", "powershell"]
 _SCRIPT_MODES = {"sh", "bash", "cmd", "powershell"}
 
@@ -398,6 +399,23 @@ class Health(Strict):
     broker_running: bool
     database_ready: bool
     pending_restart: bool
+
+
+class SettingRead(Strict):
+    """One portable setting key/value pair (kernel ``SettingRead``): ``key`` is a dotted path in
+    the portable settings map, ``value`` the live value, ``default`` the schema default, and
+    ``is_default`` whether the live value equals that default."""
+
+    key: str
+    value: Any = None
+    default: Any = None
+    is_default: bool = True
+
+
+class SettingUpdate(Strict):
+    """Replacement value for a single setting key (kernel ``SettingUpdate``)."""
+
+    value: Any
 
 
 class OpalHealthProbe(Strict):

@@ -11,7 +11,6 @@ from opal_event.executor import Executor
 from opal_event.metrics import Metrics
 from opal_event.models import ExecutionSettings, SecuritySettings, ShellAction
 
-
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="requires POSIX executables (/bin/echo, /bin/sleep, /bin/true)"
 )

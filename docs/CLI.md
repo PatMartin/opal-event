@@ -286,6 +286,12 @@ opal event --json rules list
 
 ## 4. Command tree
 
+`opal event tree` prints this same tree, generated live from the Typer app — it always
+reflects the installed version. Positional arguments render as `<name>`, required options
+as `--name <type>`, optional options as `[ --name <type> =default ]`.
+
+
+
 ```text
 opal
 └── event (alias: opal-event)

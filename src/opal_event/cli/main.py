@@ -591,6 +591,12 @@ def personas_validate(ctx: typer.Context, persona_id: str = typer.Argument(...))
         raise typer.Exit(1)
 
 
+@event_app.command("tree")
+def command_tree() -> None:
+    """Print this CLI's command/argument tree, generated from the live Typer app."""
+    typer.echo(_render_command_tree())
+
+
 # -- `opal` root -----------------------------------------------------------------------------
 
 app = typer.Typer(help="OPAL command line.", no_args_is_help=True, pretty_exceptions_enable=False)
@@ -609,6 +615,59 @@ try:
     app.add_typer(listen_app, name="listen")
 except Exception:  # noqa: BLE001
     pass
+
+
+def _param_label(param) -> str | None:
+    """Render one click param. Positionals as ``<name>``; required options ``--name <type>``;
+    optional options ``[ --name <type> =default ]``. Hidden and --help params are skipped."""
+
+    if getattr(param, "hidden", False):
+        return None
+    opts = getattr(param, "opts", [])
+    if not any(o.startswith("-") for o in opts):  # positional argument (TyperArgument)
+        return f"<{param.name}>" if param.required else f"[ <{param.name}> ]"
+    opts = [o for o in opts if o.startswith("--")] or list(opts)
+    if "--help" in opts or "--install-completion" in opts or "--show-completion" in opts:
+        return None
+    name = max(opts, key=len)
+    if param.secondary_opts:
+        name += "/" + param.secondary_opts[0]
+    is_flag = getattr(param, "is_flag", False)
+    core = name if is_flag else f"{name} <{param.metavar or param.type.name}>"
+    if param.required:
+        return core
+    default = param.default
+    suffix = "" if is_flag or default in (None, ()) or callable(default) else f" ={default}"
+    return f"[ {core}{suffix} ]"
+
+
+def _render_command_tree() -> str:
+    """Walk the click tree under ``event_app``: each node's children are its params first,
+    then its subcommands, drawn with single-line ASCII guides."""
+    import click
+    from typer.main import get_command
+
+    lines = ["opal event"]
+
+    def walk(cmd: click.Command, prefix: str) -> None:
+        children: list[tuple[str, click.Command | None]] = []
+        for param in getattr(cmd, "params", []):
+            label = _param_label(param)
+            if label is not None:
+                children.append((label, None))
+        subcommands = getattr(cmd, "commands", None)
+        if subcommands:
+            for sub in subcommands.values():
+                if not getattr(sub, "hidden", False):
+                    children.append((sub.name, sub))
+        for index, (label, sub) in enumerate(children):
+            last = index == len(children) - 1
+            lines.append(f"{prefix}{'`-- ' if last else '|-- '}{label}")
+            if sub is not None:
+                walk(sub, prefix + ("    " if last else "|   "))
+
+    walk(get_command(event_app), "")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

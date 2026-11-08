@@ -32,7 +32,7 @@ test.describe("SPA full workflows", () => {
   test("publish → appears in history → filter narrows → detail opens", async ({ page }) => {
     await tab(page, "Events");
     await page.getByLabel("Topic", { exact: true }).fill(TOPIC);
-    await page.locator('label:has-text("Data (JSON)") textarea').fill('{"pw": true}');
+    await page.getByLabel("Data (JSON)", { exact: true }).fill('{"pw": true}');
     await page.getByRole("button", { name: "Publish" }).click();
     await expect(page.locator("body")).toContainText(/accepted|published/i, { timeout: 5000 });
 
@@ -48,19 +48,19 @@ test.describe("SPA full workflows", () => {
   test("invalid JSON keeps Publish disabled", async ({ page }) => {
     await tab(page, "Events");
     await page.getByLabel("Topic", { exact: true }).fill("pw.invalid");
-    await page.locator('label:has-text("Data (JSON)") textarea').fill("{not json");
+    await page.getByLabel("Data (JSON)", { exact: true }).fill("{not json");
     await expect(page.getByRole("button", { name: "Publish" })).toBeDisabled();
   });
 
   test("action lifecycle: create → execute → enabled toggle", async ({ page }) => {
     await tab(page, "Actions");
-    await page.locator('label:has-text("Action JSON") textarea').fill(ACTION_JSON(ACTION_ID));
+    await page.getByLabel("Action JSON", { exact: true }).fill(ACTION_JSON(ACTION_ID));
     await page.getByRole("button", { name: "Create" }).click();
     await expect(page.locator("tr", { hasText: ACTION_ID })).toBeVisible({ timeout: 5000 });
 
     // manual execute
-    await page.locator("select").first().selectOption(ACTION_ID);
-    await page.locator('label:has-text("Event JSON") textarea').fill('{"topic": "pw.manual", "data": {"via": "spa"}}');
+    await page.getByLabel("Action ID").selectOption(ACTION_ID);
+    await page.getByLabel("Event JSON", { exact: true }).fill('{"topic": "pw.manual", "data": {"via": "spa"}}');
     await page.getByRole("button", { name: "Execute", exact: true }).click();
     await expect(page.locator("body")).toContainText(/queued|accepted|succeeded|submitted/i, { timeout: 5000 });
 
@@ -72,12 +72,12 @@ test.describe("SPA full workflows", () => {
 
   test("rule lifecycle: create → dry-run test", async ({ page }) => {
     await tab(page, "Rules");
-    await page.locator('label:has-text("Rule JSON") textarea').fill(RULE_JSON(RULE_ID, TOPIC));
+    await page.getByLabel("Rule JSON", { exact: true }).fill(RULE_JSON(RULE_ID, TOPIC));
     await page.getByRole("button", { name: "Create" }).click();
     await expect(page.locator("tr", { hasText: RULE_ID })).toBeVisible({ timeout: 5000 });
 
-    await page.locator("select").first().selectOption(RULE_ID);
-    await page.locator('label:has-text("Sample event JSON") textarea').fill(`{"topic": "${TOPIC}", "data": {}}`);
+    await page.getByLabel("Rule ID").selectOption(RULE_ID);
+    await page.getByLabel("Sample event JSON", { exact: true }).fill(`{"topic": "${TOPIC}", "data": {}}`);
     await page.getByRole("button", { name: "Test", exact: true }).click();
     await expect(page.locator("body")).toContainText(/matched/i, { timeout: 5000 });
   });
@@ -85,7 +85,7 @@ test.describe("SPA full workflows", () => {
   test("rule-dispatched event produces an execution with detail", async ({ page }) => {
     await tab(page, "Events");
     await page.getByLabel("Topic", { exact: true }).fill(TOPIC);
-    await page.locator('label:has-text("Data (JSON)") textarea').fill('{"fired": "by-rule"}');
+    await page.getByLabel("Data (JSON)", { exact: true }).fill('{"fired": "by-rule"}');
     await page.getByRole("button", { name: "Publish" }).click();
 
     await tab(page, "Executions");

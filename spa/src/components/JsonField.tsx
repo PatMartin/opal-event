@@ -28,7 +28,7 @@ export function JsonField({
   return (
     <label>
       {label}
-      <textarea rows={rows} value={value} onChange={(e) => handleChange(e.target.value)} spellCheck={false} />
+      <textarea aria-label={label} rows={rows} value={value} onChange={(e) => handleChange(e.target.value)} spellCheck={false} />
       {error && <div className="error-banner">{error}</div>}
     </label>
   );

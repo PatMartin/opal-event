@@ -94,7 +94,7 @@ export default function RulesPage() {
         <h3>Test rule (dry run, no execution)</h3>
         <label>
           Rule ID
-          <select value={testRuleId} onChange={(e) => setTestRuleId(e.target.value)}>
+          <select aria-label="Rule ID" value={testRuleId} onChange={(e) => setTestRuleId(e.target.value)}>
             <option value="">-- choose --</option>
             {items.map((r) => (
               <option key={r.id} value={r.id}>

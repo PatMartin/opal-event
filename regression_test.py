@@ -183,7 +183,7 @@ def t_opal_header_malformed():
 
 
 def t_publish():
-    r = CLIENT.post("/api/v1/events/", json={"topic": f"{TOPIC_BASE}.one", "data": {"n": 1}})
+    r = CLIENT.post("/api/v1/event/", json={"topic": f"{TOPIC_BASE}.one", "data": {"n": 1}})
     check(r.status_code == 202, f"publish -> {r.status_code} {r.text[:200]}")
     body = r.json()
     check(body["status"] == "accepted" and body["id"], f"bad receipt: {body}")
@@ -191,7 +191,7 @@ def t_publish():
 
 
 def t_publish_validation_shape():
-    r = CLIENT.post("/api/v1/events/", json={"topic": "BAD TOPIC!!", "data": {}})
+    r = CLIENT.post("/api/v1/event/", json={"topic": "BAD TOPIC!!", "data": {}})
     check(r.status_code == 422, f"expected 422, got {r.status_code}")
     check("detail" in r.json(), f"expected HTTPValidationError shape: {r.text[:200]}")
 
@@ -200,7 +200,7 @@ def t_event_stored():
     eid = _state["event_id"]
 
     def found():
-        r = CLIENT.get(f"/api/v1/events/{eid}")
+        r = CLIENT.get(f"/api/v1/event/{eid}")
         return r if r.status_code == 200 else None
 
     r = poll_until(found, f"event {eid} persisted")
@@ -210,14 +210,14 @@ def t_event_stored():
 
 
 def t_event_not_found_shape():
-    r = CLIENT.get(f"/api/v1/events/{uuid.uuid4()}")
+    r = CLIENT.get(f"/api/v1/event/{uuid.uuid4()}")
     check(r.status_code == 404, f"expected 404, got {r.status_code}")
     body = r.json()
     check("code" in body and "message" in body and "request_id" in body, f"expected Problem shape: {body}")
 
 
 def t_events_list():
-    r = CLIENT.get("/api/v1/events/", params={"topic": f"{TOPIC_BASE}.one"})
+    r = CLIENT.get("/api/v1/event/", params={"topic": f"{TOPIC_BASE}.one"})
     check(r.status_code == 200, f"list -> {r.status_code}")
     body = r.json()
     check("items" in body and "next_cursor" in body, f"missing list keys: {body}")
@@ -225,29 +225,29 @@ def t_events_list():
 
 
 def t_second_publish_for_cursor():
-    r = CLIENT.post("/api/v1/events/", json={"topic": f"{TOPIC_BASE}.two", "data": {"n": 2}})
+    r = CLIENT.post("/api/v1/event/", json={"topic": f"{TOPIC_BASE}.two", "data": {"n": 2}})
     check(r.status_code == 202, f"publish2 -> {r.status_code}")
     _state["event_id_2"] = r.json()["id"]
-    poll_until(lambda: CLIENT.get(f"/api/v1/events/{_state['event_id_2']}").status_code == 200, "second event persisted")
+    poll_until(lambda: CLIENT.get(f"/api/v1/event/{_state['event_id_2']}").status_code == 200, "second event persisted")
 
 
 def t_cursor_scoping():
-    r = CLIENT.get("/api/v1/events/", params={"limit": 1})
+    r = CLIENT.get("/api/v1/event/", params={"limit": 1})
     check(r.status_code == 200, f"page1 -> {r.status_code}")
     cursor = r.json().get("next_cursor")
     if not cursor:
         raise SkipTest("fewer than 2 events in store; cannot exercise cursor")
-    r2 = CLIENT.get("/api/v1/events/", params={"limit": 1, "cursor": cursor})
+    r2 = CLIENT.get("/api/v1/event/", params={"limit": 1, "cursor": cursor})
     check(r2.status_code == 200, f"page2 same filters -> {r2.status_code}")
-    r3 = CLIENT.get("/api/v1/events/", params={"limit": 1, "cursor": cursor, "topic": "different.filter"})
+    r3 = CLIENT.get("/api/v1/event/", params={"limit": 1, "cursor": cursor, "topic": "different.filter"})
     check(r3.status_code == 422, f"cursor reused across filters -> {r3.status_code} (want 422)")
-    r4 = CLIENT.get("/api/v1/events/", params={"limit": 1, "cursor": "!!!garbage!!!"})
+    r4 = CLIENT.get("/api/v1/event/", params={"limit": 1, "cursor": "!!!garbage!!!"})
     check(r4.status_code == 422, f"garbage cursor -> {r4.status_code} (want 422)")
 
 
 def t_topics_list():
     def found():
-        r = CLIENT.get("/api/v1/topics/")
+        r = CLIENT.get("/api/v1/topic/")
         if r.status_code != 200:
             return None
         return r if f"{TOPIC_BASE}.one" in r.json()["items"] else None
@@ -257,7 +257,7 @@ def t_topics_list():
 
 
 def t_rules_catalog():
-    r = CLIENT.get("/api/v1/rules/")
+    r = CLIENT.get("/api/v1/rule/")
     check(r.status_code == 200, f"rules list -> {r.status_code}")
     body = r.json()
     check("items" in body and isinstance(body["items"], list), "rules items missing")
@@ -274,20 +274,22 @@ def t_rule_create_and_conflict():
         "conditions": [{"path": "data.kind", "operator": "eq", "value": "hit"}],
         "actions": [],
     }
-    r = CLIENT.post("/api/v1/rules/", json=rule)
+    etag = CLIENT.get("/api/v1/rule/").headers["etag"]
+    r = CLIENT.post("/api/v1/rule/", json=rule, headers={"If-Match": etag})
     check(r.status_code == 201, f"create rule -> {r.status_code} {r.text[:200]}")
-    r2 = CLIENT.post("/api/v1/rules/", json=rule)
+    etag = CLIENT.get("/api/v1/rule/").headers["etag"]
+    r2 = CLIENT.post("/api/v1/rule/", json=rule, headers={"If-Match": etag})
     check(r2.status_code == 409, f"duplicate rule -> {r2.status_code} (want 409)")
 
 
 def t_rule_get():
-    r = CLIENT.get(f"/api/v1/rules/{RULE_ID}")
+    r = CLIENT.get(f"/api/v1/rule/{RULE_ID}")
     check(r.status_code == 200, f"get rule -> {r.status_code}")
     check(r.headers.get("etag"), "rule get missing ETag")
 
 
 def t_rule_patch_preconditions():
-    url = f"/api/v1/rules/{RULE_ID}"
+    url = f"/api/v1/rule/{RULE_ID}"
     r = CLIENT.patch(url, json={"enabled": False})
     check(r.status_code == 428 and "error" in r.json(), f"no If-Match -> {r.status_code} (want 428 OpalError)")
     r = CLIENT.patch(url, json={"enabled": False}, headers={"If-Match": "stale-etag"})
@@ -299,21 +301,21 @@ def t_rule_patch_preconditions():
 
 
 def t_rule_dry_test():
-    match = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
+    match = CLIENT.post(f"/api/v1/rule/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
     check(match.status_code == 200, f"rule test -> {match.status_code}")
     # rule was disabled by the previous PATCH test -> matched must be False
     check(match.json()["matched"] is False, f"disabled rule should not match: {match.json()}")
-    etag = CLIENT.get(f"/api/v1/rules/{RULE_ID}").headers["etag"]
-    r = CLIENT.patch(f"/api/v1/rules/{RULE_ID}", json={"enabled": True}, headers={"If-Match": etag})
+    etag = CLIENT.get(f"/api/v1/rule/{RULE_ID}").headers["etag"]
+    r = CLIENT.patch(f"/api/v1/rule/{RULE_ID}", json={"enabled": True}, headers={"If-Match": etag})
     check(r.status_code == 200 and r.json()["enabled"] is True, f"re-enable rule -> {r.status_code}")
-    match2 = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
+    match2 = CLIENT.post(f"/api/v1/rule/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "hit"}}})
     check(match2.json()["matched"] is True, f"enabled rule should match: {match2.json()}")
-    miss = CLIENT.post(f"/api/v1/rules/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "miss"}}})
+    miss = CLIENT.post(f"/api/v1/rule/{RULE_ID}/test", json={"event": {"topic": f"{TOPIC_BASE}.x", "data": {"kind": "miss"}}})
     check(miss.json()["matched"] is False, f"non-matching condition should not match: {miss.json()}")
 
 
 def t_rule_delete():
-    url = f"/api/v1/rules/{RULE_ID}"
+    url = f"/api/v1/rule/{RULE_ID}"
     r = CLIENT.delete(url)
     check(r.status_code == 428, f"delete w/o If-Match -> {r.status_code} (want 428)")
     etag = CLIENT.get(url).headers["etag"]
@@ -331,14 +333,16 @@ def t_action_create_and_conflict():
         "function": "handle_event",
         "timeout_seconds": 10,
     }
-    r = CLIENT.post("/api/v1/actions/", json=action)
+    etag = CLIENT.get("/api/v1/action/").headers["etag"]
+    r = CLIENT.post("/api/v1/action/", json=action, headers={"If-Match": etag})
     check(r.status_code == 201, f"create action -> {r.status_code} {r.text[:200]}")
-    r2 = CLIENT.post("/api/v1/actions/", json=action)
+    etag = CLIENT.get("/api/v1/action/").headers["etag"]
+    r2 = CLIENT.post("/api/v1/action/", json=action, headers={"If-Match": etag})
     check(r2.status_code == 409, f"duplicate action -> {r2.status_code} (want 409)")
 
 
 def t_action_patch_preconditions():
-    url = f"/api/v1/actions/{ACTION_ID}"
+    url = f"/api/v1/action/{ACTION_ID}"
     r = CLIENT.patch(url, json={"enabled": False})
     check(r.status_code == 428, f"patch w/o If-Match -> {r.status_code} (want 428)")
     r = CLIENT.patch(url, json={"enabled": False}, headers={"If-Match": "stale"})
@@ -346,7 +350,7 @@ def t_action_patch_preconditions():
 
 
 def t_action_execute():
-    r = CLIENT.post(f"/api/v1/actions/{ACTION_ID}/execute", json={"event": {"topic": f"{TOPIC_BASE}.manual", "data": {"k": "v"}}})
+    r = CLIENT.post(f"/api/v1/action/{ACTION_ID}/execute", json={"event": {"topic": f"{TOPIC_BASE}.manual", "data": {"k": "v"}}})
     check(r.status_code == 202, f"execute -> {r.status_code} {r.text[:200]}")
     body = r.json()
     check(body["status"] == "queued", f"expected 'queued' receipt, got: {body['status']} {body.get('error_code')}")
@@ -358,7 +362,7 @@ def t_execution_reaches_terminal():
     eid = _state["exec_id"]
 
     def done():
-        r = CLIENT.get(f"/api/v1/executions/{eid}")
+        r = CLIENT.get(f"/api/v1/execution/{eid}")
         if r.status_code != 200:
             return None
         return r if r.json()["status"] in ("succeeded", "failed", "timed_out", "dropped") else None
@@ -371,16 +375,16 @@ def t_execution_reaches_terminal():
 
 
 def t_executions_list():
-    r = CLIENT.get("/api/v1/executions/", params={"event_id": "does-not-exist"})
+    r = CLIENT.get("/api/v1/execution/", params={"event_id": "does-not-exist"})
     check(r.status_code == 200, f"executions list -> {r.status_code}")
     body = r.json()
     check("items" in body and "has_more" in body and isinstance(body["has_more"], bool), f"list shape: {body}")
-    r2 = CLIENT.get("/api/v1/executions/", params={"action_id": ACTION_ID})
+    r2 = CLIENT.get("/api/v1/execution/", params={"action_id": ACTION_ID})
     check(any(i["id"] == _state["exec_id"] for i in r2.json()["items"]), "execution not filterable by action_id")
 
 
 def t_action_delete():
-    url = f"/api/v1/actions/{ACTION_ID}"
+    url = f"/api/v1/action/{ACTION_ID}"
     r = CLIENT.delete(url)
     check(r.status_code == 428, f"delete w/o If-Match -> {r.status_code} (want 428)")
     etag = CLIENT.get(url).headers["etag"]
@@ -389,15 +393,15 @@ def t_action_delete():
 
 
 def t_settings_get_and_patch():
-    r = CLIENT.get("/api/v1/settings/")
+    r = CLIENT.get("/api/v1/setting/")
     check(r.status_code == 200, f"settings -> {r.status_code}")
     body = r.json()
     check(set(body) <= {"execution", "persistence", "max_event_bytes"}, f"non-portable keys leaked: {set(body)}")
     etag = r.headers.get("etag")
     check(etag, "settings missing ETag")
-    r2 = CLIENT.patch("/api/v1/settings/", json={"max_event_bytes": body["max_event_bytes"]})
+    r2 = CLIENT.patch("/api/v1/setting/", json={"max_event_bytes": body["max_event_bytes"]})
     check(r2.status_code == 428, f"settings PATCH w/o If-Match -> {r2.status_code} (want 428)")
-    r3 = CLIENT.patch("/api/v1/settings/", json={"max_event_bytes": body["max_event_bytes"]}, headers={"If-Match": etag})
+    r3 = CLIENT.patch("/api/v1/setting/", json={"max_event_bytes": body["max_event_bytes"]}, headers={"If-Match": etag})
     check(r3.status_code == 200, f"settings PATCH -> {r3.status_code}")
 
 
@@ -410,7 +414,7 @@ def t_backup_export_validate_import():
     check(v.status_code == 200 and v.json()["valid"] is True, f"validate -> {v.status_code} {v.text[:200]}")
     r2 = CLIENT.post("/api/v1/backup/import", json={"backup": backup})
     check(r2.status_code == 422, f"import w/o If-Match -> {r2.status_code} (want 422 required header)")
-    etag = CLIENT.get("/api/v1/settings/").headers["etag"]
+    etag = CLIENT.get("/api/v1/setting/").headers["etag"]
     r3 = CLIENT.post("/api/v1/backup/import", json={"backup": backup}, headers={"If-Match": etag})
     check(r3.status_code == 200, f"import -> {r3.status_code} {r3.text[:200]}")
     check("revision" in r3.json() and "pending_restart" in r3.json(), f"bad import result: {r3.text[:200]}")
@@ -433,15 +437,17 @@ def t_e2e_pipeline():
         "conditions": [{"path": "data.person", "operator": "eq", "value": True}],
         "actions": [E2E_ACTION_ID],
     }
-    check(CLIENT.post("/api/v1/actions/", json=action).status_code == 201, "e2e action create failed")
-    check(CLIENT.post("/api/v1/rules/", json=rule).status_code == 201, "e2e rule create failed")
+    etag = CLIENT.get("/api/v1/action/").headers["etag"]
+    check(CLIENT.post("/api/v1/action/", json=action, headers={"If-Match": etag}).status_code == 201, "e2e action create failed")
+    etag = CLIENT.get("/api/v1/rule/").headers["etag"]
+    check(CLIENT.post("/api/v1/rule/", json=rule, headers={"If-Match": etag}).status_code == 201, "e2e rule create failed")
 
-    r = CLIENT.post("/api/v1/events/", json={"topic": f"{TOPIC_BASE}.e2e.go", "data": {"person": True}})
+    r = CLIENT.post("/api/v1/event/", json={"topic": f"{TOPIC_BASE}.e2e.go", "data": {"person": True}})
     check(r.status_code == 202, f"e2e publish -> {r.status_code}")
     eid = r.json()["id"]
 
     def done():
-        lr = CLIENT.get("/api/v1/executions/", params={"event_id": eid})
+        lr = CLIENT.get("/api/v1/execution/", params={"event_id": eid})
         if lr.status_code != 200 or not lr.json()["items"]:
             return None
         ex = lr.json()["items"][0]
@@ -454,17 +460,17 @@ def t_e2e_pipeline():
     # Non-matching event: no execution may appear. The observer evaluates rules and synchronously
     # records any execution *before* persisting the event, so once the event is stored the
     # decision is final -- no timing guesswork (only possible when event_mode == "all").
-    r2 = CLIENT.post("/api/v1/events/", json={"topic": f"{TOPIC_BASE}.e2e.go", "data": {"person": False}})
+    r2 = CLIENT.post("/api/v1/event/", json={"topic": f"{TOPIC_BASE}.e2e.go", "data": {"person": False}})
     check(r2.status_code == 202, "non-match publish failed")
     eid2 = r2.json()["id"]
-    if CLIENT.get("/api/v1/settings/").json()["persistence"]["event_mode"] == "all":
-        poll_until(lambda: CLIENT.get(f"/api/v1/events/{eid2}").status_code == 200, "non-matching event persisted")
+    if CLIENT.get("/api/v1/setting/").json()["persistence"]["event_mode"] == "all":
+        poll_until(lambda: CLIENT.get(f"/api/v1/event/{eid2}").status_code == 200, "non-matching event persisted")
     else:
         time.sleep(2)  # no persistence signal for unmatched events; best-effort wait
-    lr = CLIENT.get("/api/v1/executions/", params={"event_id": eid2})
+    lr = CLIENT.get("/api/v1/execution/", params={"event_id": eid2})
     check(lr.json()["items"] == [], f"non-matching event spawned executions: {lr.json()['items']}")
 
-    for kind, rid in (("rules", E2E_RULE_ID), ("actions", E2E_ACTION_ID)):  # rule first: it references the action
+    for kind, rid in (("rule", E2E_RULE_ID), ("action", E2E_ACTION_ID)):  # rule first: it references the action
         etag = CLIENT.get(f"/api/v1/{kind}/{rid}").headers["etag"]
         rd = CLIENT.delete(f"/api/v1/{kind}/{rid}", headers={"If-Match": etag})
         check(rd.status_code == 204, f"e2e cleanup DELETE {kind}/{rid} -> {rd.status_code}")
@@ -503,7 +509,7 @@ def t_zmq_publish():
     _zmq_send([topic.encode(), json.dumps({"topic": topic, "data": {"via": "raw-pub"}, "source": marker}).encode()])
 
     def found():
-        r = CLIENT.get("/api/v1/events/", params={"topic": topic, "limit": 1})  # topic is indexed; source isn't
+        r = CLIENT.get("/api/v1/event/", params={"topic": topic, "limit": 1})  # topic is indexed; source isn't
         return r.json()["items"] if r.status_code == 200 else None
 
     items = poll_until(found, "raw ZMQ publish observed + stored")
@@ -524,9 +530,9 @@ def t_zmq_invalid_frame():
 
 def t_event_delete():
     eid = _state["event_id_2"]
-    r = CLIENT.delete(f"/api/v1/events/{eid}")
+    r = CLIENT.delete(f"/api/v1/event/{eid}")
     check(r.status_code == 204, f"delete event -> {r.status_code}")
-    check(CLIENT.get(f"/api/v1/events/{eid}").status_code == 404, "deleted event still readable")
+    check(CLIENT.get(f"/api/v1/event/{eid}").status_code == 404, "deleted event still readable")
 
 
 TESTS = [
@@ -567,7 +573,7 @@ TESTS = [
 
 def _cleanup() -> None:
     """Best-effort removal of any rules/actions this run left behind (e.g. after a mid-test failure)."""
-    for kind in ("rules", "actions"):  # rules first: an action referenced by a rule can't be deleted (409)
+    for kind in ("rule", "action"):  # rules first: an action referenced by a rule can't be deleted (409)
         with contextlib.suppress(httpx.HTTPError, KeyError, ValueError):
             for item in CLIENT.get(f"/api/v1/{kind}/").json()["items"]:
                 if RUN in item["id"]:

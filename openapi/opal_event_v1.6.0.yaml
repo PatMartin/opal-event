@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Opal Event API
-  version: 1.5.0
+  version: 1.6.0
   description: 'REST management and HTTP event ingress for opal-event-svc. API-first contract, release v1.
 
 
@@ -109,10 +109,14 @@ tags:
   description: Portable settings shared across OPAL services.
 - name: backup
   description: Validate, import, and export portable configuration.
+- name: persona
+  description: Manage named persona identities adopting the shared OPAL persona identifiers introduced by OPAL Say v1.6.0.
+- name: info
+  description: Service identity, version and liveness probes.
 security:
 - BearerAuth: []
 paths:
-  /api/v1/events/:
+  /api/v1/event/:
     post:
       tags:
       - Events
@@ -223,10 +227,12 @@ paths:
         in: query
         schema:
           type: string
+          format: date-time
       - name: to
         in: query
         schema:
           type: string
+          format: date-time
     delete:
       tags:
       - Events
@@ -264,7 +270,7 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/events/{event_id}:
+  /api/v1/event/{event_id}:
     get:
       tags:
       - Events
@@ -352,7 +358,7 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/topics/:
+  /api/v1/topic/:
     get:
       tags:
       - Topics
@@ -404,7 +410,7 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/rules/:
+  /api/v1/rule/:
     get:
       tags:
       - Rules
@@ -491,18 +497,24 @@ paths:
           $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
         '500':
           $ref: './shared/opal_kernel.yaml#/components/responses/OperationFailed'
+        '412':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
+        '428':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/Rule'
+      parameters:
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/rules/{rule_id}:
+  /api/v1/rule/{rule_id}:
     get:
       tags:
       - Rules
@@ -593,14 +605,7 @@ paths:
         schema:
           type: string
           minLength: 1
-      - name: If-Match
-        in: header
-        required: true
-        schema:
-          type: string
-          minLength: 1
-        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
-          existence is still subject to the precondition.
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
     patch:
       tags:
       - Rules
@@ -656,20 +661,13 @@ paths:
         schema:
           type: string
           minLength: 1
-      - name: If-Match
-        in: header
-        required: true
-        schema:
-          type: string
-          minLength: 1
-        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
-          existence is still subject to the precondition.
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/rules/{rule_id}/test:
+  /api/v1/rule/{rule_id}/test:
     post:
       tags:
       - Rules
@@ -724,7 +722,7 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/actions/:
+  /api/v1/action/:
     get:
       tags:
       - Actions
@@ -811,18 +809,24 @@ paths:
           $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
         '500':
           $ref: './shared/opal_kernel.yaml#/components/responses/OperationFailed'
+        '412':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
+        '428':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/Action'
+      parameters:
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/actions/{action_id}:
+  /api/v1/action/{action_id}:
     get:
       tags:
       - Actions
@@ -913,14 +917,7 @@ paths:
         schema:
           type: string
           minLength: 1
-      - name: If-Match
-        in: header
-        required: true
-        schema:
-          type: string
-          minLength: 1
-        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
-          existence is still subject to the precondition.
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
     patch:
       tags:
       - Actions
@@ -976,20 +973,13 @@ paths:
         schema:
           type: string
           minLength: 1
-      - name: If-Match
-        in: header
-        required: true
-        schema:
-          type: string
-          minLength: 1
-        description: Required strong ETag for optimistic concurrency; missing 428, stale 412. DELETE without
-          existence is still subject to the precondition.
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/actions/{action_id}/execute:
+  /api/v1/action/{action_id}/execute:
     post:
       tags:
       - Actions
@@ -1048,7 +1038,7 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/executions/:
+  /api/v1/execution/:
     get:
       tags:
       - Executions
@@ -1128,7 +1118,7 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/executions/{execution_id}:
+  /api/v1/execution/{execution_id}:
     get:
       tags:
       - Executions
@@ -1221,10 +1211,14 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-  /api/v1/settings/:
+  /api/v1/setting/:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/settings_collection'
-  /api/v1/settings/{key}:
+  /api/v1/setting/{key}:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/settings_key'
+  /api/v1/info/:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/info'
+  /api/v1/info/ping:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/info_ping'
   /api/v1/health/live:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/health_live'
   /api/v1/health/ready:
@@ -1235,7 +1229,283 @@ paths:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_validate_post'
   /api/v1/backup/import:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_import'
+  /api/v1/persona/:
+    get:
+      tags:
+      - persona
+      summary: List Personas
+      description: List registered OPAL persona. A persona is a named automation identity so rules and actions attribute work to a consistent character; may bind an OPAL Say voice identifier for spoken notifications. Return the complete bounded configuration collection; pagination is not supported.
+      operationId: opal_persona_list
+      parameters:
+      - name: enabled
+        in: query
+        required: false
+        description: If supplied, filter by enabled state.
+        schema:
+          type: boolean
+      responses:
+        '401':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
+        '200':
+          description: Registered persona.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonaRead'
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+
+        '422':
+          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
+    post:
+      tags:
+      - persona
+      summary: Create Persona
+      description: Register a persona. If `voice_id` is supplied, it names an OPAL Say voice identifier; this service does not validate voice existence locally. Strong If-Match is mandatory.
+      operationId: opal_persona_create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaCreate'
+      responses:
+        '401':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
+        '201':
+          description: Persona created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaRead'
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+            Location:
+              description: Resource URL
+              schema:
+                type: string
+        '409':
+          description: The requested `persona_id` is already registered.
+          content:
+            application/json:
+              schema:
+                $ref: './shared/opal_kernel.yaml#/components/schemas/OpalError'
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+
+        '422':
+          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
+        '412':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
+        '428':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
+      parameters:
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
+    parameters:
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
+  /api/v1/persona/{persona_id}/validate:
+    post:
+      summary: Validate Persona
+      description: Check that a persona is registered and enabled and that its declared bindings can be resolved.
+      operationId: opal_persona_validate
+      tags:
+      - persona
+      responses:
+        '401':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
+        '200':
+          description: Persona validation report.
+          content:
+            application/json:
+              schema:
+                $ref: './shared/opal_kernel.yaml#/components/schemas/OpalValidationReport'
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+
+        '422':
+          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
+    parameters:
+    - $ref: '#/components/parameters/PersonaId'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
+  /api/v1/persona/{persona_id}:
+    parameters:
+    - $ref: '#/components/parameters/PersonaId'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
+    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
+    get:
+      tags:
+      - persona
+      summary: Get Persona
+      description: Return one registered persona.
+      operationId: opal_persona_get
+      responses:
+        '401':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
+        '200':
+          description: Persona.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaRead'
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+            ETag:
+              description: Strong revision of logical portable configuration
+              schema:
+                type: string
+
+        '404':
+          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
+        '422':
+          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
+    patch:
+      tags:
+      - persona
+      summary: Update Persona
+      description: Partially update a persona.
+      operationId: opal_persona_patch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonaUpdate'
+      responses:
+        '401':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
+        '200':
+          description: Updated persona.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaRead'
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+
+        '404':
+          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
+        '422':
+          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
+        '412':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
+        '428':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
+      parameters:
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
+    delete:
+      tags:
+      - persona
+      summary: Delete Persona
+      description: Remove a persona registration. Strong If-Match is mandatory.
+      operationId: opal_persona_delete
+      responses:
+        '401':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
+        '204':
+          description: Persona removed.
+          headers:
+            X-Opal-Session-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
+            X-Opal-Transaction-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
+            X-Opal-Request-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
+            X-Opal-Causation-Id:
+              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
+
+        '404':
+          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
+        '422':
+          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
+        '412':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
+        '428':
+          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
+      parameters:
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
 components:
+  parameters:
+    PersonaId:
+      name: persona_id
+      in: path
+      required: true
+      description: Globally unique OPAL persona identifier.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+        pattern: ^[A-Za-z0-9][A-Za-z0-9._-]*$
+      example: amy
   securitySchemes:
     BearerAuth: {$ref: './shared/opal_kernel.yaml#/components/securitySchemes/BearerAuth'}
   schemas:
@@ -1822,42 +2092,41 @@ components:
           type:
           - string
           - 'null'
+        has_more:
+          type: boolean
       additionalProperties: false
       required:
       - items
       - next_cursor
+      - has_more
     ListRules:
       type: object
-      description: Cursor-paginated list.
+      description: Complete bounded collection.
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/Rule'
-        next_cursor:
-          type:
-          - string
-          - 'null'
+        has_more:
+          type: boolean
       additionalProperties: false
       required:
       - items
-      - next_cursor
+      - has_more
     ListActions:
       type: object
-      description: Cursor-paginated list.
+      description: Complete bounded collection.
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/Action'
-        next_cursor:
-          type:
-          - string
-          - 'null'
+        has_more:
+          type: boolean
       additionalProperties: false
       required:
       - items
-      - next_cursor
+      - has_more
     ListExecutions:
       type: object
       description: Cursor-paginated list.
@@ -1888,41 +2157,6 @@ components:
       additionalProperties: false
       required:
       - items
-    Settings:
-      type: object
-      description: YAML-managed service configuration, including rules and actions. Masked read excludes secrets;
-        pending_restart_fields show settings not yet activated.
-      properties:
-        version:
-          const: 1
-        server:
-          $ref: '#/components/schemas/ServerSettings'
-        zeromq:
-          $ref: '#/components/schemas/ZeroMqSettings'
-        security:
-          $ref: '#/components/schemas/SecuritySettings'
-        execution:
-          $ref: '#/components/schemas/ExecutionSettings'
-        persistence:
-          $ref: '#/components/schemas/PersistenceSettings'
-        actions:
-          type: array
-          items:
-            $ref: '#/components/schemas/Action'
-        rules:
-          type: array
-          items:
-            $ref: '#/components/schemas/Rule'
-      additionalProperties: false
-      required:
-      - version
-      - server
-      - zeromq
-      - security
-      - execution
-      - persistence
-      - actions
-      - rules
     Stats:
       type: object
       description: Counter snapshot since service start.
@@ -1967,177 +2201,6 @@ components:
       - queue_depth
       - active_workers
       - rejected_publications
-    ServerSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        host:
-          type: string
-          default: 127.0.0.1
-        port:
-          type: integer
-          minimum: 1
-          maximum: 65535
-          default: 8080
-      required:
-      - host
-      - port
-    CurveSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        enabled:
-          type: boolean
-          default: false
-        server_public_key_file:
-          type:
-          - string
-          - 'null'
-        server_secret_key_file:
-          type:
-          - string
-          - 'null'
-        authorized_client_keys_file:
-          type:
-          - string
-          - 'null'
-      required:
-      - enabled
-    ZeroMqSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        publishers:
-          type: string
-          default: tcp://127.0.0.1:5555
-        subscribers:
-          type: string
-          default: tcp://127.0.0.1:5556
-        max_event_bytes:
-          const: 1048576
-        curve:
-          $ref: '#/components/schemas/CurveSettings'
-        publisher_queue_size:
-          type: integer
-          minimum: 1
-          maximum: 100000
-          default: 1000
-          description: Maximum number of events buffered in memory for ZeroMQ publication.
-      required:
-      - publishers
-      - subscribers
-      - max_event_bytes
-      - curve
-    RestAuthSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        enabled:
-          type: boolean
-          default: false
-        token_env:
-          type: string
-          default: OPAL_EVENT_API_TOKEN
-      required:
-      - enabled
-      - token_env
-    AllowedHttpDestination:
-      type: object
-      additionalProperties: false
-      properties:
-        host:
-          type: string
-          minLength: 1
-        ports:
-          type: array
-          items:
-            type: integer
-            minimum: 1
-            maximum: 65535
-        schemes:
-          type: array
-          items:
-            type: string
-            enum:
-            - http
-            - https
-      required:
-      - host
-      - ports
-      - schemes
-    SecuritySettings:
-      type: object
-      additionalProperties: false
-      properties:
-        rest_auth:
-          $ref: '#/components/schemas/RestAuthSettings'
-        http_action_allowlist:
-          type: array
-          items:
-            $ref: '#/components/schemas/AllowedHttpDestination'
-      required:
-      - rest_auth
-      - http_action_allowlist
-    ExecutionSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        max_workers:
-          type: integer
-          minimum: 1
-          maximum: 128
-          default: 4
-        queue_size:
-          type: integer
-          minimum: 1
-          maximum: 100000
-          default: 100
-        default_timeout_seconds:
-          type: integer
-          minimum: 1
-          maximum: 3600
-          default: 30
-        overflow:
-          const: drop_and_log
-        retry_enabled:
-          const: false
-        max_output_bytes:
-          type: integer
-          minimum: 0
-          maximum: 10485760
-          default: 65536
-      required:
-      - max_workers
-      - queue_size
-      - default_timeout_seconds
-      - overflow
-      - retry_enabled
-      - max_output_bytes
-    PersistenceSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        database:
-          type: string
-          minLength: 1
-        event_mode:
-          type: string
-          enum:
-          - all
-          - matched
-          - none
-        retention_days:
-          type: integer
-          minimum: 1
-          maximum: 3650
-          default: 7
-        execution_history_enabled:
-          const: true
-      required:
-      - database
-      - event_mode
-      - retention_days
-      - execution_history_enabled
     RulePatch:
       type: object
       description: Partial rule update. Omitted properties unchanged; arrays replace in entirety. Identifier
@@ -2196,9 +2259,43 @@ components:
           type: integer
           minimum: 1
           maximum: 3600
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: >-
+            Human- and agent-readable purpose, expected effect, and relevant
+            constraints. Informational metadata, not an authorization grant.
+        input_schema:
+          $ref: '#/components/schemas/ActionInputSchema'
+        keywords:
+          type: array
+          description: >-
+            Search/discovery hints that help an agent or operator select this
+            action. Untrusted informational metadata: never executable
+            instructions, not an authorization grant, not a security control.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          maxItems: 16
+          uniqueItems: true
+        suggested_prompts:
+          type: array
+          description: >-
+            Example natural-language prompts that could legitimately lead to
+            this action. Untrusted informational metadata: never executable
+            instructions, never an authorization grant, not a security control.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          maxItems: 8
       additionalProperties: false
       allOf:
       - if:
+          required:
+          - mode
           properties:
             mode:
               const: exec
@@ -2206,6 +2303,8 @@ components:
           required:
           - executable
       - if:
+          required:
+          - mode
           properties:
             mode:
               enum:
@@ -2251,6 +2350,38 @@ components:
           type: integer
           minimum: 1
           maximum: 3600
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: >-
+            Human- and agent-readable purpose, expected effect, and relevant
+            constraints. Informational metadata, not an authorization grant.
+        input_schema:
+          $ref: '#/components/schemas/ActionInputSchema'
+        keywords:
+          type: array
+          description: >-
+            Search/discovery hints that help an agent or operator select this
+            action. Untrusted informational metadata: never executable
+            instructions, not an authorization grant, not a security control.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          maxItems: 16
+          uniqueItems: true
+        suggested_prompts:
+          type: array
+          description: >-
+            Example natural-language prompts that could legitimately lead to
+            this action. Untrusted informational metadata: never executable
+            instructions, never an authorization grant, not a security control.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          maxItems: 8
       additionalProperties: false
       minProperties: 1
     PythonActionPatch:
@@ -2270,6 +2401,38 @@ components:
           type: integer
           minimum: 1
           maximum: 3600
+        description:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: >-
+            Human- and agent-readable purpose, expected effect, and relevant
+            constraints. Informational metadata, not an authorization grant.
+        input_schema:
+          $ref: '#/components/schemas/ActionInputSchema'
+        keywords:
+          type: array
+          description: >-
+            Search/discovery hints that help an agent or operator select this
+            action. Untrusted informational metadata: never executable
+            instructions, not an authorization grant, not a security control.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+          maxItems: 16
+          uniqueItems: true
+        suggested_prompts:
+          type: array
+          description: >-
+            Example natural-language prompts that could legitimately lead to
+            this action. Untrusted informational metadata: never executable
+            instructions, never an authorization grant, not a security control.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          maxItems: 8
       additionalProperties: false
       minProperties: 1
     ActionPatch:
@@ -2279,31 +2442,104 @@ components:
       - $ref: '#/components/schemas/ShellActionPatch'
       - $ref: '#/components/schemas/HttpActionPatch'
       - $ref: '#/components/schemas/PythonActionPatch'
-    PortablePersistenceSettings:
-      type: object
-      additionalProperties: false
-      properties:
-        event_mode:
-          type: string
-          enum:
-          - all
-          - matched
-          - none
-        retention_days:
-          type: integer
-          minimum: 1
-          maximum: 3650
-          default: 7
-        execution_history_enabled:
-          const: true
-    BackupImportRequest:
+    PersonaCreate:
       type: object
       additionalProperties: false
       required:
-      - backup
+      - persona_id
+      - name
       properties:
-        backup:
-          $ref: './shared/opal_kernel.yaml#/components/schemas/OpalConfigExport'
+        persona_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._-]*
+          description: Globally unique OPAL persona identifier.
+          example: amy
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Human-readable persona name.
+          example: Amy
+        description:
+          anyOf:
+          - type: string
+            maxLength: 1000
+          - type: 'null'
+          description: Optional human-readable description or character notes.
+        voice_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          description: Optional OPAL Say voice identifier associated with this persona.
+          example: en-gb-alan-low
+        enabled:
+          type: boolean
+          default: true
+          description: Whether this persona may be selected.
+      example:
+        persona_id: amy
+        name: Amy
+        voice_id: en-gb-alan-low
+        enabled: true
+    PersonaUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: Partial update to a persona.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          anyOf:
+          - type: string
+            maxLength: 1000
+          - type: 'null'
+        voice_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          description: Rebind the persona to a different OPAL Say voice identifier.
+        enabled:
+          type: boolean
+    PersonaRead:
+      type: object
+      required:
+      - persona_id
+      - name
+      - enabled
+      - created_at
+      - updated_at
+      properties:
+        persona_id:
+          type: string
+          description: Globally unique OPAL persona identifier.
+          example: amy
+        name:
+          type: string
+          example: Amy
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+        voice_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Optional OPAL Say voice identifier associated with this persona.
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 x-opal-context-standard:
   version: '1.2'
   headers:
@@ -2338,35 +2574,35 @@ x-opal-authorization:
     actions:read:
       description: Discover registered actions and topics.
       permits:
-      - GET /api/v1/actions/
-      - GET /api/v1/actions/{action_id}
-      - GET /api/v1/topics/
+      - GET /api/v1/action/
+      - GET /api/v1/action/{action_id}
+      - GET /api/v1/topic/
     actions:execute:
       description: Manually invoke a registered, enabled action.
       permits:
-      - POST /api/v1/actions/{action_id}/execute
+      - POST /api/v1/action/{action_id}/execute
     executions:read:
       description: Inspect execution records, including dropped input-validation failures.
       permits:
-      - GET /api/v1/executions/
-      - GET /api/v1/executions/{execution_id}
+      - GET /api/v1/execution/
+      - GET /api/v1/execution/{execution_id}
     actions:write:
       description: Create, edit, or delete actions.
       permits:
-      - POST /api/v1/actions/
-      - PATCH /api/v1/actions/{action_id}
-      - DELETE /api/v1/actions/{action_id}
+      - POST /api/v1/action/
+      - PATCH /api/v1/action/{action_id}
+      - DELETE /api/v1/action/{action_id}
     rules:write:
       description: Create, edit, delete, or test rules.
       permits:
-      - POST /api/v1/rules/
-      - PATCH /api/v1/rules/{rule_id}
-      - DELETE /api/v1/rules/{rule_id}
-      - POST /api/v1/rules/{rule_id}/test
+      - POST /api/v1/rule/
+      - PATCH /api/v1/rule/{rule_id}
+      - DELETE /api/v1/rule/{rule_id}
+      - POST /api/v1/rule/{rule_id}/test
     settings:write:
       description: Change settings, credentials, or configuration backups.
       permits:
-      - PATCH /api/v1/settings/
+      - PATCH /api/v1/setting/
       - POST /api/v1/backup/import
   principals:
     think:

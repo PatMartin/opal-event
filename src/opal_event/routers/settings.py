@@ -1,4 +1,4 @@
-"""``/api/v1/settings``: portable, non-secret live-adjustable settings (execution, persistence
+"""``/api/v1/setting``: portable, non-secret live-adjustable settings (execution, persistence
 subset, max_event_bytes). Network bindings, CURVE keys, bearer tokens, database path, and
 rules/actions are intentionally excluded -- see ``PortableSettings`` in ``opal_event.yaml``."""
 
@@ -35,16 +35,16 @@ def _portable_view(settings) -> PortableSettings:
     )
 
 
-@router.get("/api/v1/settings/", response_model=PortableSettings)
+@router.get("/api/v1/setting/", response_model=PortableSettings)
 def get_settings(response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     return _portable_view(config.settings)
 
 
-@router.patch("/api/v1/settings/", response_model=PortableSettings)
+@router.patch("/api/v1/setting/", response_model=PortableSettings)
 def patch_settings(patch: PortableSettingsPatch, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
-        raise PreconditionRequiredError("If-Match header (from GET /api/v1/settings/) is required for this update")
+        raise PreconditionRequiredError("If-Match header (from GET /api/v1/setting/) is required for this update")
 
     def mutate(raw: dict) -> dict:
         raw = dict(raw)
@@ -105,22 +105,23 @@ def _set_key(config, key: str, value, if_match: str):
         raise PreconditionFailedError(str(exc)) from exc
 
 
-@router.get("/api/v1/settings/{key}", response_model=SettingRead)
+@router.get("/api/v1/setting/{key}", response_model=SettingRead)
 def get_setting(key: str, config=Depends(get_config)):
     return _setting_read(key, config.settings)
 
 
-@router.put("/api/v1/settings/{key}", response_model=SettingRead)
+@router.put("/api/v1/setting/{key}", response_model=SettingRead)
 def put_setting(key: str, body: SettingUpdate, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
-        raise PreconditionRequiredError("If-Match header (from GET /api/v1/settings/) is required for this update")
+        raise PreconditionRequiredError("If-Match header (from GET /api/v1/setting/) is required for this update")
     return _setting_read(key, _set_key(config, key, body.value, if_match))
 
 
-@router.delete("/api/v1/settings/{key}", response_model=SettingRead)
+@router.delete("/api/v1/setting/{key}", status_code=204)
 def delete_setting(key: str, config=Depends(get_config), if_match: str | None = Header(default=None)):
-    """Resets a single key to its schema default (kernel ``opal_setting_delete``)."""
+    """Resets a single key to its schema default (kernel ``opal_setting_delete``, 204)."""
     if if_match is None:
-        raise PreconditionRequiredError("If-Match header (from GET /api/v1/settings/) is required for this update")
+        raise PreconditionRequiredError("If-Match header (from GET /api/v1/setting/) is required for this update")
     read = _setting_read(key, config.settings)  # 404 unknown key before touching defaults
-    return _setting_read(key, _set_key(config, key, read.default, if_match))
+    _set_key(config, key, read.default, if_match)
+    return Response(status_code=204)

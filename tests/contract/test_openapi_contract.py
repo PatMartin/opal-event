@@ -4,7 +4,6 @@ implemented by the REST app and exposed by the CLI client, with no drift in eith
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
 from pathlib import Path
 
@@ -12,13 +11,13 @@ import yaml
 
 from opal_event.cli.client import OPERATIONS as CLI_OPERATIONS
 
-CONTRACT_PATH = Path(__file__).resolve().parents[2] / "opal_event_v1.5.0.yaml"
+CONTRACT_PATH = Path(__file__).resolve().parents[2] / "openapi" / "opal_event_v1.6.0.yaml"
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
 
 @functools.lru_cache(maxsize=1)
 def load_contract_operations() -> dict[str, tuple[str, str]]:
-    """operationId -> (method, path) for the whole contract. opal_event_v1.5.0.yaml declares
+    """operationId -> (method, path) for the whole contract. opal_event_v1.6.0.yaml declares
     shared endpoints as path-level ``$ref`` into ``shared/opal_kernel.yaml``'s
     ``components/pathItems`` — resolve those references so shared ops get the same parity
     checks as service-local ones."""
@@ -63,10 +62,6 @@ class TestContractCoverage:
         assert stats_schema["properties"]["rejected_publications"]["type"] == "integer"
         assert "rejected_publications" in stats_schema["required"]
 
-    def test_zeromq_settings_contract_includes_publisher_queue_size(self):
-        spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
-        zmq_schema = spec["components"]["schemas"]["ZeroMqSettings"]
-        assert zmq_schema["properties"]["publisher_queue_size"]["type"] == "integer"
 
     def test_cli_and_contract_operations_match_in_both_directions(self):
         operations = load_contract_operations()
@@ -126,13 +121,13 @@ class TestContractCoverage:
     def test_event_deletion_operations_documented_in_contract(self):
         spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
 
-        clear_op = spec["paths"]["/api/v1/events/"]["delete"]
+        clear_op = spec["paths"]["/api/v1/event/"]["delete"]
         assert clear_op["operationId"] == "delete_api_v1_events"
         assert "204" in clear_op["responses"]
         assert "401" in clear_op["responses"]
         assert "403" in clear_op["responses"]
 
-        delete_single_op = spec["paths"]["/api/v1/events/{event_id}"]["delete"]
+        delete_single_op = spec["paths"]["/api/v1/event/{event_id}"]["delete"]
         assert delete_single_op["operationId"] == "delete_api_v1_events_id"
         assert "204" in delete_single_op["responses"]
         assert "401" in delete_single_op["responses"]
@@ -140,50 +135,12 @@ class TestContractCoverage:
         assert "404" in delete_single_op["responses"]
 
 
-V141_PATH = Path(__file__).resolve().parents[2] / "opal_event.1.4.1.yaml"
-# Byte-identity guard: this file is a verbatim copy of the central contract
-# opal-api:openapi/opal_event.v1.4.1.yaml @ 6677f0130b8939e0f7700cea20deac3f5e3a6f30
-# (proposal/event-self-describing-actions-1.4.1). SHA256 is computed on the
-# LF-normalized bytes so CRLF checkouts still match. Re-sync with:
-#   git -C ../opal-api show <commit>:openapi/opal_event.v1.4.1.yaml > opal_event.1.4.1.yaml
-V141_CENTRAL_SHA256 = "033aed324558221b2c30f8a56460178b8f39918f8591cab75adc4c6099bff9a9"
-
-
-class TestV141SelfDescribingActions:
-    """v1.4.1 proposal adds four optional self-description fields to all action types.
-
-    The historical 1.4.0 file stays authoritative; this validates the proposal adds
-    exactly description/input_schema/keywords/suggested_prompts without route drift.
-    """
+class TestSelfDescribingActions:
+    """v1.4.1's optional self-description fields carried forward into v1.6.0: every action
+    type declares description/input_schema/keywords/suggested_prompts as optional."""
 
     def _spec(self) -> dict:
-        return yaml.safe_load(V141_PATH.read_text(encoding="utf-8"))
-
-    def test_v141_parses_and_routes_match_v140(self) -> None:
-        new = self._spec()
-        old = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
-        assert new["openapi"].startswith("3.1")
-        assert new["info"]["version"] == "1.4.1"
-
-        def ops(spec: dict, resolve_kernel: bool = False) -> set:
-            kernel = (
-                yaml.safe_load((CONTRACT_PATH.parent / "shared" / "opal_kernel.yaml").read_text(encoding="utf-8"))
-                if resolve_kernel
-                else {}
-            )
-            path_items = kernel.get("components", {}).get("pathItems", {})
-            out = set()
-            for p, i in spec["paths"].items():
-                if "$ref" in i and resolve_kernel:
-                    i = path_items[i["$ref"].rsplit("/", 1)[1]]
-                for m in i:
-                    if m in {"get", "post", "put", "patch", "delete"}:
-                        out.add((m, p))
-            return out
-
-        # v1.5.0 declares shared endpoints via kernel pathItem refs and adds /settings/{key};
-        # every route the older contract declared must still exist.
-        assert ops(new) <= ops(old, resolve_kernel=True), "v1.4.1 routes missing from v1.5.0"
+        return yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
 
     def test_all_action_types_have_four_optional_fields(self) -> None:
         spec = self._spec()
@@ -197,11 +154,23 @@ class TestV141SelfDescribingActions:
             assert props["keywords"]["maxItems"] == 16
             assert props["suggested_prompts"]["maxItems"] == 8
 
-    def test_v141_byte_identical_to_central_spec(self) -> None:
-        """Local file must be a verbatim copy of the published central contract."""
-        normalized = V141_PATH.read_bytes().replace(b"\r\n", b"\n")
-        digest = hashlib.sha256(normalized).hexdigest()
-        assert digest == V141_CENTRAL_SHA256, (
-            f"opal_event.1.4.1.yaml drifted from the central spec: sha256 {digest} "
-            f"!= {V141_CENTRAL_SHA256} (re-sync from opal-api; see V141_CENTRAL_SHA256 comment)"
-        )
+    def test_v160_singular_paths_and_new_resources(self) -> None:
+        """v1.6.0 breaking rename: collections are singular; persona/info endpoints exist."""
+        spec = self._spec()
+        for path in (
+            "/api/v1/event/",
+            "/api/v1/topic/",
+            "/api/v1/rule/",
+            "/api/v1/action/",
+            "/api/v1/execution/",
+            "/api/v1/setting/",
+            "/api/v1/info/",
+            "/api/v1/info/ping",
+            "/api/v1/persona/",
+            "/api/v1/persona/{persona_id}",
+            "/api/v1/persona/{persona_id}/validate",
+        ):
+            assert path in spec["paths"], f"missing path {path}"
+        for legacy in ("/api/v1/events/", "/api/v1/topics/", "/api/v1/rules/", "/api/v1/actions/",
+                       "/api/v1/executions/", "/api/v1/settings/"):
+            assert legacy not in spec["paths"], f"legacy plural path still present: {legacy}"

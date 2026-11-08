@@ -30,12 +30,14 @@ actions_app = typer.Typer(help="Manage registered actions (shell/http/python).",
 executions_app = typer.Typer(help="Inspect action execution history.", no_args_is_help=True)
 settings_app = typer.Typer(help="Portable, live-adjustable service settings.", no_args_is_help=True)
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
+personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
 for _sub, _name in (
     (rules_app, "rules"),
     (actions_app, "actions"),
     (executions_app, "executions"),
     (settings_app, "settings"),
     (backup_app, "backup"),
+    (personas_app, "personas"),
 ):
     event_app.add_typer(_sub, name=_name)
 
@@ -135,7 +137,7 @@ def _event_input(event_json: str) -> dict[str, Any]:
 
 
 def _current_revision(ctx: typer.Context) -> str:
-    resp = _call(ctx, "opal_settings_get")
+    resp = _call(ctx, "opal_setting_list")
     return resp.headers["etag"]
 
 
@@ -239,6 +241,15 @@ def stats(ctx: typer.Context) -> None:
     _emit(ctx, _call(ctx, "get_api_v1_stats").json())
 
 
+@event_app.command("info")
+def info(
+    ctx: typer.Context,
+    ping: bool = typer.Option(False, "--ping", help="Liveness ping only (GET /api/v1/info/ping; no auth required)"),
+) -> None:
+    """Get service identity (name, version, API contract version)."""
+    _emit(ctx, _call(ctx, "opal_info_ping" if ping else "opal_info_get").json())
+
+
 # -- `opal event rules` --------------------------------------------------------------------------
 
 
@@ -255,9 +266,10 @@ def rules_create(
     json_str: str = typer.Option(None, "--json", help="Full Rule JSON body"),
     file: str = typer.Option(None, "--file", help="Path to a file containing the Rule JSON body"),
 ) -> None:
-    """Create a rule."""
+    """Create a rule. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
-    _emit(ctx, _call(ctx, "post_api_v1_rules", json=body).json())
+    revision = _current_revision(ctx)
+    _emit(ctx, _call(ctx, "post_api_v1_rules", json=body, headers={"If-Match": revision}).json())
 
 
 @rules_app.command("get")
@@ -322,9 +334,10 @@ def actions_create(
     json_str: str = typer.Option(None, "--json", help="Full Action JSON body (shell/http/python)"),
     file: str = typer.Option(None, "--file", help="Path to a file containing the Action JSON body"),
 ) -> None:
-    """Create an action."""
+    """Create an action. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
-    _emit(ctx, _call(ctx, "post_api_v1_actions", json=body).json())
+    revision = _current_revision(ctx)
+    _emit(ctx, _call(ctx, "post_api_v1_actions", json=body, headers={"If-Match": revision}).json())
 
 
 @actions_app.command("get")
@@ -409,7 +422,7 @@ def executions_get(ctx: typer.Context, execution_id: str = typer.Argument(...)) 
 @settings_app.command("get")
 def settings_get(ctx: typer.Context) -> None:
     """Get portable settings."""
-    _emit(ctx, _call(ctx, "opal_settings_get").json())
+    _emit(ctx, _call(ctx, "opal_setting_list").json())
 
 
 @settings_app.command("update")
@@ -422,7 +435,7 @@ def settings_update(
     """Update portable settings (execution/persistence subset, max_event_bytes)."""
     body = _read_payload(json_str, file)
     revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "opal_settings_patch", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "opal_setting_patch", json=body, headers={"If-Match": revision}).json())
 
 
 @settings_app.command("get-key")
@@ -459,7 +472,8 @@ def settings_reset_key(
 ) -> None:
     """Reset a single portable setting to its schema default."""
     revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision}).json())
+    _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision})
+    typer.echo(f"reset setting '{key}' to default")
 
 
 # -- `opal event backup` -------------------------------------------------------------------------
@@ -503,6 +517,78 @@ def backup_import(
     body = _read_payload(json_str, file)
     revision = if_match or _current_revision(ctx)
     _emit(ctx, _call(ctx, "opal_backup_import", json=body, headers={"If-Match": revision}).json())
+
+
+# -- `opal event personas` ---------------------------------------------------------------------
+
+
+@personas_app.command("list")
+def personas_list(
+    ctx: typer.Context,
+    enabled: bool = typer.Option(None, "--enabled/--disabled", help="Filter by enabled state"),
+) -> None:
+    """List registered personas (complete bounded catalog; no pagination)."""
+    params = {} if enabled is None else {"enabled": enabled}
+    _emit(ctx, _call(ctx, "opal_persona_list", params=params).json(), columns=["persona_id", "name", "enabled", "voice_id"])
+
+
+@personas_app.command("create")
+def personas_create(
+    ctx: typer.Context,
+    json_str: str = typer.Option(None, "--json", help="Full PersonaCreate JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the PersonaCreate JSON body"),
+    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
+) -> None:
+    """Register a persona. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
+    body = _read_payload(json_str, file)
+    revision = if_match or _current_revision(ctx)
+    _emit(ctx, _call(ctx, "opal_persona_create", json=body, headers={"If-Match": revision}).json())
+
+
+@personas_app.command("get")
+def personas_get(ctx: typer.Context, persona_id: str = typer.Argument(...)) -> None:
+    """Get a persona."""
+    _emit(ctx, _call(ctx, "opal_persona_get", path_params={"persona_id": persona_id}).json())
+
+
+@personas_app.command("update")
+def personas_update(
+    ctx: typer.Context,
+    persona_id: str = typer.Argument(...),
+    json_str: str = typer.Option(None, "--json", help="Partial PersonaUpdate JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the PersonaUpdate JSON body"),
+    if_match: str = typer.Option(None, "--if-match", help="Strong ETag precondition (default: auto-fetched)"),
+) -> None:
+    """Partially update a persona. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
+    body = _read_payload(json_str, file)
+    revision = if_match or _resource_etag(ctx, "opal_persona_get", {"persona_id": persona_id})
+    _emit(
+        ctx,
+        _call(
+            ctx, "opal_persona_patch", path_params={"persona_id": persona_id}, json=body, headers={"If-Match": revision}
+        ).json(),
+    )
+
+
+@personas_app.command("delete")
+def personas_delete(
+    ctx: typer.Context,
+    persona_id: str = typer.Argument(...),
+    if_match: str = typer.Option(None, "--if-match", help="Strong ETag precondition (default: auto-fetched)"),
+) -> None:
+    """Delete a persona. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
+    revision = if_match or _resource_etag(ctx, "opal_persona_get", {"persona_id": persona_id})
+    _call(ctx, "opal_persona_delete", path_params={"persona_id": persona_id}, headers={"If-Match": revision})
+    typer.echo(f"deleted persona {persona_id}")
+
+
+@personas_app.command("validate")
+def personas_validate(ctx: typer.Context, persona_id: str = typer.Argument(...)) -> None:
+    """Check that a persona is registered, enabled, and its bindings can be resolved."""
+    data = _call(ctx, "opal_persona_validate", path_params={"persona_id": persona_id}).json()
+    _emit(ctx, data)
+    if not data["valid"]:
+        raise typer.Exit(1)
 
 
 # -- `opal` root -----------------------------------------------------------------------------

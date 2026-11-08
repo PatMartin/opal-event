@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import time
 
@@ -303,6 +304,7 @@ class TestBrokerPubSub:
             broker.stop()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="pyzmq CURVE authenticator thread hangs on stop() on Windows")
 class TestBrokerCurve:
     def test_publish_over_curve(self, tmp_path):
         import zmq.auth

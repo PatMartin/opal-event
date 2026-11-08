@@ -12,7 +12,7 @@ async function walkTabs(page: Page) {
 test("all tabs render against the live backend", async ({ page }) => {
   const errs = await walkTabs(page);
   await page.goto("/");
-  for (const tab of ["Health", "Events", "Rules", "Actions", "Executions", "Settings", "Backup"]) {
+  for (const tab of ["Health", "Events", "Rules", "Actions", "Personas", "Executions", "Settings", "Backup"]) {
     await page.getByRole("button", { name: tab, exact: true }).or(page.getByRole("link", { name: tab, exact: true })).click();
     await expect(page.locator("body")).not.toContainText("Cannot read properties");
     await page.waitForTimeout(400);
@@ -29,7 +29,7 @@ test("health page shows live status", async ({ page }) => {
 
 test("events page lists a published event", async ({ page }) => {
   // self-seed — don't depend on pre-existing rows (other specs may clear events)
-  await page.request.post("http://127.0.0.1:8080/api/v1/events/", {
+  await page.request.post("http://127.0.0.1:8080/api/v1/event/", {
     data: { topic: "demo.cli", data: { via: "playwright" } },
   });
   await page.goto("/");

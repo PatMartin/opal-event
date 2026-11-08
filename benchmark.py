@@ -118,9 +118,9 @@ def stats(client: httpx.Client, base_url: str) -> dict:
 
 
 def _delete_rule(client: httpx.Client, base_url: str, rule_id: str) -> None:
-    r = client.get(f"{base_url}/api/v1/rules/{rule_id}", timeout=10)
+    r = client.get(f"{base_url}/api/v1/rule/{rule_id}", timeout=10)
     assert r.status_code == 200, f"GET /rules/{rule_id} -> {r.status_code}"
-    d = client.delete(f"{base_url}/api/v1/rules/{rule_id}", headers={"If-Match": r.headers.get("etag", "")}, timeout=10)
+    d = client.delete(f"{base_url}/api/v1/rule/{rule_id}", headers={"If-Match": r.headers.get("etag", "")}, timeout=10)
     assert d.status_code in (204, 404), f"DELETE /rules/{rule_id} -> {d.status_code}"
 
 
@@ -128,7 +128,7 @@ def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenar
     """Replace any prior benchmark rules with exactly ``rule_count`` fresh rules:
     K-1 that always evaluate but never match + 1 that matches -> bench_noop.
     Fails fast if cleanup or creation didn't leave the catalog exactly as intended."""
-    for rid in [r["id"] for r in client.get(f"{base_url}/api/v1/rules/", timeout=10).json()["items"]]:
+    for rid in [r["id"] for r in client.get(f"{base_url}/api/v1/rule/", timeout=10).json()["items"]]:
         if rid.startswith("bench_rule_"):
             _delete_rule(client, base_url, rid)
     for i in range(rule_count):
@@ -143,12 +143,13 @@ def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenar
             ],
             "actions": ["bench_noop"] if matching else [],
         }
-        r = client.post(f"{base_url}/api/v1/rules/", json=body, timeout=10)
+        etag = client.get(f"{base_url}/api/v1/rule/", timeout=10).headers["etag"]
+        r = client.post(f"{base_url}/api/v1/rule/", json=body, headers={"If-Match": etag}, timeout=10)
         assert r.status_code == 201, f"rule create -> {r.status_code}: {r.text[:200]}"
 
     # Fail fast if the catalog doesn't contain EXACTLY the intended benchmark rules — a leftover
     # from a failed delete or a create that didn't land would silently skew the measurement.
-    catalog = {r["id"] for r in client.get(f"{base_url}/api/v1/rules/", timeout=10).json()["items"]}
+    catalog = {r["id"] for r in client.get(f"{base_url}/api/v1/rule/", timeout=10).json()["items"]}
     bench = {rid for rid in catalog if rid.startswith("bench_rule_")}
     expected = {f"bench_rule_{scenario_tag}_{i}" for i in range(rule_count)}
     assert bench == expected, f"catalog has unexpected benchmark rules: {sorted(bench ^ expected)}"
@@ -170,7 +171,7 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
         envelope = {"topic": "bench.throughput", "source": f"bench-{mode}", "data": {"seq": i}}
         if mode == "rest":
             t0 = time.monotonic()
-            r = client.post(f"{base_url}/api/v1/events/", json=envelope, timeout=30)
+            r = client.post(f"{base_url}/api/v1/event/", json=envelope, timeout=30)
             lat_ms.append((time.monotonic() - t0) * 1000)
             if r.status_code == 202:
                 sent += 1

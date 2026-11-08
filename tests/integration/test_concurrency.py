@@ -6,100 +6,100 @@ from __future__ import annotations
 
 class TestRulesConcurrency:
     def test_list_and_get_return_etag(self, app_client):
-        list_resp = app_client.get("/api/v1/rules/")
+        list_resp = app_client.get("/api/v1/rule/")
         assert list_resp.status_code == 200
         assert list_resp.headers["etag"]
-        get_resp = app_client.get("/api/v1/rules/front_door_alert")
+        get_resp = app_client.get("/api/v1/rule/front_door_alert")
         assert get_resp.headers["etag"] == list_resp.headers["etag"]
 
     def test_list_is_a_full_catalog_with_no_cursor(self, app_client):
-        data = app_client.get("/api/v1/rules/").json()
-        assert data["next_cursor"] is None
+        data = app_client.get("/api/v1/rule/").json()
+        assert data["has_more"] is False
         assert isinstance(data["items"], list)
         # cursor/limit query params are no longer part of the contract; passing them is harmless no-ops.
-        resp = app_client.get("/api/v1/rules/", params={"cursor": "ignored", "limit": 1})
+        resp = app_client.get("/api/v1/rule/", params={"cursor": "ignored", "limit": 1})
         assert len(resp.json()["items"]) == len(data["items"])
 
     def test_patch_without_if_match_is_428(self, app_client):
-        resp = app_client.patch("/api/v1/rules/front_door_alert", json={"enabled": False})
+        resp = app_client.patch("/api/v1/rule/front_door_alert", json={"enabled": False})
         assert resp.status_code == 428
         assert resp.json()["error"]["code"] == "precondition_required"
 
     def test_patch_with_stale_if_match_is_412(self, app_client):
-        resp = app_client.patch("/api/v1/rules/front_door_alert", json={"enabled": False}, headers={"If-Match": "stale"})
+        resp = app_client.patch("/api/v1/rule/front_door_alert", json={"enabled": False}, headers={"If-Match": "stale"})
         assert resp.status_code == 412
         assert resp.json()["error"]["code"] == "precondition_failed"
 
     def test_patch_with_correct_if_match_succeeds(self, app_client):
-        etag = app_client.get("/api/v1/rules/front_door_alert").headers["etag"]
-        resp = app_client.patch("/api/v1/rules/front_door_alert", json={"enabled": False}, headers={"If-Match": etag})
+        etag = app_client.get("/api/v1/rule/front_door_alert").headers["etag"]
+        resp = app_client.patch("/api/v1/rule/front_door_alert", json={"enabled": False}, headers={"If-Match": etag})
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
 
     def test_delete_without_if_match_is_428(self, app_client):
-        resp = app_client.delete("/api/v1/rules/front_door_alert")
+        resp = app_client.delete("/api/v1/rule/front_door_alert")
         assert resp.status_code == 428
 
     def test_delete_with_stale_if_match_is_412(self, app_client):
-        resp = app_client.delete("/api/v1/rules/front_door_alert", headers={"If-Match": "stale"})
+        resp = app_client.delete("/api/v1/rule/front_door_alert", headers={"If-Match": "stale"})
         assert resp.status_code == 412
 
     def test_delete_with_correct_if_match_succeeds(self, app_client):
-        etag = app_client.get("/api/v1/rules/front_door_alert").headers["etag"]
-        resp = app_client.delete("/api/v1/rules/front_door_alert", headers={"If-Match": etag})
+        etag = app_client.get("/api/v1/rule/front_door_alert").headers["etag"]
+        resp = app_client.delete("/api/v1/rule/front_door_alert", headers={"If-Match": etag})
         assert resp.status_code == 204
 
 
 class TestActionsConcurrency:
     def test_list_and_get_return_etag(self, app_client):
-        list_resp = app_client.get("/api/v1/actions/")
+        list_resp = app_client.get("/api/v1/action/")
         assert list_resp.headers["etag"]
-        get_resp = app_client.get("/api/v1/actions/echo_action")
+        get_resp = app_client.get("/api/v1/action/echo_action")
         assert get_resp.headers["etag"] == list_resp.headers["etag"]
 
     def test_list_is_a_full_catalog_with_no_cursor(self, app_client):
-        data = app_client.get("/api/v1/actions/").json()
-        assert data["next_cursor"] is None
+        data = app_client.get("/api/v1/action/").json()
+        assert data["has_more"] is False
 
     def test_patch_without_if_match_is_428(self, app_client):
-        resp = app_client.patch("/api/v1/actions/echo_action", json={"enabled": False})
+        resp = app_client.patch("/api/v1/action/echo_action", json={"enabled": False})
         assert resp.status_code == 428
 
     def test_patch_with_stale_if_match_is_412(self, app_client):
-        resp = app_client.patch("/api/v1/actions/echo_action", json={"enabled": False}, headers={"If-Match": "stale"})
+        resp = app_client.patch("/api/v1/action/echo_action", json={"enabled": False}, headers={"If-Match": "stale"})
         assert resp.status_code == 412
 
     def test_delete_requires_if_match_before_in_use_check(self, app_client):
         # echo_action is referenced by front_door_alert; without If-Match we must still get 428
         # (precondition checked), not a 409 in-use conflict.
-        resp = app_client.delete("/api/v1/actions/echo_action")
+        resp = app_client.delete("/api/v1/action/echo_action")
         assert resp.status_code == 428
 
     def test_delete_in_use_action_with_valid_if_match_is_409(self, app_client):
-        etag = app_client.get("/api/v1/actions/echo_action").headers["etag"]
-        resp = app_client.delete("/api/v1/actions/echo_action", headers={"If-Match": etag})
+        etag = app_client.get("/api/v1/action/echo_action").headers["etag"]
+        resp = app_client.delete("/api/v1/action/echo_action", headers={"If-Match": etag})
         assert resp.status_code == 409
 
 
 class TestSettingsConcurrency:
     def test_patch_without_if_match_is_428(self, app_client):
-        resp = app_client.patch("/api/v1/settings/", json={"max_event_bytes": 500000})
+        resp = app_client.patch("/api/v1/setting/", json={"max_event_bytes": 500000})
         assert resp.status_code == 428
         assert resp.json()["error"]["code"] == "precondition_required"
 
     def test_patch_with_stale_if_match_is_412(self, app_client):
-        resp = app_client.patch("/api/v1/settings/", json={"max_event_bytes": 500000}, headers={"If-Match": "stale"})
+        resp = app_client.patch("/api/v1/setting/", json={"max_event_bytes": 500000}, headers={"If-Match": "stale"})
         assert resp.status_code == 412
         assert resp.json()["error"]["code"] == "precondition_failed"
 
     def test_patch_with_correct_if_match_succeeds(self, app_client):
-        etag = app_client.get("/api/v1/settings/").headers["etag"]
-        resp = app_client.patch("/api/v1/settings/", json={"max_event_bytes": 500000}, headers={"If-Match": etag})
+        etag = app_client.get("/api/v1/setting/").headers["etag"]
+        resp = app_client.patch("/api/v1/setting/", json={"max_event_bytes": 500000}, headers={"If-Match": etag})
         assert resp.status_code == 200
         assert resp.json()["max_event_bytes"] == 500000
 
     def test_patch_execution_settings_preserves_unspecified_fields(self, app_client):
-        get_resp = app_client.get("/api/v1/settings/")
+        get_resp = app_client.get("/api/v1/setting/")
         assert get_resp.status_code == 200
         etag = get_resp.headers["etag"]
         original_execution = get_resp.json()["execution"]
@@ -108,7 +108,7 @@ class TestSettingsConcurrency:
 
         # Patch only max_workers in execution
         patch_resp = app_client.patch(
-            "/api/v1/settings/",
+            "/api/v1/setting/",
             json={"execution": {"max_workers": new_workers}},
             headers={"If-Match": etag},
         )
@@ -121,7 +121,7 @@ class TestSettingsConcurrency:
         assert updated_settings["execution"]["max_output_bytes"] == original_execution["max_output_bytes"]
 
         # Ensure persistence by re-fetching
-        refetched = app_client.get("/api/v1/settings/").json()
+        refetched = app_client.get("/api/v1/setting/").json()
         assert refetched["execution"]["max_workers"] == new_workers
         assert refetched["execution"]["queue_size"] == original_queue_size
 
@@ -130,10 +130,10 @@ class TestSettingsConcurrency:
         broker = app_client.app.state.service.broker
         initial_broker_limit = broker.max_event_bytes
 
-        etag = app_client.get("/api/v1/settings/").headers["etag"]
+        etag = app_client.get("/api/v1/setting/").headers["etag"]
         new_limit = 250000
         patch_resp = app_client.patch(
-            "/api/v1/settings/",
+            "/api/v1/setting/",
             json={"max_event_bytes": new_limit},
             headers={"If-Match": etag},
         )
@@ -145,6 +145,6 @@ class TestSettingsConcurrency:
 
 class TestTopicsEtag:
     def test_topics_list_returns_etag(self, app_client):
-        resp = app_client.get("/api/v1/topics/")
+        resp = app_client.get("/api/v1/topic/")
         assert resp.status_code == 200
         assert resp.headers["etag"]

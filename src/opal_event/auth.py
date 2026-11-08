@@ -20,11 +20,11 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 # Fail-closed: anything not listed is denied for the execute scope.
 _EXECUTE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
-        ("GET", "/api/v1/actions/"),
-        ("GET", "/api/v1/actions/{action_id}"),
-        ("POST", "/api/v1/actions/{action_id}/execute"),
-        ("GET", "/api/v1/executions/"),
-        ("GET", "/api/v1/executions/{execution_id}"),
+        ("GET", "/api/v1/action/"),
+        ("GET", "/api/v1/action/{action_id}"),
+        ("POST", "/api/v1/action/{action_id}/execute"),
+        ("GET", "/api/v1/execution/"),
+        ("GET", "/api/v1/execution/{execution_id}"),
     }
 )
 

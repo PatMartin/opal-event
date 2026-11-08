@@ -1,4 +1,4 @@
-"""``/api/v1/events`` and ``/api/v1/topics``: publish (ZeroMQ handoff) and inspect stored history."""
+"""``/api/v1/event`` and ``/api/v1/topic``: publish (ZeroMQ handoff) and inspect stored history."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _check_time_filters(from_: str | None, to: str | None) -> None:
         )
 
 
-@router.post("/api/v1/events/", status_code=202, response_model=PublishReceipt)
+@router.post("/api/v1/event/", status_code=202, response_model=PublishReceipt)
 def publish_event(
     event_input: EventInput,
     request: Request,
@@ -78,7 +78,7 @@ def publish_event(
     return PublishReceipt(id=envelope["id"], status="accepted", published_at=envelope["timestamp"])
 
 
-@router.get("/api/v1/events/", response_model=ListEvents)
+@router.get("/api/v1/event/", response_model=ListEvents)
 def list_events(
     service: Annotated[EventService, Depends(get_service)],
     cursor: str | None = None,
@@ -95,10 +95,12 @@ def list_events(
         cursor=inner_cursor, limit=limit, topic=topic, source=source, time_from=from_, time_to=to
     )
     next_cursor = encode_scoped_cursor(next_inner_cursor, filters) if next_inner_cursor else None
-    return ListEvents(items=[Event.model_validate(item) for item in items], next_cursor=next_cursor)
+    return ListEvents(
+        items=[Event.model_validate(item) for item in items], next_cursor=next_cursor, has_more=next_cursor is not None
+    )
 
 
-@router.get("/api/v1/events/{event_id}", response_model=Event)
+@router.get("/api/v1/event/{event_id}", response_model=Event)
 def get_event(event_id: str, service: Annotated[EventService, Depends(get_service)]):
     event = service.db.get_event(event_id)
     if event is None:
@@ -106,20 +108,20 @@ def get_event(event_id: str, service: Annotated[EventService, Depends(get_servic
     return Event.model_validate(event)
 
 
-@router.delete("/api/v1/events/{event_id}", status_code=204)
+@router.delete("/api/v1/event/{event_id}", status_code=204)
 def delete_event(event_id: str, service: Annotated[EventService, Depends(get_service)]):
     if not service.db.delete_event(event_id):
         raise NotFoundError(f"event '{event_id}' not found")
     return Response(status_code=204)
 
 
-@router.get("/api/v1/topics/", response_model=TopicList)
+@router.get("/api/v1/topic/", response_model=TopicList)
 def list_topics(service: Annotated[EventService, Depends(get_service)], response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     return TopicList(items=service.db.list_topics())
 
 
-@router.delete("/api/v1/events/", status_code=204)
+@router.delete("/api/v1/event/", status_code=204)
 def clear_events(service: Annotated[EventService, Depends(get_service)]):
     service.db.clear_events()
     return Response(status_code=204)

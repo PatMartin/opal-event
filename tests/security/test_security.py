@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 _AUTH_SECURITY = {"rest_auth": {"enabled": True, "token_env": "OPAL_EVENT_API_TOKEN"}, "http_action_allowlist": []}
@@ -18,21 +19,21 @@ class TestRestAuth:
         monkeypatch.setenv("OPAL_EVENT_API_TOKEN", "s3cret")
         client = make_client(security=_AUTH_SECURITY)
         with client as c:
-            resp = c.get("/api/v1/rules/")
+            resp = c.get("/api/v1/rule/")
             assert resp.status_code == 401
 
     def test_requests_accepted_with_correct_token(self, make_client, monkeypatch):
         monkeypatch.setenv("OPAL_EVENT_API_TOKEN", "s3cret")
         client = make_client(security=_AUTH_SECURITY)
         with client as c:
-            resp = c.get("/api/v1/rules/", headers={"Authorization": "Bearer s3cret"})
+            resp = c.get("/api/v1/rule/", headers={"Authorization": "Bearer s3cret"})
             assert resp.status_code == 200
 
     def test_wrong_token_rejected(self, make_client, monkeypatch):
         monkeypatch.setenv("OPAL_EVENT_API_TOKEN", "s3cret")
         client = make_client(security=_AUTH_SECURITY)
         with client as c:
-            resp = c.get("/api/v1/rules/", headers={"Authorization": "Bearer wrong"})
+            resp = c.get("/api/v1/rule/", headers={"Authorization": "Bearer wrong"})
             assert resp.status_code == 401
 
     def test_health_live_and_ready_do_not_require_auth(self, make_client, monkeypatch):
@@ -60,11 +61,11 @@ class TestHttpActionAllowlist:
             security={"rest_auth": {"enabled": False, "token_env": "OPAL_EVENT_API_TOKEN"}, "http_action_allowlist": []},
         )
         with client as c:
-            resp = c.post("/api/v1/actions/bad_http/execute", json={"event": {"topic": "t", "data": {}}})
+            resp = c.post("/api/v1/action/bad_http/execute", json={"event": {"topic": "t", "data": {}}})
             assert resp.status_code == 202
             execution_id = resp.json()["id"]
-            assert wait_until(lambda: c.get(f"/api/v1/executions/{execution_id}").json()["status"] == "failed")
-            execution = c.get(f"/api/v1/executions/{execution_id}").json()
+            assert wait_until(lambda: c.get(f"/api/v1/execution/{execution_id}").json()["status"] == "failed")
+            execution = c.get(f"/api/v1/execution/{execution_id}").json()
             assert execution["error_code"] == "destination_not_allowed"
 
     def test_http_action_invalid_header_value_fails(self, make_client):
@@ -89,13 +90,13 @@ class TestHttpActionAllowlist:
         )
         with client as c:
             resp = c.post(
-                "/api/v1/actions/bad_header_http/execute",
+                "/api/v1/action/bad_header_http/execute",
                 json={"event": {"topic": "t", "data": {"count": 42}}},
             )
             assert resp.status_code == 202
             execution_id = resp.json()["id"]
-            assert wait_until(lambda: c.get(f"/api/v1/executions/{execution_id}").json()["status"] == "failed")
-            execution = c.get(f"/api/v1/executions/{execution_id}").json()
+            assert wait_until(lambda: c.get(f"/api/v1/execution/{execution_id}").json()["status"] == "failed")
+            execution = c.get(f"/api/v1/execution/{execution_id}").json()
             assert execution["error_code"] == "invalid_header_value"
             assert "must be a string" in execution["error_message"]
 
@@ -110,8 +111,8 @@ class TestShellArgvIsolation:
                     "type": "shell",
                     "enabled": True,
                     "mode": "exec",
-                    "executable": "/bin/echo",
-                    "args": ["{{data.payload}}"],
+                    "executable": sys.executable,
+                    "args": ["-c", "import sys; print(sys.argv[1])", "{{data.payload}}"],
                     "stdin": "none",
                     "timeout_seconds": 5,
                 }
@@ -121,12 +122,12 @@ class TestShellArgvIsolation:
         malicious = "; touch /tmp/opal_event_pwned_$$; echo"
         with client as c:
             resp = c.post(
-                "/api/v1/actions/echo_arg/execute",
+                "/api/v1/action/echo_arg/execute",
                 json={"event": {"topic": "t", "data": {"payload": malicious}}},
             )
             execution_id = resp.json()["id"]
-            assert wait_until(lambda: c.get(f"/api/v1/executions/{execution_id}").json()["status"] == "succeeded")
-            execution = c.get(f"/api/v1/executions/{execution_id}").json()
+            assert wait_until(lambda: c.get(f"/api/v1/execution/{execution_id}").json()["status"] == "succeeded")
+            execution = c.get(f"/api/v1/execution/{execution_id}").json()
             # The payload is echoed back verbatim as a single argv entry, not executed as shell code.
             assert execution["stdout"].strip() == malicious
             assert not os.path.exists("/tmp/opal_event_pwned_" + str(os.getpid()))

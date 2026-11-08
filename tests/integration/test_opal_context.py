@@ -52,13 +52,13 @@ class TestOpalContextHeaders:
         assert resp.status_code == 422
 
     def test_context_echoed_on_error_responses_too(self, app_client):
-        resp = app_client.get("/api/v1/rules/missing-rule", headers={"X-Opal-Session-Id": "sess-err"})
+        resp = app_client.get("/api/v1/rule/missing-rule", headers={"X-Opal-Session-Id": "sess-err"})
         assert resp.status_code == 404
         assert resp.headers["x-opal-session-id"] == "sess-err"
         assert "x-opal-transaction-id" in resp.headers
 
     def test_problem_error_request_id_matches_context_header(self, app_client):
-        resp = app_client.get("/api/v1/rules/missing-rule")
+        resp = app_client.get("/api/v1/rule/missing-rule")
         body = resp.json()
         assert body["error"]["request_id"] == resp.headers["x-opal-request-id"]
 
@@ -74,7 +74,7 @@ class TestOpalContextHeaders:
         monkeypatch.setattr(service.broker, "_on_event", capture)
 
         resp = app_client.post(
-            "/api/v1/events/",
+            "/api/v1/event/",
             json={"topic": "metadata.observed.test", "data": {"foo": "bar"}},
             headers={
                 "X-Opal-Session-Id": "sess-propagate-1",
@@ -112,7 +112,7 @@ class TestOpalContextHeaders:
 
         # Only session_id supplied; transaction_id is assigned by middleware; causation_id absent
         resp = app_client.post(
-            "/api/v1/events/",
+            "/api/v1/event/",
             json={"topic": "metadata.partial.test", "data": {"a": 1}},
             headers={"X-Opal-Session-Id": "sess-only-123"},
         )

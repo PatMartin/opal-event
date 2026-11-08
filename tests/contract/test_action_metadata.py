@@ -81,10 +81,16 @@ def test_malformed_or_remote_schema_rejected(bad) -> None:
 # -- REST layer -------------------------------------------------------------------
 
 
+def _post_action(client, body: dict):
+    """POST a valid action create with the mandatory collection If-Match (v1.6.0)."""
+    etag = client.get("/api/v1/action/").headers["etag"]
+    return client.post("/api/v1/action/", json=body, headers={"If-Match": etag})
+
+
 def test_create_show_patch_metadata(app_client: TestClient) -> None:
-    created = app_client.post("/api/v1/actions/", json=_shell_action())
+    created = _post_action(app_client, _shell_action())
     assert created.status_code in (200, 201), created.text
-    shown = app_client.get("/api/v1/actions/schema_action")
+    shown = app_client.get("/api/v1/action/schema_action")
     etag = shown.headers.get("etag")
     body = shown.json()
     for field, value in _META.items():
@@ -92,7 +98,7 @@ def test_create_show_patch_metadata(app_client: TestClient) -> None:
     assert body["input_schema"] == _SCHEMA
 
     patched = app_client.patch(
-        "/api/v1/actions/schema_action",
+        "/api/v1/action/schema_action",
         json={"description": "Updated purpose", "keywords": ["new"]},
         headers={"If-Match": etag} if etag else {},
     )
@@ -102,27 +108,27 @@ def test_create_show_patch_metadata(app_client: TestClient) -> None:
 
 
 def test_execute_validates_declared_schema(app_client: TestClient) -> None:
-    assert app_client.post("/api/v1/actions/", json=_shell_action()).status_code in (200, 201)
-    missing = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
+    assert _post_action(app_client, _shell_action()).status_code in (200, 201)
+    missing = app_client.post("/api/v1/action/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
     assert missing.status_code == 422, missing.text
-    wrong_type = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": 42}}})
+    wrong_type = app_client.post("/api/v1/action/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": 42}}})
     assert wrong_type.status_code == 422
-    ok = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}})
+    ok = app_client.post("/api/v1/action/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}})
     assert ok.status_code == 202
 
 
 def test_execute_legacy_action_unchanged(app_client: TestClient) -> None:
     # echo_action from base config has no input_schema -> executes regardless of data shape
-    response = app_client.post("/api/v1/actions/echo_action/execute", json={"event": {"topic": "t", "data": {"anything": True}}})
+    response = app_client.post("/api/v1/action/echo_action/execute", json={"event": {"topic": "t", "data": {"anything": True}}})
     assert response.status_code == 202
 
 
 def test_execute_rejects_before_side_effect(app_client: TestClient) -> None:
-    assert app_client.post("/api/v1/actions/", json=_shell_action()).status_code in (200, 201)
-    before = app_client.get("/api/v1/executions/").json() if app_client.get("/api/v1/executions/").status_code == 200 else {}
-    rejected = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
+    assert _post_action(app_client, _shell_action()).status_code in (200, 201)
+    before = app_client.get("/api/v1/execution/").json() if app_client.get("/api/v1/execution/").status_code == 200 else {}
+    rejected = app_client.post("/api/v1/action/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
     assert rejected.status_code == 422
-    after = app_client.get("/api/v1/executions/")
+    after = app_client.get("/api/v1/execution/")
     if after.status_code == 200:
         assert after.json() == before or len(after.json().get("items", after.json())) == len(
             before.get("items", before) if isinstance(before, dict) else before
@@ -133,8 +139,8 @@ def test_execute_rejects_before_side_effect(app_client: TestClient) -> None:
 
 
 def test_list_actions_returns_metadata(app_client: TestClient) -> None:
-    assert app_client.post("/api/v1/actions/", json=_shell_action()).status_code in (200, 201)
-    items = app_client.get("/api/v1/actions/").json()["items"]
+    assert _post_action(app_client, _shell_action()).status_code in (200, 201)
+    items = app_client.get("/api/v1/action/").json()["items"]
     entry = next(a for a in items if a["id"] == "schema_action")
     for field, value in _META.items():
         assert entry[field] == value
@@ -144,7 +150,7 @@ def test_list_actions_returns_metadata(app_client: TestClient) -> None:
 def test_metadata_persists_in_settings_yaml(app_client: TestClient, config_path) -> None:
     import yaml
 
-    assert app_client.post("/api/v1/actions/", json=_shell_action()).status_code in (200, 201)
+    assert _post_action(app_client, _shell_action()).status_code in (200, 201)
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     entry = next(a for a in raw["actions"] if a["id"] == "schema_action")
     for field, value in _META.items():
@@ -153,13 +159,13 @@ def test_metadata_persists_in_settings_yaml(app_client: TestClient, config_path)
 
 
 def test_patch_requires_and_verifies_etag(app_client: TestClient) -> None:
-    assert app_client.post("/api/v1/actions/", json=_shell_action()).status_code in (200, 201)
-    etag = app_client.get("/api/v1/actions/schema_action").headers.get("etag")
-    missing = app_client.patch("/api/v1/actions/schema_action", json={"description": "x"})
+    assert _post_action(app_client, _shell_action()).status_code in (200, 201)
+    etag = app_client.get("/api/v1/action/schema_action").headers.get("etag")
+    missing = app_client.patch("/api/v1/action/schema_action", json={"description": "x"})
     assert missing.status_code == 428
-    stale = app_client.patch("/api/v1/actions/schema_action", json={"description": "x"}, headers={"If-Match": '"bogus-revision"'})
+    stale = app_client.patch("/api/v1/action/schema_action", json={"description": "x"}, headers={"If-Match": '"bogus-revision"'})
     assert stale.status_code == 412
-    ok = app_client.patch("/api/v1/actions/schema_action", json={"description": "x"}, headers={"If-Match": etag})
+    ok = app_client.patch("/api/v1/action/schema_action", json={"description": "x"}, headers={"If-Match": etag})
     assert ok.status_code == 200
 
 
@@ -168,7 +174,7 @@ def test_patch_requires_and_verifies_etag(app_client: TestClient) -> None:
 
 def test_oversized_input_schema_rejected(app_client: TestClient) -> None:
     big_schema = {"type": "object", "properties": {f"p{i}": {"type": "string"} for i in range(2000)}}
-    response = app_client.post("/api/v1/actions/", json=_shell_action(input_schema=big_schema))
+    response = app_client.post("/api/v1/action/", json=_shell_action(input_schema=big_schema))
     assert response.status_code == 422
 
 
@@ -184,7 +190,7 @@ def test_oversized_input_schema_rejected(app_client: TestClient) -> None:
     ],
 )
 def test_metadata_bounds_enforced(app_client: TestClient, field, value) -> None:
-    response = app_client.post("/api/v1/actions/", json=_shell_action(**{field: value}))
+    response = app_client.post("/api/v1/action/", json=_shell_action(**{field: value}))
     assert response.status_code == 422, response.text
 
 
@@ -197,12 +203,12 @@ def test_metadata_bounds_enforced(app_client: TestClient, field, value) -> None:
     ],
 )
 def test_create_rejects_bad_schema_metadata(app_client: TestClient, bad_schema) -> None:
-    response = app_client.post("/api/v1/actions/", json=_shell_action(input_schema=bad_schema))
+    response = app_client.post("/api/v1/action/", json=_shell_action(input_schema=bad_schema))
     assert response.status_code == 422, response.text
 
 
 def test_unknown_property_rejected(app_client: TestClient) -> None:
-    response = app_client.post("/api/v1/actions/", json=_shell_action(output_schema={"type": "object"}))
+    response = app_client.post("/api/v1/action/", json=_shell_action(output_schema={"type": "object"}))
     assert response.status_code == 422
 
 
@@ -233,8 +239,8 @@ def test_execute_schema_enforced_for_all_types(app_client: TestClient, atype) ->
             "input_schema": _SCHEMA,
             **_META,
         }
-    assert app_client.post("/api/v1/actions/", json=action).status_code in (200, 201)
-    bad = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
+    assert _post_action(app_client, action).status_code in (200, 201)
+    bad = app_client.post("/api/v1/action/schema_action/execute", json={"event": {"topic": "t", "data": {}}})
     assert bad.status_code == 422, bad.text
-    good = app_client.post("/api/v1/actions/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}})
+    good = app_client.post("/api/v1/action/schema_action/execute", json={"event": {"topic": "t", "data": {"camera": "front"}}})
     assert good.status_code == 202, good.text

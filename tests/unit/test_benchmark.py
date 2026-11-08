@@ -33,15 +33,15 @@ class FakeClient:
             return self._last_stats
 
     def get(self, url, timeout=None, **kw):
-        if url.endswith("/api/v1/rules/"):
-            return _Resp(200, {"items": self._rules})
+        if url.endswith("/api/v1/rule/"):
+            return _Resp(200, {"items": self._rules}, {"etag": '"r1"'})
         if url.endswith("/api/v1/stats/"):
             self._last_stats = self._stats()
             return _Resp(200, self._last_stats)
         return _Resp(200, {}, {"etag": '"r1"'})
 
     def post(self, url, json=None, timeout=None, **kw):
-        if url.endswith("/api/v1/rules/"):
+        if url.endswith("/api/v1/rule/"):
             self.created.append(json["id"])
             self._rules.append({"id": json["id"]})
             return _Resp(201)

@@ -1,4 +1,4 @@
-"""``/api/v1/rules``: CRUD over YAML-persisted rules plus a dry-run ``/test`` endpoint.
+"""``/api/v1/rule``: CRUD over YAML-persisted rules plus a dry-run ``/test`` endpoint.
 
 Rules became a bounded configuration catalog in opal_event.1.2.0.yaml: the list endpoint returns the
 complete collection (no cursor pagination) with a strong ETag, and PATCH/DELETE now require a
@@ -31,14 +31,17 @@ def _normalize_event_input(event_input: EventInput) -> dict[str, Any]:
     return normalize_event(event_input)
 
 
-@router.get("/api/v1/rules/", response_model=ListRules)
+@router.get("/api/v1/rule/", response_model=ListRules)
 def list_rules(response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
-    return ListRules(items=config.settings.rules, next_cursor=None)
+    return ListRules(items=config.settings.rules, has_more=False)
 
 
-@router.post("/api/v1/rules/", response_model=Rule, status_code=201)
-def create_rule(rule: Rule, response: Response, config=Depends(get_config)):
+@router.post("/api/v1/rule/", response_model=Rule, status_code=201)
+def create_rule(rule: Rule, response: Response, config=Depends(get_config), if_match: str | None = Header(default=None)):
+    if if_match is None:
+        raise PreconditionRequiredError()
+
     def mutate(raw: dict) -> dict:
         existing = raw.get("rules", [])
         if any(r["id"] == rule.id for r in existing):
@@ -49,12 +52,15 @@ def create_rule(rule: Rule, response: Response, config=Depends(get_config)):
         raw["rules"] = [*existing, rule.model_dump(mode="json")]
         return raw
 
-    new_settings = config.update(mutate)
-    response.headers["Location"] = f"/api/v1/rules/{rule.id}"
+    try:
+        new_settings = config.update(mutate, expected_revision=if_match)
+    except ConcurrentUpdateError as exc:
+        raise PreconditionFailedError(str(exc)) from exc
+    response.headers["Location"] = f"/api/v1/rule/{rule.id}"
     return next(r for r in new_settings.rules if r.id == rule.id)
 
 
-@router.get("/api/v1/rules/{rule_id}", response_model=Rule)
+@router.get("/api/v1/rule/{rule_id}", response_model=Rule)
 def get_rule(rule_id: str, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     for rule in config.settings.rules:
@@ -63,7 +69,7 @@ def get_rule(rule_id: str, response: Response, config=Depends(get_config)):
     raise NotFoundError(f"rule '{rule_id}' not found")
 
 
-@router.delete("/api/v1/rules/{rule_id}", status_code=204)
+@router.delete("/api/v1/rule/{rule_id}", status_code=204)
 def delete_rule(rule_id: str, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
         raise PreconditionRequiredError()
@@ -83,7 +89,7 @@ def delete_rule(rule_id: str, config=Depends(get_config), if_match: str | None =
     return Response(status_code=204)
 
 
-@router.patch("/api/v1/rules/{rule_id}", response_model=Rule)
+@router.patch("/api/v1/rule/{rule_id}", response_model=Rule)
 def patch_rule(rule_id: str, patch: RulePatch, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
         raise PreconditionRequiredError()
@@ -105,7 +111,7 @@ def patch_rule(rule_id: str, patch: RulePatch, config=Depends(get_config), if_ma
     return next(r for r in new_settings.rules if r.id == rule_id)
 
 
-@router.post("/api/v1/rules/{rule_id}/test", response_model=RuleTestResult)
+@router.post("/api/v1/rule/{rule_id}/test", response_model=RuleTestResult)
 def test_rule(rule_id: str, test_input: RuleTestInput, config=Depends(get_config)):
     rule = next((r for r in config.settings.rules if r.id == rule_id), None)
     if rule is None:

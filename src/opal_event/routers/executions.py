@@ -1,4 +1,4 @@
-"""``/api/v1/executions``: read-only inspection of the action execution history."""
+"""``/api/v1/execution``: read-only inspection of the action execution history."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from opal_event.service import EventService
 router = APIRouter(dependencies=[Depends(require_auth)])
 
 
-@router.get("/api/v1/executions/", response_model=ListExecutions)
+@router.get("/api/v1/execution/", response_model=ListExecutions)
 def list_executions(
     service: Annotated[EventService, Depends(get_service)],
     cursor: str | None = None,
@@ -37,7 +37,7 @@ def list_executions(
     )
 
 
-@router.get("/api/v1/executions/{execution_id}", response_model=Execution)
+@router.get("/api/v1/execution/{execution_id}", response_model=Execution)
 def get_execution(execution_id: str, service: Annotated[EventService, Depends(get_service)]):
     execution = service.db.get_execution(execution_id)
     if execution is None:

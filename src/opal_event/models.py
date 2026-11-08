@@ -1,4 +1,4 @@
-"""Pydantic models mirroring the schemas in ``opal_event.yaml``.
+"""Pydantic models mirroring the schemas in ``openapi/opal_event_v1.6.0.yaml``.
 
 Field names, types, constraints, and ``additionalProperties: false`` semantics are kept in lock-step with the
 OpenAPI contract. The contract is authoritative; do not add fields here that are not present there.
@@ -80,6 +80,7 @@ class PublishReceipt(Strict):
 class ListEvents(Strict):
     items: list[Event]
     next_cursor: str | None = None
+    has_more: bool
 
 
 class TopicList(Strict):
@@ -122,7 +123,7 @@ class RulePatch(Strict):
 
 class ListRules(Strict):
     items: list[Rule]
-    next_cursor: str | None = None
+    has_more: bool = False
 
 
 class RuleTestInput(Strict):
@@ -328,7 +329,7 @@ ActionPatch = ShellActionPatch | HttpActionPatch | PythonActionPatch
 
 class ListActions(Strict):
     items: list[Action]
-    next_cursor: str | None = None
+    has_more: bool = False
 
 
 # --------------------------------------------------------------------------------------
@@ -367,6 +368,50 @@ class ListExecutions(Strict):
     items: list[Execution]
     next_cursor: str | None = None
     has_more: bool
+
+
+# --------------------------------------------------------------------------------------
+# Personas (v1.6.0): named automation identities, optionally bound to an OPAL Say voice
+# --------------------------------------------------------------------------------------
+
+PERSONA_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+
+def _utcnow() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+class PersonaCreate(Strict):
+    persona_id: Annotated[str, Field(pattern=PERSONA_ID_PATTERN, min_length=1, max_length=200)]
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    voice_id: Annotated[str, Field(min_length=1)] | None = None
+    enabled: bool = True
+
+
+class PersonaUpdate(Strict):
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    voice_id: Annotated[str, Field(min_length=1)] | None = None
+    enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> PersonaUpdate:
+        if not self.model_fields_set:
+            raise ValueError("at least one property is required")
+        return self
+
+
+class PersonaRead(Strict):
+    persona_id: str
+    name: str
+    description: str | None = None
+    voice_id: str | None = None
+    enabled: bool
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
 
 
 # --------------------------------------------------------------------------------------
@@ -422,6 +467,21 @@ class OpalHealthProbe(Strict):
     status: Literal["ok", "degraded", "unavailable"]
     ready: bool
     details: dict[str, str] | None = None
+
+
+class ServiceInfo(Strict):
+    """Kernel ``ServiceInfo``: service identity (name, package version, API contract version)."""
+
+    name: str
+    version: str
+    api_version: str
+    description: str | None = None
+
+
+class LivenessRead(Strict):
+    """Kernel ``LivenessRead``: minimal liveness payload for process supervisors."""
+
+    status: Literal["ok"] = "ok"
 
 
 class Stats(Strict):
@@ -518,6 +578,7 @@ class Settings(Strict):
     persistence: PersistenceSettings
     actions: list[Action] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)
+    personas: list[PersonaRead] = Field(default_factory=list)
 
 
 class PortablePersistenceSettings(Strict):
@@ -554,6 +615,7 @@ class ConfigBackup(Strict):
     settings: PortableSettings
     actions: list[Action]
     rules: list[Rule]
+    personas: list[PersonaRead] = Field(default_factory=list)
 
 
 class ValidationReport(Strict):

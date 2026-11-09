@@ -660,6 +660,15 @@ def service_stop(
     typer.echo(f"sent SIGTERM to opal-event-svc (pid {pid})")
 
 
+@service_app.command("view")
+def service_view() -> None:
+    """Print the last 100 lines of the service log."""
+    if not LOG_FILE.exists():
+        typer.echo(f"No log file at {LOG_FILE}; start the service via `service start` first", err=True)
+        raise typer.Exit(1)
+    typer.echo("".join(LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)[-100:]), nl=False)
+
+
 @event_app.command("log")
 def service_log(
     lines: int = typer.Option(20, "--lines", help="Print the last N log lines before following"),
@@ -699,6 +708,7 @@ def command_tree() -> None:
 
 app = typer.Typer(help="OPAL command line.", no_args_is_help=True, pretty_exceptions_enable=False)
 app.add_typer(event_app, name="event")
+app.add_typer(service_app, name="service")
 
 try:  # Share the `opal` root with sibling OPAL CLIs when they are installed alongside this one.
     from opal_talk.cli.main import talk_app  # type: ignore[import-not-found]

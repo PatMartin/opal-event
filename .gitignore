@@ -18,3 +18,4 @@ uv.lock
 # Playwright
 spa/test-results/
 spa/playwright-report/
+logs/

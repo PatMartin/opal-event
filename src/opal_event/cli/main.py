@@ -31,6 +31,7 @@ executions_app = typer.Typer(help="Inspect action execution history.", no_args_i
 info_app = typer.Typer(help="Service identity, health, and runtime metrics.", no_args_is_help=True)
 settings_app = typer.Typer(help="Portable, live-adjustable service settings.", no_args_is_help=True)
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
+service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
 for _sub, _name in (
     (rules_app, "rules"),
@@ -40,6 +41,7 @@ for _sub, _name in (
     (settings_app, "settings"),
     (backup_app, "backup"),
     (personas_app, "personas"),
+    (service_app, "service"),
 ):
     event_app.add_typer(_sub, name=_name)
 
@@ -594,6 +596,30 @@ def personas_validate(ctx: typer.Context, persona_id: str = typer.Argument(...))
     _emit(ctx, data)
     if not data["valid"]:
         raise typer.Exit(1)
+
+
+# -- `opal event service` ----------------------------------------------------------------------
+
+
+@service_app.command("start")
+def service_start(
+    config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
+    log_level: str = typer.Option("info", "--log-level", help="Uvicorn log level (critical/error/warning/info/debug)"),
+) -> None:
+    """Start the opal-event-svc REST/ZeroMQ service; blocks until stopped."""
+    import logging
+    import os
+
+    import uvicorn
+
+    from opal_event.app import create_app
+    from opal_event.config import ConfigStore
+
+    config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
+    logging.basicConfig(level=log_level.upper())
+    app = create_app(config_path)
+    cfg = ConfigStore(config_path)
+    uvicorn.run(app, host=cfg.settings.server.host, port=cfg.settings.server.port, log_level=log_level)
 
 
 @event_app.command("tree")

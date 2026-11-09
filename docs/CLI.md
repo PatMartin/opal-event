@@ -401,6 +401,11 @@ opal
         ├── delete <persona_id>                 Delete persona by ID
         │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
         └── validate <persona_id>               Check registration, enabled state, bindings
+    │
+    └── service
+        └── start                               Start opal-event-svc (blocks until stopped)
+            ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
+            └── [--log-level <level>]           Uvicorn log level [default: info]
 ```
 
 ---

@@ -605,6 +605,28 @@ PID_FILE = Path("logs") / "opal_event.pid"
 LOG_FILE = Path("logs") / "opal_events.log"
 
 
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness probe for a recorded pid (tasklist on Windows, kill(0) elsewhere)."""
+    import sys
+
+    if sys.platform == "win32":
+        import subprocess
+
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True
+        ).stdout
+        return f',"{pid}",' in out.replace(" ", "")
+    import os as _os
+
+    try:
+        _os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 @service_app.command("start")
 def service_start(
     config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
@@ -620,8 +642,12 @@ def service_start(
 
     config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
     if PID_FILE.exists():
-        typer.echo(f"Error: pid file exists ({PID_FILE}); service may already be running", err=True)
-        raise typer.Exit(1)
+        old_pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+        if _pid_alive(old_pid):
+            typer.echo(f"opal-event-svc is already running (pid {old_pid}); nothing to do")
+            return
+        PID_FILE.unlink()  # stale pid file — clean up and start fresh
+        typer.echo(f"removed stale pid file for dead pid {old_pid}", err=True)
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     kwargs: dict = {"start_new_session": True}
@@ -635,8 +661,22 @@ def service_start(
             stdin=subprocess.DEVNULL,
             **kwargs,
         )
-    PID_FILE.write_text(str(proc.pid), encoding="utf-8")
-    typer.echo(f"opal-event-svc started in background (pid {proc.pid}); logs: {LOG_FILE}")
+    # The child writes its own pidfile on startup (venv python.exe is a shim whose
+    # Popen pid differs from the real server process); wait briefly for it.
+    import time
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            typer.echo(f"opal-event-svc failed to start (exit {proc.returncode}); see {LOG_FILE}", err=True)
+            raise typer.Exit(1)
+        if PID_FILE.exists():
+            pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+            typer.echo(f"opal-event-svc started in background (pid {pid}); logs: {LOG_FILE}")
+            return
+        time.sleep(0.25)
+    typer.echo("timed out waiting for service to write its pid file", err=True)
+    raise typer.Exit(1)
 
 
 @service_app.command("stop")

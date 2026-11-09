@@ -402,21 +402,21 @@ opal
         │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
         └── validate <persona_id>               Check registration, enabled state, bindings
     │
+    ├── log                                   Tail the background service log
+    │   ├── [--lines <n>]                     Last N lines before following [default: 20]
+    │   └── [--follow/--no-follow]            Keep tailing (Ctrl+C to exit)
+    │
     └── service
-        ├── start                               Start opal-event-svc (blocks until stopped)
+        ├── start                               Start opal-event-svc in background (returns immediately)
         │   ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
         │   └── [--log-level <level>]           Uvicorn log level [default: info]
-        ├── stop                                Stop a service started via `service start`
-        │   └── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
-        └── log                                 Tail the service log file
-            ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
-            ├── [--lines <n>]                   Last N lines before following [default: 20]
-            └── [--follow/--no-follow]          Keep tailing (Ctrl+C to exit)
+        └── stop                                Stop the background service (SIGTERM via pid file)
+            └── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
 ```
 
-`service start` writes a pid file and log file next to the configured SQLite database
-(`var/opal_event.pid`, `var/opal_event.log` by default); `service stop` sends SIGTERM to the
-recorded pid, and `service log` tails the log file.
+`service start` spawns a detached `opal-event-svc` process, records its pid in
+`logs/opal_event.pid`, appends stdout/stderr to `logs/opal_events.log`, and returns immediately.
+`service stop` sends SIGTERM to the recorded pid; `opal event log` tails `logs/opal_events.log`.
 
 ---
 

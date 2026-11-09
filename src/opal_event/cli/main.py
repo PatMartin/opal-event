@@ -28,6 +28,7 @@ event_app = typer.Typer(
 rules_app = typer.Typer(help="Manage rules that match events to actions.", no_args_is_help=True)
 actions_app = typer.Typer(help="Manage registered actions (shell/http/python).", no_args_is_help=True)
 executions_app = typer.Typer(help="Inspect action execution history.", no_args_is_help=True)
+info_app = typer.Typer(help="Service identity, health, and runtime metrics.", no_args_is_help=True)
 settings_app = typer.Typer(help="Portable, live-adjustable service settings.", no_args_is_help=True)
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
@@ -35,6 +36,7 @@ for _sub, _name in (
     (rules_app, "rules"),
     (actions_app, "actions"),
     (executions_app, "executions"),
+    (info_app, "info"),
     (settings_app, "settings"),
     (backup_app, "backup"),
     (personas_app, "personas"),
@@ -222,8 +224,20 @@ def topics(ctx: typer.Context) -> None:
     _emit(ctx, _call(ctx, "get_api_v1_topics").json()["items"])
 
 
-@event_app.command("health")
-def health(
+@info_app.command("get")
+def info_get(ctx: typer.Context) -> None:
+    """Get service identity (name, version, API contract version)."""
+    _emit(ctx, _call(ctx, "opal_info_get").json())
+
+
+@info_app.command("ping")
+def info_ping(ctx: typer.Context) -> None:
+    """Liveness ping (GET /api/v1/info/ping; no auth required)."""
+    _emit(ctx, _call(ctx, "opal_info_ping").json())
+
+
+@info_app.command("health")
+def info_health(
     ctx: typer.Context,
     live: bool = typer.Option(False, "--live", help="Liveness probe only (GET /api/v1/health/live; no auth required)"),
     ready: bool = typer.Option(False, "--ready", help="Readiness probe only (GET /api/v1/health/ready; no auth required)"),
@@ -235,19 +249,10 @@ def health(
     _emit(ctx, _call(ctx, op).json())
 
 
-@event_app.command("stats")
-def stats(ctx: typer.Context) -> None:
+@info_app.command("stats")
+def info_stats(ctx: typer.Context) -> None:
     """Get event and execution counters."""
     _emit(ctx, _call(ctx, "get_api_v1_stats").json())
-
-
-@event_app.command("info")
-def info(
-    ctx: typer.Context,
-    ping: bool = typer.Option(False, "--ping", help="Liveness ping only (GET /api/v1/info/ping; no auth required)"),
-) -> None:
-    """Get service identity (name, version, API contract version)."""
-    _emit(ctx, _call(ctx, "opal_info_ping" if ping else "opal_info_get").json())
 
 
 # -- `opal event rules` --------------------------------------------------------------------------

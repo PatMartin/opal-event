@@ -81,8 +81,8 @@ Keep that terminal open. In a **second terminal**, activate the virtual environm
 
 ~~~bash
 source .venv/bin/activate
-opal event health
-opal event health --ready
+opal event info health
+opal event info health --ready
 opal event rules list
 ~~~
 
@@ -105,7 +105,7 @@ opal event publish workshop.hello \
   --source quickstart
 
 opal event list --topic workshop.hello
-opal event stats
+opal event info stats
 ~~~
 
 The sample configuration stores observed events (`persistence.event_mode: all`). Event delivery and observation are asynchronous, so history may not appear instantly.
@@ -220,7 +220,7 @@ export OPAL_EVENT_API_URL=http://127.0.0.1:8080
 # Only set a token if REST bearer authentication is enabled:
 # export OPAL_EVENT_API_TOKEN='your-token'
 
-opal event health
+opal event info health
 
 # Or override the endpoint for one call:
 opal event --api-url http://127.0.0.1:8080 --timeout 10 stats
@@ -477,10 +477,10 @@ opal event executions list --action-id announce_person
 opal event executions get EXECUTION_ID
 
 # Operational view
-opal event health
-opal event health --live
-opal event health --ready
-opal event stats
+opal event info health
+opal event info health --live
+opal event info health --ready
+opal event info stats
 opal event settings get
 ~~~
 

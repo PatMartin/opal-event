@@ -123,9 +123,9 @@ opal event executions list --limit 5     # TWO executions from ONE event
 Best-effort means observe-and-store, not fire-and-forget.
 
 ```bash
-opal event stats                              # note observed_events / matched_events
+opal event info stats                              # note observed_events / matched_events
 opal event publish unhandled.topic --data-json '{}'
-opal event stats                              # observed +1, matched unchanged
+opal event info stats                              # observed +1, matched unchanged
 opal event list | head                 # still persisted to history
 ```
 
@@ -216,7 +216,7 @@ opal event executions list --limit 5            # trigger=manual, auditable
 python -c "print('{\"padding\": \"' + 'x'*1100000 + '\"}')" > /tmp/big.json
 opal event publish oversized.event --data-json "$(cat /tmp/big.json)"
 # Error: HTTP 413 payload_too_large
-opal event stats     # invalid_events untouched — it never got in
+opal event info stats     # invalid_events untouched — it never got in
 ```
 
 ---
@@ -373,7 +373,7 @@ opal event rules test high_roller \
   --event-json '{"topic": "dice.roll", "data": {"score": 5000}}'          # dry-run
 opal event publish dice.roll --data-json '{"score": 5000}'              # live fire
 opal event executions list                                                # audit
-opal event stats                                                          # counters
+opal event info stats                                                          # counters
 opal event list --topic dice.roll                                  # storage
 opal event backup export --output checkpoint.json                         # insurance
 ```

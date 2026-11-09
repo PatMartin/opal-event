@@ -148,10 +148,10 @@ Export environment variables in your shell so you do not need to specify connect
 ```bash
 export OPAL_EVENT_API_URL=http://192.168.1.50:8080
 export OPAL_EVENT_API_TOKEN=secret-token-123
-opal event health                 # connects to 192.168.1.50 with bearer token
+opal event info health                 # connects to 192.168.1.50 with bearer token
 
 # Override for a single command:
-OPAL_EVENT_API_URL=http://pi5.local:8080 opal event stats
+OPAL_EVENT_API_URL=http://pi5.local:8080 opal event info stats
 
 # Explicit CLI flags override environment variables:
 opal event --api-url http://127.0.0.1:8080 health
@@ -162,9 +162,9 @@ opal event --api-url http://127.0.0.1:8080 health
 Use the health probes to verify connectivity:
 
 ```bash
-opal event health --live          # verifies the process is answering
-opal event health --ready         # verifies broker and database readiness (exit 1 if not ready)
-opal event health                 # summary status (status: ok | degraded)
+opal event info health --live          # verifies the process is answering
+opal event info health --ready         # verifies broker and database readiness (exit 1 if not ready)
+opal event info health                 # summary status (status: ok | degraded)
 ```
 
 If the service cannot be reached, the CLI prints an error and exits with code `2`:
@@ -322,9 +322,11 @@ opal
     ├── delete <event_id>                       Delete stored event by ID
     ├── clear                                   Clear all stored events from all topics
     ├── topics                                  List observed topics
-    ├── health [--live | --ready]               Health summary, or liveness/readiness probe (no auth)
-    ├── stats                                   Runtime metrics and counters
-    ├── info [--ping]                           Service identity, or liveness ping (no auth)
+    ├── info
+    │   ├── get                                 Service identity (name, version, API version)
+    │   ├── ping                                Liveness ping (no auth)
+    │   ├── health [--live | --ready]           Health summary, or liveness/readiness probe (no auth)
+    │   └── stats                               Runtime metrics and counters
     │
     ├── rules
     │   ├── list                                List rules (bounded catalog)
@@ -1259,7 +1261,7 @@ OPAL Event provides standard endpoints for container orchestration, monitoring, 
 Returns overall system health:
 
 ```bash
-opal event health
+opal event info health
 ```
 
 Output:
@@ -1283,7 +1285,7 @@ Fast liveness check intended for Kubernetes or systemd (`GET /api/v1/health/live
 the process is answering HTTP requests. Requires no authentication.
 
 ```bash
-opal event health --live
+opal event info health --live
 ```
 
 Output:
@@ -1299,10 +1301,10 @@ Output:
 Readiness probe intended for load balancers (`GET /api/v1/health/ready`). Checks that the ZeroMQ
 broker is running and the database is reachable. Requires no authentication. When either check
 fails the server returns `503` and the command exits with status `1`, so it can be used directly in
-scripts (e.g. `until opal event health --ready; do sleep 1; done`).
+scripts (e.g. `until opal event info health --ready; do sleep 1; done`).
 
 ```bash
-opal event health --ready
+opal event info health --ready
 ```
 
 Output:
@@ -1323,7 +1325,7 @@ Output:
 Returns in-memory operational metrics and queue counters:
 
 ```bash
-opal event stats
+opal event info stats
 ```
 
 Output:
@@ -1360,7 +1362,7 @@ an execution via event publication, inspects the result, and cleans up.
 
 ```bash
 # 1. Verify service health
-opal event health
+opal event info health
 
 # 2. Create a shell action
 opal event actions create --json '{
@@ -1552,15 +1554,15 @@ mapped below:
 | `opal event backup export` | `GET` | `/api/v1/backup/export` | None |
 | `opal event backup validate` | `POST` | `/api/v1/backup/validate` | None |
 | `opal event backup import` | `POST` | `/api/v1/backup/import` | Required (`If-Match`; auto-fetched) |
-| `opal event health` | `GET` | `/api/v1/health/` | None |
-| `opal event stats` | `GET` | `/api/v1/stats/` | None |
-| `opal event info` | `GET` | `/api/v1/info/` | None |
-| `opal event info --ping` | `GET` | `/api/v1/info/ping` | None (no auth required) |
+| `opal event info health` | `GET` | `/api/v1/health/` | None |
+| `opal event info stats` | `GET` | `/api/v1/stats/` | None |
+| `opal event info get` | `GET` | `/api/v1/info/` | None |
+| `opal event info ping` | `GET` | `/api/v1/info/ping` | None (no auth required) |
 | `opal event personas list` | `GET` | `/api/v1/persona/` | Response carries strong `ETag` |
 | `opal event personas create` | `POST` | `/api/v1/persona/` | Required (`If-Match`; auto-fetched) |
 | `opal event personas get` | `GET` | `/api/v1/persona/{persona_id}` | Response carries strong `ETag` |
 | `opal event personas update` | `PATCH` | `/api/v1/persona/{persona_id}` | Required (`If-Match`; auto-fetched) |
 | `opal event personas delete` | `DELETE` | `/api/v1/persona/{persona_id}` | Required (`If-Match`; auto-fetched) |
 | `opal event personas validate` | `POST` | `/api/v1/persona/{persona_id}/validate` | None |
-| `opal event health --live` | `GET` | `/api/v1/health/live` | None (no auth required) |
-| `opal event health --ready` | `GET` | `/api/v1/health/ready` | None (no auth required) |
+| `opal event info health --live` | `GET` | `/api/v1/health/live` | None (no auth required) |
+| `opal event info health --ready` | `GET` | `/api/v1/health/ready` | None (no auth required) |

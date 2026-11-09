@@ -212,14 +212,14 @@ In a separate terminal, test the service using the CLI:
 
 ```bash
 # Verify health
-opal event health
+opal event info health
 
 # Verify liveness and readiness
-opal event health --live
-opal event health --ready
+opal event info health --live
+opal event info health --ready
 
 # Inspect metrics
-opal event stats
+opal event info stats
 
 # Publish a test event
 opal event publish test.hello --data-json '{"message": "world"}'
@@ -290,7 +290,7 @@ git pull
 pip install -e ".[dev]"
 opal event backup export --output backup_pre_upgrade.json
 sudo systemctl restart opal-event
-opal event health --ready
+opal event info health --ready
 ```
 
 ---
@@ -1162,10 +1162,10 @@ opal
 
 ```bash
 # Health & operational stats
-opal event health
-opal event health --live
-opal event health --ready
-opal event stats
+opal event info health
+opal event info health --live
+opal event info health --ready
+opal event info stats
 
 # Publishing & viewing events
 opal event publish <topic> --data-json '<json>'
@@ -1501,10 +1501,10 @@ cd spa && npx tsc -b
 | `opal_backup_export`| `GET /api/v1/backup/export` | `opal event backup export` | Settings tab → Export button | None |
 | `opal_backup_validate_post`| `POST /api/v1/backup/validate`| `opal event backup validate`| Settings tab → Validate modal | None |
 | `opal_backup_import`| `POST /api/v1/backup/import` | `opal event backup import` | Settings tab → Import modal | `If-Match` |
-| `opal_health_get` | `GET /api/v1/health/` | `opal event health` | Health tab → Summary | None |
-| `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event stats` | Health tab → Metrics counters | None |
-| `opal_health_live_get` | `GET /api/v1/health/live` | `opal event health --live` | Health tab → Liveness badge | None |
-| `opal_health_ready_get`| `GET /api/v1/health/ready` | `opal event health --ready` | Health tab → Readiness badge | None |
+| `opal_health_get` | `GET /api/v1/health/` | `opal event info health` | Health tab → Summary | None |
+| `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event info stats` | Health tab → Metrics counters | None |
+| `opal_health_live_get` | `GET /api/v1/health/live` | `opal event info health --live` | Health tab → Liveness badge | None |
+| `opal_health_ready_get`| `GET /api/v1/health/ready` | `opal event info health --ready` | Health tab → Readiness badge | None |
 
 ## 14. Cookbook
 

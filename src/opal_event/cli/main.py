@@ -601,6 +601,14 @@ def personas_validate(ctx: typer.Context, persona_id: str = typer.Argument(...))
 # -- `opal event service` ----------------------------------------------------------------------
 
 
+def _service_runtime_files(config_path: str) -> tuple[Path, Path]:
+    """pid/log file paths, placed alongside the configured SQLite database."""
+    from opal_event.config import ConfigStore
+
+    var_dir = Path(ConfigStore(config_path).settings.persistence.database).parent
+    return var_dir / "opal_event.pid", var_dir / "opal_event.log"
+
+
 @service_app.command("start")
 def service_start(
     config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
@@ -616,10 +624,79 @@ def service_start(
     from opal_event.config import ConfigStore
 
     config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
-    logging.basicConfig(level=log_level.upper())
+    pid_file, log_file = _service_runtime_files(config_path)
+    if pid_file.exists():
+        typer.echo(f"Error: pid file exists ({pid_file}); service may already be running", err=True)
+        raise typer.Exit(1)
+
+    logging.basicConfig(
+        level=log_level.upper(),
+        handlers=[logging.StreamHandler(), logging.FileHandler(log_file, encoding="utf-8")],
+    )
     app = create_app(config_path)
     cfg = ConfigStore(config_path)
-    uvicorn.run(app, host=cfg.settings.server.host, port=cfg.settings.server.port, log_level=log_level)
+
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        uvicorn.run(app, host=cfg.settings.server.host, port=cfg.settings.server.port, log_level=log_level)
+    finally:
+        pid_file.unlink(missing_ok=True)
+
+
+@service_app.command("stop")
+def service_stop(
+    config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
+) -> None:
+    """Stop an opal-event-svc instance started via `service start` (SIGTERM by pid file)."""
+    import os
+    import signal
+
+    config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
+    pid_file, _ = _service_runtime_files(config_path)
+    if not pid_file.exists():
+        typer.echo("No pid file found; service is not running (or was not started via `service start`)", err=True)
+        raise typer.Exit(1)
+    pid = int(pid_file.read_text(encoding="utf-8").strip())
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pid_file.unlink(missing_ok=True)
+        typer.echo(f"Stale pid file removed; no process {pid}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"sent SIGTERM to opal-event-svc (pid {pid})")
+
+
+@service_app.command("log")
+def service_log(
+    config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
+    lines: int = typer.Option(20, "--lines", help="Print the last N log lines before following"),
+    follow: bool = typer.Option(True, "--follow/--no-follow", help="Keep tailing new output (Ctrl+C to exit)"),
+) -> None:
+    """Tail the opal-event-svc log file written by `service start`."""
+    import os
+    import time
+
+    config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
+    _, log_file = _service_runtime_files(config_path)
+    if not log_file.exists():
+        typer.echo(f"No log file at {log_file}; start the service via `service start` first", err=True)
+        raise typer.Exit(1)
+
+    with log_file.open("r", encoding="utf-8", errors="replace") as fh:
+        tail = fh.readlines()[-lines:] if lines > 0 else []
+        for line in tail:
+            typer.echo(line, nl=False)
+        if not follow:
+            return
+        try:
+            while True:
+                chunk = fh.read()
+                if chunk:
+                    typer.echo(chunk, nl=False)
+                else:
+                    time.sleep(0.5)
+        except KeyboardInterrupt:
+            return
 
 
 @event_app.command("tree")

@@ -15,3 +15,7 @@ config/opal_event.yaml
 .DS_Store
 .vscode/
 uv.lock
+# Playwright
+spa/test-results/
+spa/playwright-report/
+logs/

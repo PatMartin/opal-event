@@ -28,14 +28,20 @@ event_app = typer.Typer(
 rules_app = typer.Typer(help="Manage rules that match events to actions.", no_args_is_help=True)
 actions_app = typer.Typer(help="Manage registered actions (shell/http/python).", no_args_is_help=True)
 executions_app = typer.Typer(help="Inspect action execution history.", no_args_is_help=True)
+info_app = typer.Typer(help="Service identity, health, and runtime metrics.", no_args_is_help=True)
 settings_app = typer.Typer(help="Portable, live-adjustable service settings.", no_args_is_help=True)
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
+service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
+personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
 for _sub, _name in (
     (rules_app, "rules"),
     (actions_app, "actions"),
     (executions_app, "executions"),
+    (info_app, "info"),
     (settings_app, "settings"),
     (backup_app, "backup"),
+    (personas_app, "personas"),
+    (service_app, "service"),
 ):
     event_app.add_typer(_sub, name=_name)
 
@@ -135,7 +141,7 @@ def _event_input(event_json: str) -> dict[str, Any]:
 
 
 def _current_revision(ctx: typer.Context) -> str:
-    resp = _call(ctx, "get_api_v1_settings")
+    resp = _call(ctx, "opal_setting_list")
     return resp.headers["etag"]
 
 
@@ -220,8 +226,20 @@ def topics(ctx: typer.Context) -> None:
     _emit(ctx, _call(ctx, "get_api_v1_topics").json()["items"])
 
 
-@event_app.command("health")
-def health(
+@info_app.command("get")
+def info_get(ctx: typer.Context) -> None:
+    """Get service identity (name, version, API contract version)."""
+    _emit(ctx, _call(ctx, "opal_info_get").json())
+
+
+@info_app.command("ping")
+def info_ping(ctx: typer.Context) -> None:
+    """Liveness ping (GET /api/v1/info/ping; no auth required)."""
+    _emit(ctx, _call(ctx, "opal_info_ping").json())
+
+
+@info_app.command("health")
+def info_health(
     ctx: typer.Context,
     live: bool = typer.Option(False, "--live", help="Liveness probe only (GET /api/v1/health/live; no auth required)"),
     ready: bool = typer.Option(False, "--ready", help="Readiness probe only (GET /api/v1/health/ready; no auth required)"),
@@ -229,12 +247,12 @@ def health(
     """Get service health, or run the liveness (--live) or readiness (--ready) probe."""
     if live and ready:
         raise typer.BadParameter("--live and --ready are mutually exclusive")
-    op = "get_api_v1_health_live" if live else "get_api_v1_health_ready" if ready else "get_api_v1_health"
+    op = "opal_health_live_get" if live else "opal_health_ready_get" if ready else "opal_health_get"
     _emit(ctx, _call(ctx, op).json())
 
 
-@event_app.command("stats")
-def stats(ctx: typer.Context) -> None:
+@info_app.command("stats")
+def info_stats(ctx: typer.Context) -> None:
     """Get event and execution counters."""
     _emit(ctx, _call(ctx, "get_api_v1_stats").json())
 
@@ -255,9 +273,10 @@ def rules_create(
     json_str: str = typer.Option(None, "--json", help="Full Rule JSON body"),
     file: str = typer.Option(None, "--file", help="Path to a file containing the Rule JSON body"),
 ) -> None:
-    """Create a rule."""
+    """Create a rule. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
-    _emit(ctx, _call(ctx, "post_api_v1_rules", json=body).json())
+    revision = _current_revision(ctx)
+    _emit(ctx, _call(ctx, "post_api_v1_rules", json=body, headers={"If-Match": revision}).json())
 
 
 @rules_app.command("get")
@@ -322,9 +341,10 @@ def actions_create(
     json_str: str = typer.Option(None, "--json", help="Full Action JSON body (shell/http/python)"),
     file: str = typer.Option(None, "--file", help="Path to a file containing the Action JSON body"),
 ) -> None:
-    """Create an action."""
+    """Create an action. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
-    _emit(ctx, _call(ctx, "post_api_v1_actions", json=body).json())
+    revision = _current_revision(ctx)
+    _emit(ctx, _call(ctx, "post_api_v1_actions", json=body, headers={"If-Match": revision}).json())
 
 
 @actions_app.command("get")
@@ -409,7 +429,7 @@ def executions_get(ctx: typer.Context, execution_id: str = typer.Argument(...)) 
 @settings_app.command("get")
 def settings_get(ctx: typer.Context) -> None:
     """Get portable settings."""
-    _emit(ctx, _call(ctx, "get_api_v1_settings").json())
+    _emit(ctx, _call(ctx, "opal_setting_list").json())
 
 
 @settings_app.command("update")
@@ -422,7 +442,45 @@ def settings_update(
     """Update portable settings (execution/persistence subset, max_event_bytes)."""
     body = _read_payload(json_str, file)
     revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "patch_api_v1_settings", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "opal_setting_patch", json=body, headers={"If-Match": revision}).json())
+
+
+@settings_app.command("get-key")
+def settings_get_key(ctx: typer.Context, key: str = typer.Argument(..., help="Dotted portable setting key")) -> None:
+    """Get a single portable setting (e.g. execution.queue_size)."""
+    _emit(ctx, _call(ctx, "opal_setting_get", path_params={"key": key}).json())
+
+
+@settings_app.command("set-key")
+def settings_set_key(
+    ctx: typer.Context,
+    key: str = typer.Argument(..., help="Dotted portable setting key"),
+    value: str = typer.Option(..., "--value", help="JSON value to set"),
+    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
+) -> None:
+    """Set a single portable setting to a JSON value."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        typer.echo("Error: --value must be valid JSON", err=True)
+        raise typer.Exit(1) from None
+    revision = if_match or _current_revision(ctx)
+    _emit(
+        ctx,
+        _call(ctx, "opal_setting_put", path_params={"key": key}, json={"value": parsed}, headers={"If-Match": revision}).json(),
+    )
+
+
+@settings_app.command("reset-key")
+def settings_reset_key(
+    ctx: typer.Context,
+    key: str = typer.Argument(..., help="Dotted portable setting key"),
+    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
+) -> None:
+    """Reset a single portable setting to its schema default."""
+    revision = if_match or _current_revision(ctx)
+    _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision})
+    typer.echo(f"reset setting '{key}' to default")
 
 
 # -- `opal event backup` -------------------------------------------------------------------------
@@ -433,7 +491,7 @@ def backup_export(
     ctx: typer.Context, output: str = typer.Option(None, "--output", help="Write to a file instead of stdout")
 ) -> None:
     """Export portable configuration (settings, actions, rules)."""
-    data = _call(ctx, "get_api_v1_backup_export").json()
+    data = _call(ctx, "opal_backup_export").json()
     if output:
         Path(output).write_text(json.dumps(data, indent=2), encoding="utf-8")
         typer.echo(f"exported configuration to {output}", err=True)
@@ -449,7 +507,7 @@ def backup_validate(
 ) -> None:
     """Validate a portable backup without side effects."""
     body = _read_payload(json_str, file)
-    data = _call(ctx, "post_api_v1_backup_validate", json=body).json()
+    data = _call(ctx, "opal_backup_validate_post", json=body).json()
     _emit(ctx, data)
     if not data["valid"]:
         raise typer.Exit(1)
@@ -465,13 +523,232 @@ def backup_import(
     """Import a portable backup atomically (replaces portable rules/actions/settings)."""
     body = _read_payload(json_str, file)
     revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "post_api_v1_backup_import", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "opal_backup_import", json=body, headers={"If-Match": revision}).json())
+
+
+# -- `opal event personas` ---------------------------------------------------------------------
+
+
+@personas_app.command("list")
+def personas_list(
+    ctx: typer.Context,
+    enabled: bool = typer.Option(None, "--enabled/--disabled", help="Filter by enabled state"),
+) -> None:
+    """List registered personas (complete bounded catalog; no pagination)."""
+    params = {} if enabled is None else {"enabled": enabled}
+    _emit(ctx, _call(ctx, "opal_persona_list", params=params).json(), columns=["persona_id", "name", "enabled", "voice_id"])
+
+
+@personas_app.command("create")
+def personas_create(
+    ctx: typer.Context,
+    json_str: str = typer.Option(None, "--json", help="Full PersonaCreate JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the PersonaCreate JSON body"),
+    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
+) -> None:
+    """Register a persona. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
+    body = _read_payload(json_str, file)
+    revision = if_match or _current_revision(ctx)
+    _emit(ctx, _call(ctx, "opal_persona_create", json=body, headers={"If-Match": revision}).json())
+
+
+@personas_app.command("get")
+def personas_get(ctx: typer.Context, persona_id: str = typer.Argument(...)) -> None:
+    """Get a persona."""
+    _emit(ctx, _call(ctx, "opal_persona_get", path_params={"persona_id": persona_id}).json())
+
+
+@personas_app.command("update")
+def personas_update(
+    ctx: typer.Context,
+    persona_id: str = typer.Argument(...),
+    json_str: str = typer.Option(None, "--json", help="Partial PersonaUpdate JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the PersonaUpdate JSON body"),
+    if_match: str = typer.Option(None, "--if-match", help="Strong ETag precondition (default: auto-fetched)"),
+) -> None:
+    """Partially update a persona. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
+    body = _read_payload(json_str, file)
+    revision = if_match or _resource_etag(ctx, "opal_persona_get", {"persona_id": persona_id})
+    _emit(
+        ctx,
+        _call(
+            ctx, "opal_persona_patch", path_params={"persona_id": persona_id}, json=body, headers={"If-Match": revision}
+        ).json(),
+    )
+
+
+@personas_app.command("delete")
+def personas_delete(
+    ctx: typer.Context,
+    persona_id: str = typer.Argument(...),
+    if_match: str = typer.Option(None, "--if-match", help="Strong ETag precondition (default: auto-fetched)"),
+) -> None:
+    """Delete a persona. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
+    revision = if_match or _resource_etag(ctx, "opal_persona_get", {"persona_id": persona_id})
+    _call(ctx, "opal_persona_delete", path_params={"persona_id": persona_id}, headers={"If-Match": revision})
+    typer.echo(f"deleted persona {persona_id}")
+
+
+@personas_app.command("validate")
+def personas_validate(ctx: typer.Context, persona_id: str = typer.Argument(...)) -> None:
+    """Check that a persona is registered, enabled, and its bindings can be resolved."""
+    data = _call(ctx, "opal_persona_validate", path_params={"persona_id": persona_id}).json()
+    _emit(ctx, data)
+    if not data["valid"]:
+        raise typer.Exit(1)
+
+
+# -- `opal event service` ----------------------------------------------------------------------
+
+
+PID_FILE = Path("logs") / "opal_event.pid"
+LOG_FILE = Path("logs") / "opal_events.log"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort liveness probe for a recorded pid (tasklist on Windows, kill(0) elsewhere)."""
+    import sys
+
+    if sys.platform == "win32":
+        import subprocess
+
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True
+        ).stdout
+        return f',"{pid}",' in out.replace(" ", "")
+    import os as _os
+
+    try:
+        _os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@service_app.command("start")
+def service_start(
+    config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
+    log_level: str = typer.Option("info", "--log-level", help="Uvicorn log level (critical/error/warning/info/debug)"),
+) -> None:
+    """Start opal-event-svc in the background and return immediately.
+
+    Logs append to logs/opal_events.log; the child pid is recorded in logs/opal_event.pid
+    for `service stop`. Tail output with `opal event log`."""
+    import os
+    import subprocess
+    import sys
+
+    config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
+    if PID_FILE.exists():
+        old_pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+        if _pid_alive(old_pid):
+            typer.echo(f"opal-event-svc is already running (pid {old_pid}); nothing to do")
+            return
+        PID_FILE.unlink()  # stale pid file — clean up and start fresh
+        typer.echo(f"removed stale pid file for dead pid {old_pid}", err=True)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    kwargs: dict = {"start_new_session": True}
+    if sys.platform == "win32":
+        kwargs = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    with LOG_FILE.open("w", encoding="utf-8") as log:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "opal_event", "--config", config_path, "--log-level", log_level],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            **kwargs,
+        )
+    # The child writes its own pidfile on startup (venv python.exe is a shim whose
+    # Popen pid differs from the real server process); wait briefly for it.
+    import time
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            typer.echo(f"opal-event-svc failed to start (exit {proc.returncode}); see {LOG_FILE}", err=True)
+            raise typer.Exit(1)
+        if PID_FILE.exists():
+            pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+            typer.echo(f"opal-event-svc started in background (pid {pid}); logs: {LOG_FILE}")
+            return
+        time.sleep(0.25)
+    typer.echo("timed out waiting for service to write its pid file", err=True)
+    raise typer.Exit(1)
+
+
+@service_app.command("stop")
+def service_stop(
+    config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
+) -> None:
+    """Stop the background opal-event-svc (SIGTERM by pid file)."""
+    import os
+    import signal
+
+    if not PID_FILE.exists():
+        typer.echo("No pid file found; service is not running (or was not started via `service start`)", err=True)
+        raise typer.Exit(1)
+    pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        PID_FILE.unlink(missing_ok=True)
+        typer.echo(f"Stale pid file removed; no process {pid}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"sent SIGTERM to opal-event-svc (pid {pid})")
+
+
+@service_app.command("view")
+def service_view() -> None:
+    """Print the last 100 lines of the service log."""
+    if not LOG_FILE.exists():
+        typer.echo(f"No log file at {LOG_FILE}; start the service via `service start` first", err=True)
+        raise typer.Exit(1)
+    typer.echo("".join(LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)[-100:]), nl=False)
+
+
+@event_app.command("log")
+def service_log(
+    lines: int = typer.Option(20, "--lines", help="Print the last N log lines before following"),
+    follow: bool = typer.Option(True, "--follow/--no-follow", help="Keep tailing new output (Ctrl+C to exit)"),
+) -> None:
+    """Tail the opal-event-svc log until interrupted."""
+    import time
+
+    if not LOG_FILE.exists():
+        typer.echo(f"No log file at {LOG_FILE}; start the service via `service start` first", err=True)
+        raise typer.Exit(1)
+
+    with LOG_FILE.open("r", encoding="utf-8", errors="replace") as fh:
+        tail = fh.readlines()[-lines:] if lines > 0 else []
+        for line in tail:
+            typer.echo(line, nl=False)
+        if not follow:
+            return
+        try:
+            while True:
+                chunk = fh.read()
+                if chunk:
+                    typer.echo(chunk, nl=False)
+                else:
+                    time.sleep(0.5)
+        except KeyboardInterrupt:
+            return
+
+
+@event_app.command("tree")
+def command_tree() -> None:
+    """Print this CLI's command/argument tree, generated from the live Typer app."""
+    typer.echo(_render_command_tree())
 
 
 # -- `opal` root -----------------------------------------------------------------------------
 
 app = typer.Typer(help="OPAL command line.", no_args_is_help=True, pretty_exceptions_enable=False)
 app.add_typer(event_app, name="event")
+app.add_typer(service_app, name="service")
 
 try:  # Share the `opal` root with sibling OPAL CLIs when they are installed alongside this one.
     from opal_talk.cli.main import talk_app  # type: ignore[import-not-found]
@@ -486,6 +763,59 @@ try:
     app.add_typer(listen_app, name="listen")
 except Exception:  # noqa: BLE001
     pass
+
+
+def _param_label(param) -> str | None:
+    """Render one click param. Positionals as ``<name>``; required options ``--name <type>``;
+    optional options ``[ --name <type> =default ]``. Hidden and --help params are skipped."""
+
+    if getattr(param, "hidden", False):
+        return None
+    opts = getattr(param, "opts", [])
+    if not any(o.startswith("-") for o in opts):  # positional argument (TyperArgument)
+        return f"<{param.name}>" if param.required else f"[ <{param.name}> ]"
+    opts = [o for o in opts if o.startswith("--")] or list(opts)
+    if "--help" in opts or "--install-completion" in opts or "--show-completion" in opts:
+        return None
+    name = max(opts, key=len)
+    if param.secondary_opts:
+        name += "/" + param.secondary_opts[0]
+    is_flag = getattr(param, "is_flag", False)
+    core = name if is_flag else f"{name} <{param.metavar or param.type.name}>"
+    if param.required:
+        return core
+    default = param.default
+    suffix = "" if is_flag or default in (None, ()) or callable(default) else f" ={default}"
+    return f"[ {core}{suffix} ]"
+
+
+def _render_command_tree() -> str:
+    """Walk the click tree under ``event_app``: each node's children are its params first,
+    then its subcommands, drawn with single-line ASCII guides."""
+    import click
+    from typer.main import get_command
+
+    lines = ["opal event"]
+
+    def walk(cmd: click.Command, prefix: str) -> None:
+        children: list[tuple[str, click.Command | None]] = []
+        for param in getattr(cmd, "params", []):
+            label = _param_label(param)
+            if label is not None:
+                children.append((label, None))
+        subcommands = getattr(cmd, "commands", None)
+        if subcommands:
+            for sub in subcommands.values():
+                if not getattr(sub, "hidden", False):
+                    children.append((sub.name, sub))
+        for index, (label, sub) in enumerate(children):
+            last = index == len(children) - 1
+            lines.append(f"{prefix}{'`-- ' if last else '|-- '}{label}")
+            if sub is not None:
+                walk(sub, prefix + ("    " if last else "|   "))
+
+    walk(get_command(event_app), "")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

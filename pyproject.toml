@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opal-event"
-version = "1.2.0"
+version = "1.6.0"
 description = "OPAL Event: event bus, rule engine and action execution service (opal-event-svc), CLI and SPA"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,10 +17,11 @@ dependencies = [
     "httpx>=0.27",
     "pyzmq>=25.1",
     "watchfiles>=0.21",
+    "jsonschema>=4.21",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "jsonschema>=4.21", "ruff>=0.4"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4"]
 
 [project.scripts]
 opal = "opal_event.cli.main:app"
@@ -29,9 +30,6 @@ opal-event-svc = "opal_event.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-opal_event = ["contract/opal_event.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,3 +47,9 @@ ignore = ["B008"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["opal_event", "conftest"]
+
+[dependency-groups]
+dev = [
+    "pytest-timeout>=2.3",
+    "pytest-xdist>=3.5",
+]

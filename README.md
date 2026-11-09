@@ -69,6 +69,8 @@ The install gives you **three commands**:
 
 The Python distribution currently declares version **1.2.0**; the repository also carries the newer **1.4.0 OpenAPI contract**. These are different version identifiers, not interchangeable names.
 
+`openapi/opal_event_v1.6.0.yaml` is the authoritative contract, with `openapi/shared/opal_kernel.yaml` as the shared OPAL suite kernel. v1.6.0 renamed every collection route to its singular form (`/api/v1/event/`, `/api/v1/rule/`, `/api/v1/action/`, `/api/v1/execution/`, `/api/v1/topic/`, `/api/v1/setting/`), added `GET /api/v1/info/` + `GET /api/v1/info/ping`, added the `/api/v1/persona/` resource, and made `If-Match` mandatory on collection POST creates (428/412) as well as PATCH/DELETE.
+
 ### 2. Start the service
 
 ~~~bash
@@ -79,8 +81,8 @@ Keep that terminal open. In a **second terminal**, activate the virtual environm
 
 ~~~bash
 source .venv/bin/activate
-opal event health
-opal event health --ready
+opal event info health
+opal event info health --ready
 opal event rules list
 ~~~
 
@@ -103,7 +105,7 @@ opal event publish workshop.hello \
   --source quickstart
 
 opal event list --topic workshop.hello
-opal event stats
+opal event info stats
 ~~~
 
 The sample configuration stores observed events (`persistence.event_mode: all`). Event delivery and observation are asynchronous, so history may not appear instantly.
@@ -218,7 +220,7 @@ export OPAL_EVENT_API_URL=http://127.0.0.1:8080
 # Only set a token if REST bearer authentication is enabled:
 # export OPAL_EVENT_API_TOKEN='your-token'
 
-opal event health
+opal event info health
 
 # Or override the endpoint for one call:
 opal event --api-url http://127.0.0.1:8080 --timeout 10 stats
@@ -475,10 +477,10 @@ opal event executions list --action-id announce_person
 opal event executions get EXECUTION_ID
 
 # Operational view
-opal event health
-opal event health --live
-opal event health --ready
-opal event stats
+opal event info health
+opal event info health --live
+opal event info health --ready
+opal event info stats
 opal event settings get
 ~~~
 
@@ -574,7 +576,7 @@ All conditions in a rule must pass. There is no OR expression language in the cu
                                               │
                                             SQLite
 
-     REST POST /api/v1/events/ ──▶ service-owned PUB ──▶ XSUB
+     REST POST /api/v1/event/ ──▶ service-owned PUB ──▶ XSUB
      Typer CLI ──────────────────▶ REST API
      React SPA ──────────────────▶ REST API
 ~~~
@@ -583,16 +585,16 @@ The ZeroMQ proxy forwards messages as a best-effort transport. The internal obse
 
 ### REST-first by design
 
-The [OpenAPI contract](opal_event.1.4.0.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
+The [OpenAPI contract](openapi/opal_event_v1.6.0.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
 
 | Interface | Role |
 | --- | --- |
-| `/api/v1/events/` | Publish and inspect stored events |
-| `/api/v1/topics/` | List observed topics |
-| `/api/v1/rules/` | Manage and test rules |
-| `/api/v1/actions/` | Manage and manually execute actions |
-| `/api/v1/executions/` | Inspect execution history |
-| `/api/v1/settings/` | Read/update portable settings |
+| `/api/v1/event/` | Publish and inspect stored events |
+| `/api/v1/topic/` | List observed topics |
+| `/api/v1/rule/` | Manage and test rules |
+| `/api/v1/action/` | Manage and manually execute actions |
+| `/api/v1/execution/` | Inspect execution history |
+| `/api/v1/setting/` | Read/update portable settings |
 | `/api/v1/backup/*` | Export/validate/import portable configuration |
 | `/api/v1/health/`, `/api/v1/stats/` | Operational health and counters |
 
@@ -668,7 +670,7 @@ opal-event/
 ├── opal-event.png                 project artwork
 ├── README.md                      this guide
 ├── pyproject.toml                 package + CLI entry points
-├── opal_event.1.4.0.yaml          OpenAPI contract
+├── openapi/opal_event_v1.6.0.yaml  OpenAPI contract
 ├── config/opal_event.example.yaml
 ├── examples/                      sample JSON payloads
 ├── docs/CLI.md                    detailed command reference

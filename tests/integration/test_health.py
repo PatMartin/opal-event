@@ -69,12 +69,12 @@ class TestHealthReporting:
 
 
 class TestPublishReadinessConsistency:
-    """POST /api/v1/events/ and GET /api/v1/health/ready share one authoritative check:
+    """POST /api/v1/event/ and GET /api/v1/health/ready share one authoritative check:
     whatever makes readiness 503 must also refuse publication with 503."""
 
     @staticmethod
     def _publish(app_client):
-        return app_client.post("/api/v1/events/", json={"topic": "test.probe", "data": {}})
+        return app_client.post("/api/v1/event/", json={"topic": "test.probe", "data": {}})
 
     def test_healthy_service_accepts_and_reports_ready(self, app_client):
         assert app_client.get("/api/v1/health/ready").status_code == 200
@@ -117,7 +117,7 @@ class TestReadinessProbeCost:
         calls = []
         original = service.db.list_topics
         service.db.list_topics = lambda *a, **kw: calls.append(1) or original(*a, **kw)
-        assert app_client.post("/api/v1/events/", json={"topic": "test.probe", "data": {}}).status_code == 202
+        assert app_client.post("/api/v1/event/", json={"topic": "test.probe", "data": {}}).status_code == 202
         assert calls == [], "publish readiness check invoked list_topics"
 
     def test_readiness_fails_on_closed_database(self, app_client):

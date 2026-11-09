@@ -212,14 +212,14 @@ In a separate terminal, test the service using the CLI:
 
 ```bash
 # Verify health
-opal event health
+opal event info health
 
 # Verify liveness and readiness
-opal event health --live
-opal event health --ready
+opal event info health --live
+opal event info health --ready
 
 # Inspect metrics
-opal event stats
+opal event info stats
 
 # Publish a test event
 opal event publish test.hello --data-json '{"message": "world"}'
@@ -290,7 +290,7 @@ git pull
 pip install -e ".[dev]"
 opal event backup export --output backup_pre_upgrade.json
 sudo systemctl restart opal-event
-opal event health --ready
+opal event info health --ready
 ```
 
 ---
@@ -350,7 +350,7 @@ flowchart TD
 
     P1 -- "ZeroMQ PUB" --> XSUB
     P2 -- "ZeroMQ PUB" --> XSUB
-    P3 -- "POST /api/v1/events/" --> FASTAPI
+    P3 -- "POST /api/v1/event/" --> FASTAPI
     FASTAPI -- "Internal PUB" --> XSUB
 
     VAL -- "persist (event_mode)" --> DB
@@ -374,7 +374,7 @@ sequenceDiagram
     participant DB as SQLite DB
 
     alt REST Ingress
-        Client->>API: POST /api/v1/events/
+        Client->>API: POST /api/v1/event/
         API->>API: Generate ID, timestamp, assign source='opal-event-rest'
         API->>Broker: PUB [topic, json_envelope]
         API-->>Client: 202 Accepted (Receipt)
@@ -401,7 +401,7 @@ sequenceDiagram
 
 ### 3.3 Key architectural principles
 
-1. **Unified Event Ingress**: The REST endpoint (`POST /api/v1/events/`) does not execute rules directly.
+1. **Unified Event Ingress**: The REST endpoint (`POST /api/v1/event/`) does not execute rules directly.
    Instead, it publishes the normalized event into the same ZeroMQ broker socket used by external producers.
    The internal observer processes all events identically, ensuring uniform semantics across transports.
 2. **Best-Effort ZeroMQ Broker**: The XSUB/XPUB proxy is a lightweight forwarder. It does not validate,
@@ -543,7 +543,7 @@ rules:
 
 ## 5. REST API reference
 
-The REST API implements OpenAPI 3.1 as defined in `opal_event.1.4.0.yaml`. All routes reside under
+The REST API implements OpenAPI 3.1 as defined in `openapi/opal_event_v1.6.0.yaml`. All routes reside under
 `/api/v1`, collection endpoints use trailing slashes, and authentication uses standard bearer tokens:
 
 ```
@@ -563,12 +563,12 @@ Every response includes the suite-standard correlation headers:
 
 ### 5.1 Events
 
-#### `POST /api/v1/events/` — Publish an event
+#### `POST /api/v1/event/` — Publish an event
 
 Ingests an event, normalizes missing metadata, publishes it onto the ZeroMQ bus, and returns a receipt.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/api/v1/events/ \
+curl -s -X POST http://127.0.0.1:8080/api/v1/event/ \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "vision.object.detected",
@@ -586,7 +586,7 @@ Response (`202 Accepted`):
 }
 ```
 
-#### `GET /api/v1/events/` — List stored events
+#### `GET /api/v1/event/` — List stored events
 
 Returns a cursor-paginated list of stored events. Query parameters:
 - `cursor` (string): Pagination cursor.
@@ -597,7 +597,7 @@ Returns a cursor-paginated list of stored events. Query parameters:
 - `to` (string): RFC3339 timestamp filter (inclusive end).
 
 ```bash
-curl -s "http://127.0.0.1:8080/api/v1/events/?limit=2&topic=vision.object.detected"
+curl -s "http://127.0.0.1:8080/api/v1/event/?limit=2&topic=vision.object.detected"
 ```
 
 Response (`200 OK`):
@@ -616,12 +616,12 @@ Response (`200 OK`):
 }
 ```
 
-#### `GET /api/v1/events/{event_id}` — Get event by ID
+#### `GET /api/v1/event/{event_id}` — Get event by ID
 
 Retrieves an individual stored event (message) by its unique ID. Returns `200 OK` with the event payload, or `404 Not Found` if it does not exist.
 
 ```bash
-curl -s http://127.0.0.1:8080/api/v1/events/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+curl -s http://127.0.0.1:8080/api/v1/event/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
 ```
 
 Response (`200 OK`):
@@ -638,12 +638,12 @@ Response (`200 OK`):
 }
 ```
 
-#### `DELETE /api/v1/events/{event_id}` — Delete event by ID
+#### `DELETE /api/v1/event/{event_id}` — Delete event by ID
 
 Deletes an individual stored event (message) by its ID. Returns `204 No Content` on success, or `404 Not Found` if the event does not exist.
 
 ```bash
-curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/event/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
 ```
 
 Response (`204 No Content`):
@@ -659,24 +659,24 @@ When the event does not exist:
 }
 ```
 
-#### `DELETE /api/v1/events/` — Clear all events
+#### `DELETE /api/v1/event/` — Clear all events
 
 Clears all stored events from all topics in the database. Returns `204 No Content`.
 
 ```bash
-curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/event/
 ```
 
 ---
 
 ### 5.2 Topics
 
-#### `GET /api/v1/topics/` — List observed topics
+#### `GET /api/v1/topic/` — List observed topics
 
 Returns a list of all distinct topics observed in stored events or defined in rules.
 
 ```bash
-curl -s -i http://127.0.0.1:8080/api/v1/topics/
+curl -s -i http://127.0.0.1:8080/api/v1/topic/
 ```
 
 Response (`200 OK` with strong ETag):
@@ -697,18 +697,18 @@ Content-Type: application/json
 
 ### 5.3 Rules
 
-#### `GET /api/v1/rules/` — List rules catalog
+#### `GET /api/v1/rule/` — List rules catalog
 
 Returns all rules. Bounded catalog; no cursor pagination.
 
 ```bash
-curl -s -i http://127.0.0.1:8080/api/v1/rules/
+curl -s -i http://127.0.0.1:8080/api/v1/rule/
 ```
 
-#### `POST /api/v1/rules/` — Create a rule
+#### `POST /api/v1/rule/` — Create a rule
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/api/v1/rules/ \
+curl -s -X POST http://127.0.0.1:8080/api/v1/rule/ \
   -H "Content-Type: application/json" \
   -d '{
     "id": "temp_warning",
@@ -721,40 +721,40 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/rules/ \
   }'
 ```
 
-#### `GET /api/v1/rules/{rule_id}` — Get rule by ID
+#### `GET /api/v1/rule/{rule_id}` — Get rule by ID
 
 ```bash
-curl -s http://127.0.0.1:8080/api/v1/rules/temp_warning
+curl -s http://127.0.0.1:8080/api/v1/rule/temp_warning
 ```
 
-#### `PATCH /api/v1/rules/{rule_id}` — Partially update a rule
+#### `PATCH /api/v1/rule/{rule_id}` — Partially update a rule
 
 Requires an `If-Match` header with the current strong ETag.
 
 ```bash
-ETAG=$(curl -sI http://127.0.0.1:8080/api/v1/rules/temp_warning | grep -i etag | tr -d '\r\n' | awk '{print $2}')
+ETAG=$(curl -sI http://127.0.0.1:8080/api/v1/rule/temp_warning | grep -i etag | tr -d '\r\n' | awk '{print $2}')
 
-curl -s -X PATCH http://127.0.0.1:8080/api/v1/rules/temp_warning \
+curl -s -X PATCH http://127.0.0.1:8080/api/v1/rule/temp_warning \
   -H "If-Match: $ETAG" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'
 ```
 
-#### `DELETE /api/v1/rules/{rule_id}` — Delete a rule
+#### `DELETE /api/v1/rule/{rule_id}` — Delete a rule
 
 Requires an `If-Match` header.
 
 ```bash
-curl -s -X DELETE http://127.0.0.1:8080/api/v1/rules/temp_warning \
+curl -s -X DELETE http://127.0.0.1:8080/api/v1/rule/temp_warning \
   -H "If-Match: $ETAG"
 ```
 
-#### `POST /api/v1/rules/{rule_id}/test` — Dry-run evaluate a rule
+#### `POST /api/v1/rule/{rule_id}/test` — Dry-run evaluate a rule
 
 Evaluates rule logic against a sample event without executing any action.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/api/v1/rules/front_door_alert/test \
+curl -s -X POST http://127.0.0.1:8080/api/v1/rule/front_door_alert/test \
   -H "Content-Type: application/json" \
   -d '{
     "event": {
@@ -780,16 +780,16 @@ Response:
 
 ### 5.4 Actions
 
-#### `GET /api/v1/actions/` — List actions catalog
+#### `GET /api/v1/action/` — List actions catalog
 
 Returns all registered actions.
 
-#### `POST /api/v1/actions/` — Create an action
+#### `POST /api/v1/action/` — Create an action
 
 Create a shell, HTTP, or Python action.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/api/v1/actions/ \
+curl -s -X POST http://127.0.0.1:8080/api/v1/action/ \
   -H "Content-Type: application/json" \
   -d '{
     "id": "log_event",
@@ -802,26 +802,26 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/actions/ \
   }'
 ```
 
-#### `GET /api/v1/actions/{action_id}` — Get action by ID
+#### `GET /api/v1/action/{action_id}` — Get action by ID
 
 ```bash
-curl -s http://127.0.0.1:8080/api/v1/actions/log_event
+curl -s http://127.0.0.1:8080/api/v1/action/log_event
 ```
 
-#### `PATCH /api/v1/actions/{action_id}` — Update an action
+#### `PATCH /api/v1/action/{action_id}` — Update an action
 
 Requires `If-Match`.
 
-#### `DELETE /api/v1/actions/{action_id}` — Delete an action
+#### `DELETE /api/v1/action/{action_id}` — Delete an action
 
 Requires `If-Match`. Fails with `409 Conflict` if the action is referenced by any rule.
 
-#### `POST /api/v1/actions/{action_id}/execute` — Manually execute an action
+#### `POST /api/v1/action/{action_id}/execute` — Manually execute an action
 
 Executes the action immediately through the worker pool using the provided event.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/api/v1/actions/log_event/execute \
+curl -s -X POST http://127.0.0.1:8080/api/v1/action/log_event/execute \
   -H "Content-Type: application/json" \
   -d '{
     "event": {
@@ -837,7 +837,7 @@ Response: Returns the full `Execution` record with `trigger: "manual"`.
 
 ### 5.5 Executions
 
-#### `GET /api/v1/executions/` — List executions history
+#### `GET /api/v1/execution/` — List executions history
 
 Cursor-paginated audit trail. Query parameters:
 - `cursor` (string): Pagination cursor.
@@ -848,7 +848,7 @@ Cursor-paginated audit trail. Query parameters:
 - `event_id` (string): Filter by event ID.
 
 ```bash
-curl -s "http://127.0.0.1:8080/api/v1/executions/?status=failed&limit=5"
+curl -s "http://127.0.0.1:8080/api/v1/execution/?status=failed&limit=5"
 ```
 
 Response:
@@ -860,32 +860,32 @@ Response:
 }
 ```
 
-#### `GET /api/v1/executions/{execution_id}` — Get execution details
+#### `GET /api/v1/execution/{execution_id}` — Get execution details
 
 ```bash
-curl -s http://127.0.0.1:8080/api/v1/executions/c8b417e9-3891-4cf1-831e-450f381289de
+curl -s http://127.0.0.1:8080/api/v1/execution/c8b417e9-3891-4cf1-831e-450f381289de
 ```
 
 ---
 
 ### 5.6 Settings
 
-#### `GET /api/v1/settings/` — Get portable settings
+#### `GET /api/v1/setting/` — Get portable settings
 
 Returns the live, portable configuration subset with an `ETag` header.
 
 ```bash
-curl -s -i http://127.0.0.1:8080/api/v1/settings/
+curl -s -i http://127.0.0.1:8080/api/v1/setting/
 ```
 
-#### `PATCH /api/v1/settings/` — Update portable settings
+#### `PATCH /api/v1/setting/` — Update portable settings
 
 Updates execution and persistence parameters live. Requires `If-Match`.
 
 ```bash
-ETAG=$(curl -sI http://127.0.0.1:8080/api/v1/settings/ | grep -i etag | tr -d '\r\n' | awk '{print $2}')
+ETAG=$(curl -sI http://127.0.0.1:8080/api/v1/setting/ | grep -i etag | tr -d '\r\n' | awk '{print $2}')
 
-curl -s -X PATCH http://127.0.0.1:8080/api/v1/settings/ \
+curl -s -X PATCH http://127.0.0.1:8080/api/v1/setting/ \
   -H "If-Match: $ETAG" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1162,10 +1162,10 @@ opal
 
 ```bash
 # Health & operational stats
-opal event health
-opal event health --live
-opal event health --ready
-opal event stats
+opal event info health
+opal event info health --live
+opal event info health --ready
+opal event info stats
 
 # Publishing & viewing events
 opal event publish <topic> --data-json '<json>'
@@ -1367,7 +1367,7 @@ opal event delete 7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
 
 Equivalent REST operation:
 ```bash
-curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/event/7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c
 ```
 
 #### Purge all events across all topics
@@ -1381,7 +1381,7 @@ opal event clear
 
 Equivalent REST operation:
 ```bash
-curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/
+curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/event/
 ```
 
 ---
@@ -1393,7 +1393,7 @@ curl -s -i -X DELETE http://127.0.0.1:8080/api/v1/events/
 | Requirement | Preferred transport | Reason |
 |---|---|---|
 | Fire-and-forget telemetry | ZeroMQ `PUB` | Ultra-low overhead, sub-millisecond dispatch |
-| Synchronous acceptance receipt | REST `POST /events/` | HTTP 202 receipt confirms server normalization |
+| Synchronous acceptance receipt | REST `POST /event/` | HTTP 202 receipt confirms server normalization |
 | Remote network publishing | REST (with Bearer token) | Simple HTTPS routing through standard reverse proxies |
 | High-rate event streaming | ZeroMQ `SUB` | High throughput socket fan-out |
 
@@ -1473,32 +1473,42 @@ cd spa && npx tsc -b
 
 | Operation ID | Method & Path | CLI Command | Web GUI Location | Precondition |
 |---|---|---|---|---|
-| `post_api_v1_events` | `POST /api/v1/events/` | `opal event publish` | Events tab → Publish modal | None |
-| `get_api_v1_events` | `GET /api/v1/events/` | `opal event list` | Events tab → Event history | None |
-| `delete_api_v1_events` | `DELETE /api/v1/events/` | `opal event clear` | Events tab → Clear all events | None |
-| `get_api_v1_events_id` | `GET /api/v1/events/{id}` | `opal event get` | Events tab → View details | None |
-| `delete_api_v1_events_id` | `DELETE /api/v1/events/{id}` | `opal event delete` | Events tab → Delete event | None |
-| `get_api_v1_topics` | `GET /api/v1/topics/` | `opal event topics` | Events tab → Topic dropdown | ETag |
-| `get_api_v1_rules` | `GET /api/v1/rules/` | `opal event rules list` | Rules tab → Rule catalog | ETag |
-| `post_api_v1_rules` | `POST /api/v1/rules/` | `opal event rules create` | Rules tab → Create rule | None |
-| `get_api_v1_rules_id` | `GET /api/v1/rules/{id}` | `opal event rules get` | Rules tab → View rule | ETag |
-| `patch_api_v1_rules_rule_id`| `PATCH /api/v1/rules/{id}` | `opal event rules update` | Rules tab → Toggle / Edit | `If-Match` |
-| `delete_api_v1_rules_id` | `DELETE /api/v1/rules/{id}` | `opal event rules delete` | Rules tab → Delete button | `If-Match` |
-| `post_api_v1_rules_id_test`| `POST /api/v1/rules/{id}/test`| `opal event rules test` | Rules tab → Test dry-run | None |
-| `get_api_v1_actions` | `GET /api/v1/actions/` | `opal event actions list` | Actions tab → Action list | ETag |
-| `post_api_v1_actions` | `POST /api/v1/actions/` | `opal event actions create` | Actions tab → Create action | None |
-| `get_api_v1_actions_id` | `GET /api/v1/actions/{id}` | `opal event actions get` | Actions tab → View action | ETag |
-| `patch_api_v1_actions_action_id`| `PATCH /api/v1/actions/{id}`| `opal event actions update` | Actions tab → Toggle / Edit | `If-Match` |
-| `delete_api_v1_actions_id`| `DELETE /api/v1/actions/{id}`| `opal event actions delete` | Actions tab → Delete button | `If-Match` |
-| `post_api_v1_actions_id_execute`| `POST /api/v1/actions/{id}/execute`| `opal event actions execute`| Actions tab → Execute modal | None |
-| `get_api_v1_executions` | `GET /api/v1/executions/` | `opal event executions list`| Executions tab → History | None |
-| `get_api_v1_executions_id`| `GET /api/v1/executions/{id}`| `opal event executions get` | Executions tab → Details modal | None |
-| `get_api_v1_settings` | `GET /api/v1/settings/` | `opal event settings get` | Settings tab → View settings | ETag |
-| `patch_api_v1_settings`| `PATCH /api/v1/settings/` | `opal event settings update`| Settings tab → Save settings | `If-Match` |
-| `get_api_v1_backup_export`| `GET /api/v1/backup/export` | `opal event backup export` | Settings tab → Export button | None |
-| `post_api_v1_backup_validate`| `POST /api/v1/backup/validate`| `opal event backup validate`| Settings tab → Validate modal | None |
-| `post_api_v1_backup_import`| `POST /api/v1/backup/import` | `opal event backup import` | Settings tab → Import modal | `If-Match` |
-| `get_api_v1_health` | `GET /api/v1/health/` | `opal event health` | Health tab → Summary | None |
-| `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event stats` | Health tab → Metrics counters | None |
-| `get_api_v1_health_live` | `GET /api/v1/health/live` | `opal event health --live` | Health tab → Liveness badge | None |
-| `get_api_v1_health_ready`| `GET /api/v1/health/ready` | `opal event health --ready` | Health tab → Readiness badge | None |
+| `post_api_v1_events` | `POST /api/v1/event/` | `opal event publish` | Events tab → Publish modal | None |
+| `get_api_v1_events` | `GET /api/v1/event/` | `opal event list` | Events tab → Event history | None |
+| `delete_api_v1_events` | `DELETE /api/v1/event/` | `opal event clear` | Events tab → Clear all events | None |
+| `get_api_v1_events_id` | `GET /api/v1/event/{id}` | `opal event get` | Events tab → View details | None |
+| `delete_api_v1_events_id` | `DELETE /api/v1/event/{id}` | `opal event delete` | Events tab → Delete event | None |
+| `get_api_v1_topics` | `GET /api/v1/topic/` | `opal event topics` | Events tab → Topic dropdown | ETag |
+| `get_api_v1_rules` | `GET /api/v1/rule/` | `opal event rules list` | Rules tab → Rule catalog | ETag |
+| `post_api_v1_rules` | `POST /api/v1/rule/` | `opal event rules create` | Rules tab → Create rule | None |
+| `get_api_v1_rules_id` | `GET /api/v1/rule/{id}` | `opal event rules get` | Rules tab → View rule | ETag |
+| `patch_api_v1_rules_rule_id`| `PATCH /api/v1/rule/{id}` | `opal event rules update` | Rules tab → Toggle / Edit | `If-Match` |
+| `delete_api_v1_rules_id` | `DELETE /api/v1/rule/{id}` | `opal event rules delete` | Rules tab → Delete button | `If-Match` |
+| `post_api_v1_rules_id_test`| `POST /api/v1/rule/{id}/test`| `opal event rules test` | Rules tab → Test dry-run | None |
+| `get_api_v1_actions` | `GET /api/v1/action/` | `opal event actions list` | Actions tab → Action list | ETag |
+| `post_api_v1_actions` | `POST /api/v1/action/` | `opal event actions create` | Actions tab → Create action | None |
+| `get_api_v1_actions_id` | `GET /api/v1/action/{id}` | `opal event actions get` | Actions tab → View action | ETag |
+| `patch_api_v1_actions_action_id`| `PATCH /api/v1/action/{id}`| `opal event actions update` | Actions tab → Toggle / Edit | `If-Match` |
+| `delete_api_v1_actions_id`| `DELETE /api/v1/action/{id}`| `opal event actions delete` | Actions tab → Delete button | `If-Match` |
+| `post_api_v1_actions_id_execute`| `POST /api/v1/action/{id}/execute`| `opal event actions execute`| Actions tab → Execute modal | None |
+| `get_api_v1_executions` | `GET /api/v1/execution/` | `opal event executions list`| Executions tab → History | None |
+| `get_api_v1_executions_id`| `GET /api/v1/execution/{id}`| `opal event executions get` | Executions tab → Details modal | None |
+| `opal_setting_list` | `GET /api/v1/setting/` | `opal event settings get` | Settings tab → View settings | ETag |
+| `opal_setting_patch`| `PATCH /api/v1/setting/` | `opal event settings update`| Settings tab → Save settings | `If-Match` |
+| `opal_setting_get` | `GET /api/v1/setting/{key}` | `opal event settings get-key KEY` | Settings tab → Key editor | None |
+| `opal_setting_put` | `PUT /api/v1/setting/{key}` | `opal event settings set-key KEY --value JSON` | Settings tab → Key editor | `If-Match` |
+| `opal_setting_delete`| `DELETE /api/v1/setting/{key}` | `opal event settings reset-key KEY` | Settings tab → Key editor | `If-Match` |
+| `opal_backup_export`| `GET /api/v1/backup/export` | `opal event backup export` | Settings tab → Export button | None |
+| `opal_backup_validate_post`| `POST /api/v1/backup/validate`| `opal event backup validate`| Settings tab → Validate modal | None |
+| `opal_backup_import`| `POST /api/v1/backup/import` | `opal event backup import` | Settings tab → Import modal | `If-Match` |
+| `opal_health_get` | `GET /api/v1/health/` | `opal event info health` | Health tab → Summary | None |
+| `get_api_v1_stats` | `GET /api/v1/stats/` | `opal event info stats` | Health tab → Metrics counters | None |
+| `opal_health_live_get` | `GET /api/v1/health/live` | `opal event info health --live` | Health tab → Liveness badge | None |
+| `opal_health_ready_get`| `GET /api/v1/health/ready` | `opal event info health --ready` | Health tab → Readiness badge | None |
+
+## 14. Cookbook
+
+Twenty runnable recipes — subscriber tailing, rule dry-runs, fan-out dispatch, live
+rule toggles, the execution audit trail, `input_schema` drops, per-key settings,
+backup round-trips, payload bounds, and direct wire publishing — all with nothing but
+`opal-event` installed. See **[COOKBOOK.md](COOKBOOK.md)**.

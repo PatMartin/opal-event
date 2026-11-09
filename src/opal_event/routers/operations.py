@@ -1,4 +1,5 @@
-"""``/api/v1/health``, ``/api/v1/health/live``, ``/api/v1/health/ready``, ``/api/v1/stats``."""
+"""``/api/v1/health``, ``/api/v1/health/live``, ``/api/v1/health/ready``, ``/api/v1/stats``,
+``/api/v1/info/``, ``/api/v1/info/ping``."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Depends, Response
 
 from opal_event.auth import require_auth
 from opal_event.deps import get_config, get_service
-from opal_event.models import Health, OpalHealthProbe, Stats
+from opal_event.models import Health, LivenessRead, OpalHealthProbe, ServiceInfo, Stats
 from opal_event.service import EventService
 
 logger = logging.getLogger("opal_event.routers.operations")
@@ -56,6 +57,22 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
     )
 
 
+@router.get("/api/v1/info/", response_model=ServiceInfo, dependencies=[Depends(require_auth)])
+def get_info():
+    return ServiceInfo(
+        name="opal-event-svc",
+        version="1.6.0",
+        api_version="v1",
+        description="OPAL Event: event bus, rule engine and action execution service.",
+    )
+
+
+@router.get("/api/v1/info/ping", response_model=LivenessRead)
+def info_ping():
+    """Cheap supervisor liveness probe, unauthenticated like /api/v1/health/live."""
+    return LivenessRead()
+
+
 @router.get("/api/v1/health/live", response_model=OpalHealthProbe)
 def health_live(service: Annotated[EventService, Depends(get_service)]):
     return OpalHealthProbe(status="ok", ready=service.is_ready())
@@ -64,7 +81,7 @@ def health_live(service: Annotated[EventService, Depends(get_service)]):
 @router.get("/api/v1/health/ready", response_model=OpalHealthProbe)
 def health_ready(service: Annotated[EventService, Depends(get_service)], response: Response):
     # One authoritative readiness check shared with REST publication — a 503 here means
-    # POST /api/v1/events/ would also be refused, and vice versa. Per opal_event.1.4.0.yaml the
+    # POST /api/v1/event/ would also be refused, and vice versa. Per openapi/opal_event_v1.6.0.yaml the
     # 503 body is the OpalHealthProbe itself (status "unavailable", ready false), not an error.
     if not service.is_ready():
         response.status_code = 503

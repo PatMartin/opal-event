@@ -4,6 +4,7 @@ FastAPI TestClient wired to the full :class:`~opal_event.service.EventService` s
 from __future__ import annotations
 
 import itertools
+import os
 import socket
 import warnings
 from pathlib import Path
@@ -16,7 +17,10 @@ from opal_event.app import create_app
 
 warnings.filterwarnings("ignore", message="Using `httpx` with `starlette.testclient`")
 
-_port_counter = itertools.count(19000)
+# pytest-xdist workers share this port space: give each worker a disjoint 4000-port band so
+# per-process counters can never collide. PYTEST_XDIST_WORKER is "gw0".."gwN" (absent = gw0).
+_worker_index = int((os.environ.get("PYTEST_XDIST_WORKER") or "gw0")[2:] or 0)
+_port_counter = itertools.count(19000 + _worker_index * 4000)
 
 
 def free_port() -> int:
@@ -49,7 +53,7 @@ def base_config(tmp_path: Path, **overrides) -> dict:
         "execution": {
             "max_workers": 2,
             "queue_size": 10,
-            "default_timeout_seconds": 5,
+            "default_timeout_seconds": 2,
             "overflow": "drop_and_log",
             "retry_enabled": False,
             "max_output_bytes": 65536,
@@ -69,7 +73,7 @@ def base_config(tmp_path: Path, **overrides) -> dict:
                 "executable": "/bin/echo",
                 "args": ["{{data.camera}}"],
                 "stdin": "none",
-                "timeout_seconds": 5,
+                "timeout_seconds": 2,
             },
             {
                 "id": "python_action",
@@ -77,7 +81,7 @@ def base_config(tmp_path: Path, **overrides) -> dict:
                 "enabled": True,
                 "module": "opal_event.plugins.example",
                 "function": "handle_event",
-                "timeout_seconds": 5,
+                "timeout_seconds": 2,
             },
         ],
         "rules": [
@@ -110,6 +114,12 @@ def app_client(config_path: Path):
     app = create_app(str(config_path))
     with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture
+def revision(app_client):
+    """Callable returning the live config-revision ETag for ``If-Match`` preconditions."""
+    return lambda: app_client.get("/api/v1/setting/").headers["etag"]
 
 
 @pytest.fixture

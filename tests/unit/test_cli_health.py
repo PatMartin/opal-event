@@ -53,14 +53,14 @@ def api(monkeypatch) -> FakeApi:
     ],
 )
 def test_health_calls_expected_endpoint(api, args, path):
-    result = runner.invoke(cli_main.event_app, ["health", *args])
+    result = runner.invoke(cli_main.event_app, ["info", "health", *args])
     assert result.exit_code == 0, result.output
     assert api.seen == [("GET", path)]
     assert json.loads(result.output) == RESPONSES[path][1]
 
 
 def test_live_and_ready_are_mutually_exclusive(api):
-    result = runner.invoke(cli_main.event_app, ["health", "--live", "--ready"])
+    result = runner.invoke(cli_main.event_app, ["info", "health", "--live", "--ready"])
     assert result.exit_code == 2
     assert "mutually exclusive" in result.output
     assert api.seen == []
@@ -68,13 +68,52 @@ def test_live_and_ready_are_mutually_exclusive(api):
 
 def test_ready_exits_nonzero_when_not_ready(api):
     api.responses["/api/v1/health/ready"] = (503, {"code": "unavailable", "message": "broker down"})
-    result = runner.invoke(cli_main.event_app, ["health", "--ready"])
+    result = runner.invoke(cli_main.event_app, ["info", "health", "--ready"])
     assert result.exit_code == 1
     assert "503" in result.output
 
 
-@pytest.mark.parametrize("old_name", ["health-live", "health-ready"])
+@pytest.mark.parametrize("old_name", ["health", "stats", "health-live", "health-ready"])
 def test_old_probe_commands_are_removed(api, old_name):
     result = runner.invoke(cli_main.event_app, [old_name])
     assert result.exit_code == 2
     assert "No such command" in result.output
+
+
+class TestCommandTree:
+    def test_tree_renders_commands_and_params(self):
+        result = runner.invoke(cli_main.app, ["event", "tree"])
+        assert result.exit_code == 0
+        out = result.output
+        assert out.startswith("opal event")
+        # commands and groups are present
+        for line in ("|-- publish", "|-- rules", "`-- personas"):
+            assert line in out
+        # positionals render as <name>, required options bare, optional bracketed
+        assert "|-- <topic>" in out
+        assert "|-- --data-json <str>" in out
+        assert "|-- [ --timeout <float> =30.0 ]" in out
+        # --help and typer's completion boilerplate are skipped
+        assert "--help" not in out
+        assert "--install-completion" not in out
+
+    def test_tree_tracks_app_changes(self):
+        # rendered from the live Typer app: adding a command changes the output
+        import typer
+
+        tree_before = cli_main._render_command_tree()
+        marker_app = typer.Typer()
+
+        @marker_app.command("zz_marker")
+        def _marker() -> None:  # pragma: no cover - registered then removed
+            pass
+
+        cli_main.event_app.add_typer(marker_app, name="zz_marker")
+        try:
+            tree_after = cli_main._render_command_tree()
+            assert "zz_marker" in tree_after.splitlines()[-2] + tree_after.splitlines()[-1]
+            assert tree_before != tree_after
+        finally:
+            cli_main.event_app.registered_groups = [
+                g for g in cli_main.event_app.registered_groups if g.name != "zz_marker"
+            ]

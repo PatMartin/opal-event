@@ -7,12 +7,14 @@ import ExecutionsPage from "./pages/ExecutionsPage";
 import SettingsPage from "./pages/SettingsPage";
 import BackupPage from "./pages/BackupPage";
 import HealthPage from "./pages/HealthPage";
+import PersonasPage from "./pages/PersonasPage";
 
 const TABS = [
   { key: "health", label: "Health", component: HealthPage },
   { key: "events", label: "Events", component: EventsPage },
   { key: "rules", label: "Rules", component: RulesPage },
   { key: "actions", label: "Actions", component: ActionsPage },
+  { key: "personas", label: "Personas", component: PersonasPage },
   { key: "executions", label: "Executions", component: ExecutionsPage },
   { key: "settings", label: "Settings", component: SettingsPage },
   { key: "backup", label: "Backup", component: BackupPage },

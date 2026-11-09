@@ -97,7 +97,7 @@ export default function ActionsPage() {
         <h3>Execute action manually</h3>
         <label>
           Action ID
-          <select value={executeActionId} onChange={(e) => setExecuteActionId(e.target.value)}>
+          <select aria-label="Action ID" value={executeActionId} onChange={(e) => setExecuteActionId(e.target.value)}>
             <option value="">-- choose --</option>
             {items.map((a) => (
               <option key={a.id} value={a.id}>

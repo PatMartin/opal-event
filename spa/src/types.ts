@@ -16,6 +16,7 @@ export interface EventItem {
 export interface ListEvents {
   items: EventItem[];
   next_cursor: string | null;
+  has_more: boolean;
 }
 
 export interface Condition {
@@ -34,7 +35,7 @@ export interface Rule {
 
 export interface ListRules {
   items: Rule[];
-  next_cursor: string | null;
+  has_more: boolean;
 }
 
 export type Action =
@@ -71,7 +72,7 @@ export type Action =
 
 export interface ListActions {
   items: Action[];
-  next_cursor: string | null;
+  has_more: boolean;
 }
 
 export interface Execution {
@@ -147,11 +148,48 @@ export interface RuleTestResult {
   checks: Record<string, unknown>[];
 }
 
+export interface Persona {
+  persona_id: string;
+  name: string;
+  description?: string | null;
+  voice_id?: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonaCreate {
+  persona_id: string;
+  name: string;
+  description?: string | null;
+  voice_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface PersonaUpdate {
+  name?: string;
+  description?: string | null;
+  voice_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface ServiceInfo {
+  name: string;
+  version: string;
+  api_version: string;
+  description?: string | null;
+}
+
+export interface LivenessRead {
+  status: "ok";
+}
+
 export interface ConfigBackup {
   format_version: 1;
   settings: PortableSettings;
   actions: Action[];
   rules: Rule[];
+  personas: Persona[];
 }
 
 export interface ValidationReport {
@@ -168,4 +206,11 @@ export interface BackupImportResult {
 export interface HealthProbe {
   status: "ok" | "degraded" | "unavailable";
   details?: Record<string, string> | null;
+}
+
+export interface SettingRead {
+  key: string;
+  value: unknown;
+  default?: unknown;
+  is_default: boolean;
 }

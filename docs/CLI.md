@@ -6,7 +6,7 @@ event and topic inspection, rules and actions catalogs, execution history, live-
 settings, configuration backups, service health, and operational diagnostics.
 
 The CLI is a thin REST client. **Every command calls the Opal Event REST API** through the operations
-declared in the authoritative OpenAPI 3.1 specification (`opal_event.1.4.0.yaml`). It never accesses
+declared in the authoritative OpenAPI 3.1 specification (`openapi/opal_event_v1.6.0.yaml`). It never accesses
 the SQLite database or ZeroMQ sockets directly. The server must therefore be running, either locally or
 on a remote host.
 
@@ -148,10 +148,10 @@ Export environment variables in your shell so you do not need to specify connect
 ```bash
 export OPAL_EVENT_API_URL=http://192.168.1.50:8080
 export OPAL_EVENT_API_TOKEN=secret-token-123
-opal event health                 # connects to 192.168.1.50 with bearer token
+opal event info health                 # connects to 192.168.1.50 with bearer token
 
 # Override for a single command:
-OPAL_EVENT_API_URL=http://pi5.local:8080 opal event stats
+OPAL_EVENT_API_URL=http://pi5.local:8080 opal event info stats
 
 # Explicit CLI flags override environment variables:
 opal event --api-url http://127.0.0.1:8080 health
@@ -162,9 +162,9 @@ opal event --api-url http://127.0.0.1:8080 health
 Use the health probes to verify connectivity:
 
 ```bash
-opal event health --live          # verifies the process is answering
-opal event health --ready         # verifies broker and database readiness (exit 1 if not ready)
-opal event health                 # summary status (status: ok | degraded)
+opal event info health --live          # verifies the process is answering
+opal event info health --ready         # verifies broker and database readiness (exit 1 if not ready)
+opal event info health                 # summary status (status: ok | degraded)
 ```
 
 If the service cannot be reached, the CLI prints an error and exits with code `2`:
@@ -203,15 +203,16 @@ If no payload is supplied and stdin is a TTY, the CLI fails immediately with:
 
 ### Strong ETags and optimistic concurrency
 
-Per the OPAL v1.2 standard, mutating operations (`PATCH /api/v1/rules/{id}`, `DELETE /api/v1/rules/{id}`,
-`PATCH /api/v1/actions/{id}`, `DELETE /api/v1/actions/{id}`, `PATCH /api/v1/settings/`, and
+Per the OPAL v1.2 standard, mutating operations (`POST`/`PATCH`/`DELETE /api/v1/rule`, `POST`/`PATCH`/`DELETE /api/v1/action`,
+`POST`/`PATCH`/`DELETE /api/v1/persona`, `PATCH /api/v1/setting/`, and
 `POST /api/v1/backup/import`) require an `If-Match` precondition header containing the current strong
 `ETag` revision.
 
 The CLI automates this for you:
-- When `--if-match` is omitted on `rules update`, `rules delete`, `actions update`, `actions delete`,
-  `settings update`, or `backup import`, **the CLI automatically fetches the resource's current ETag**
-  via a `GET` request immediately before sending the mutation.
+- When `--if-match` is omitted on `rules create`, `rules update`, `rules delete`, `actions create`,
+  `actions update`, `actions delete`, `personas create`, `personas update`, `personas delete`,
+  `settings update`, `settings set-key`, `settings reset-key`, or `backup import`, **the CLI
+  automatically fetches the resource's current ETag** via a `GET` request immediately before sending the mutation.
 - You can provide an explicit `--if-match` if you want strict optimistic concurrency control:
 
 ```bash
@@ -285,6 +286,12 @@ opal event --json rules list
 
 ## 4. Command tree
 
+`opal event tree` prints this same tree, generated live from the Typer app — it always
+reflects the installed version. Positional arguments render as `<name>`, required options
+as `--name <type>`, optional options as `[ --name <type> =default ]`.
+
+
+
 ```text
 opal
 └── event (alias: opal-event)
@@ -315,8 +322,11 @@ opal
     ├── delete <event_id>                       Delete stored event by ID
     ├── clear                                   Clear all stored events from all topics
     ├── topics                                  List observed topics
-    ├── health [--live | --ready]               Health summary, or liveness/readiness probe (no auth)
-    ├── stats                                   Runtime metrics and counters
+    ├── info
+    │   ├── get                                 Service identity (name, version, API version)
+    │   ├── ping                                Liveness ping (no auth)
+    │   ├── health [--live | --ready]           Health summary, or liveness/readiness probe (no auth)
+    │   └── stats                               Runtime metrics and counters
     │
     ├── rules
     │   ├── list                                List rules (bounded catalog)
@@ -365,23 +375,54 @@ opal
     │       ├── [--file <path>]                 File path containing JSON
     │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
     │
-    └── backup
-        ├── export                              Export configuration bundle
-        │   └── [--output <path>]               Write to file instead of stdout
-        ├── validate                            Validate configuration bundle
-        │   ├── [--json <json>]                 Full ConfigBackup JSON body
-        │   └── [--file <path>]                 File path containing JSON
-        └── import                              Import configuration bundle atomically
-            ├── [--json <json>]                 BackupImportRequest JSON body
-            ├── [--file <path>]                 File path containing JSON
-            └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    ├── backup
+    │   ├── export                              Export configuration bundle
+    │   │   └── [--output <path>]               Write to file instead of stdout
+    │   ├── validate                            Validate configuration bundle
+    │   │   ├── [--json <json>]                 Full ConfigBackup JSON body
+    │   │   └── [--file <path>]                 File path containing JSON
+    │   └── import                              Import configuration bundle atomically
+    │       ├── [--json <json>]                 BackupImportRequest JSON body
+    │       ├── [--file <path>]                 File path containing JSON
+    │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │
+    └── personas
+        ├── list                                List personas (bounded catalog)
+        │   └── [--enabled | --disabled]        Filter by enabled state
+        ├── get <persona_id>                    Get persona by ID
+        ├── create                              Register a persona
+        │   ├── [--json <json>]                 PersonaCreate JSON body
+        │   ├── [--file <path>]                 File path containing JSON
+        │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+        ├── update <persona_id>                 Partially update persona
+        │   ├── [--json <json>]                 PersonaUpdate JSON body
+        │   ├── [--file <path>]                 File path containing JSON
+        │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+        ├── delete <persona_id>                 Delete persona by ID
+        │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+        └── validate <persona_id>               Check registration, enabled state, bindings
+    │
+    ├── log                                   Tail the background service log
+    │   ├── [--lines <n>]                     Last N lines before following [default: 20]
+    │   └── [--follow/--no-follow]            Keep tailing (Ctrl+C to exit)
+    │
+    └── service
+        ├── start                               Start opal-event-svc in background (returns immediately)
+        │   ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
+        │   └── [--log-level <level>]           Uvicorn log level [default: info]
+        └── stop                                Stop the background service (SIGTERM via pid file)
+            └── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
 ```
+
+`service start` spawns a detached `opal-event-svc` process, records its pid in
+`logs/opal_event.pid`, appends stdout/stderr to `logs/opal_events.log`, and returns immediately.
+`service stop` sends SIGTERM to the recorded pid; `opal event log` tails `logs/opal_events.log`.
 
 ---
 
 ## 5. `publish`: event publication
 
-`opal event publish` sends an event to the REST ingress endpoint (`POST /api/v1/events/`). The server
+`opal event publish` sends an event to the REST ingress endpoint (`POST /api/v1/event/`). The server
 normalizes any missing metadata (generating a UUID `id`, defaulting `source` to `opal-event-rest`,
 and setting `timestamp` to current UTC time), publishes the event onto the internal ZeroMQ event bus
 via a service-owned PUB socket, and responds with `202 Accepted`.
@@ -1106,6 +1147,18 @@ opal event settings update --json '{
 }'
 ```
 
+### `settings get-key` / `set-key` / `reset-key`
+
+Read, set, or reset a single portable setting by its dotted key (the same key space
+as the Portable Settings Reference below). `set-key` takes a JSON `--value`;
+`set-key` and `reset-key` auto-fetch the current revision unless `--if-match` is given.
+
+```bash
+opal event settings get-key execution.queue_size
+opal event settings set-key execution.queue_size --value 150
+opal event settings reset-key execution.queue_size
+```
+
 #### Portable Settings Reference
 
 | Field | Range / Values | Description |
@@ -1223,7 +1276,7 @@ OPAL Event provides standard endpoints for container orchestration, monitoring, 
 Returns overall system health:
 
 ```bash
-opal event health
+opal event info health
 ```
 
 Output:
@@ -1247,7 +1300,7 @@ Fast liveness check intended for Kubernetes or systemd (`GET /api/v1/health/live
 the process is answering HTTP requests. Requires no authentication.
 
 ```bash
-opal event health --live
+opal event info health --live
 ```
 
 Output:
@@ -1263,10 +1316,10 @@ Output:
 Readiness probe intended for load balancers (`GET /api/v1/health/ready`). Checks that the ZeroMQ
 broker is running and the database is reachable. Requires no authentication. When either check
 fails the server returns `503` and the command exits with status `1`, so it can be used directly in
-scripts (e.g. `until opal event health --ready; do sleep 1; done`).
+scripts (e.g. `until opal event info health --ready; do sleep 1; done`).
 
 ```bash
-opal event health --ready
+opal event info health --ready
 ```
 
 Output:
@@ -1287,7 +1340,7 @@ Output:
 Returns in-memory operational metrics and queue counters:
 
 ```bash
-opal event stats
+opal event info stats
 ```
 
 Output:
@@ -1324,7 +1377,7 @@ an execution via event publication, inspects the result, and cleans up.
 
 ```bash
 # 1. Verify service health
-opal event health
+opal event info health
 
 # 2. Create a shell action
 opal event actions create --json '{
@@ -1482,37 +1535,49 @@ done
 
 ## 17. Appendix: CLI ↔ REST mapping
 
-All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 29 OpenAPI
-operations declared in `opal_event.1.4.0.yaml` are mapped below:
+All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 40 OpenAPI
+operations declared in `openapi/opal_event_v1.6.0.yaml` (including `openapi/shared/opal_kernel.yaml`) are
+mapped below:
 
 | CLI command | HTTP method | API endpoint | If-Match / ETag |
 |---|---|---|---|
-| `opal event publish` | `POST` | `/api/v1/events/` | None |
-| `opal event list` | `GET` | `/api/v1/events/` | None |
-| `opal event clear` | `DELETE` | `/api/v1/events/` | None |
-| `opal event get` | `GET` | `/api/v1/events/{event_id}` | None |
-| `opal event delete` | `DELETE` | `/api/v1/events/{event_id}` | None |
-| `opal event topics` | `GET` | `/api/v1/topics/` | Response carries strong `ETag` |
-| `opal event rules list` | `GET` | `/api/v1/rules/` | Response carries strong `ETag` |
-| `opal event rules create` | `POST` | `/api/v1/rules/` | None |
-| `opal event rules get` | `GET` | `/api/v1/rules/{rule_id}` | Response carries strong `ETag` |
-| `opal event rules update` | `PATCH` | `/api/v1/rules/{rule_id}` | Required (`If-Match`; auto-fetched) |
-| `opal event rules delete` | `DELETE` | `/api/v1/rules/{rule_id}` | Required (`If-Match`; auto-fetched) |
-| `opal event rules test` | `POST` | `/api/v1/rules/{rule_id}/test` | None |
-| `opal event actions list` | `GET` | `/api/v1/actions/` | Response carries strong `ETag` |
-| `opal event actions create` | `POST` | `/api/v1/actions/` | None |
-| `opal event actions get` | `GET` | `/api/v1/actions/{action_id}` | Response carries strong `ETag` |
-| `opal event actions update` | `PATCH` | `/api/v1/actions/{action_id}` | Required (`If-Match`; auto-fetched) |
-| `opal event actions delete` | `DELETE` | `/api/v1/actions/{action_id}` | Required (`If-Match`; auto-fetched) |
-| `opal event actions execute` | `POST` | `/api/v1/actions/{action_id}/execute` | None |
-| `opal event executions list` | `GET` | `/api/v1/executions/` | None |
-| `opal event executions get` | `GET` | `/api/v1/executions/{execution_id}` | None |
-| `opal event settings get` | `GET` | `/api/v1/settings/` | Response carries strong `ETag` |
-| `opal event settings update` | `PATCH` | `/api/v1/settings/` | Required (`If-Match`; auto-fetched) |
+| `opal event publish` | `POST` | `/api/v1/event/` | None |
+| `opal event list` | `GET` | `/api/v1/event/` | None |
+| `opal event clear` | `DELETE` | `/api/v1/event/` | None |
+| `opal event get` | `GET` | `/api/v1/event/{event_id}` | None |
+| `opal event delete` | `DELETE` | `/api/v1/event/{event_id}` | None |
+| `opal event topics` | `GET` | `/api/v1/topic/` | Response carries strong `ETag` |
+| `opal event rules list` | `GET` | `/api/v1/rule/` | Response carries strong `ETag` |
+| `opal event rules create` | `POST` | `/api/v1/rule/` | Required (`If-Match`; auto-fetched) |
+| `opal event rules get` | `GET` | `/api/v1/rule/{rule_id}` | Response carries strong `ETag` |
+| `opal event rules update` | `PATCH` | `/api/v1/rule/{rule_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event rules delete` | `DELETE` | `/api/v1/rule/{rule_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event rules test` | `POST` | `/api/v1/rule/{rule_id}/test` | None |
+| `opal event actions list` | `GET` | `/api/v1/action/` | Response carries strong `ETag` |
+| `opal event actions create` | `POST` | `/api/v1/action/` | Required (`If-Match`; auto-fetched) |
+| `opal event actions get` | `GET` | `/api/v1/action/{action_id}` | Response carries strong `ETag` |
+| `opal event actions update` | `PATCH` | `/api/v1/action/{action_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event actions delete` | `DELETE` | `/api/v1/action/{action_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event actions execute` | `POST` | `/api/v1/action/{action_id}/execute` | None |
+| `opal event executions list` | `GET` | `/api/v1/execution/` | None |
+| `opal event executions get` | `GET` | `/api/v1/execution/{execution_id}` | None |
+| `opal event settings get` | `GET` | `/api/v1/setting/` | Response carries strong `ETag` |
+| `opal event settings update` | `PATCH` | `/api/v1/setting/` | Required (`If-Match`; auto-fetched) |
+| `opal event settings get-key` | `GET` | `/api/v1/setting/{key}` | None |
+| `opal event settings set-key` | `PUT` | `/api/v1/setting/{key}` | Required (`If-Match`; auto-fetched) |
+| `opal event settings reset-key` | `DELETE` | `/api/v1/setting/{key}` | Required (`If-Match`; auto-fetched) |
 | `opal event backup export` | `GET` | `/api/v1/backup/export` | None |
 | `opal event backup validate` | `POST` | `/api/v1/backup/validate` | None |
 | `opal event backup import` | `POST` | `/api/v1/backup/import` | Required (`If-Match`; auto-fetched) |
-| `opal event health` | `GET` | `/api/v1/health/` | None |
-| `opal event stats` | `GET` | `/api/v1/stats/` | None |
-| `opal event health --live` | `GET` | `/api/v1/health/live` | None (no auth required) |
-| `opal event health --ready` | `GET` | `/api/v1/health/ready` | None (no auth required) |
+| `opal event info health` | `GET` | `/api/v1/health/` | None |
+| `opal event info stats` | `GET` | `/api/v1/stats/` | None |
+| `opal event info get` | `GET` | `/api/v1/info/` | None |
+| `opal event info ping` | `GET` | `/api/v1/info/ping` | None (no auth required) |
+| `opal event personas list` | `GET` | `/api/v1/persona/` | Response carries strong `ETag` |
+| `opal event personas create` | `POST` | `/api/v1/persona/` | Required (`If-Match`; auto-fetched) |
+| `opal event personas get` | `GET` | `/api/v1/persona/{persona_id}` | Response carries strong `ETag` |
+| `opal event personas update` | `PATCH` | `/api/v1/persona/{persona_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event personas delete` | `DELETE` | `/api/v1/persona/{persona_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event personas validate` | `POST` | `/api/v1/persona/{persona_id}/validate` | None |
+| `opal event info health --live` | `GET` | `/api/v1/health/live` | None (no auth required) |
+| `opal event info health --ready` | `GET` | `/api/v1/health/ready` | None (no auth required) |

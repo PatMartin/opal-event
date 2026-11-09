@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from opal_event.config import ConfigStore
 from opal_event.errors import OpalContextualError, ProblemError, opal_contextual_error_handler, problem_exception_handler
 from opal_event.opal_context import OpalContextMiddleware, get_opal_context
-from opal_event.routers import actions, backup, events, executions, operations, rules, settings
+from opal_event.routers import actions, backup, events, executions, operations, personas, rules, settings
 from opal_event.service import EventService
 from opal_event.validation import ValidationProblem
 
@@ -31,7 +31,7 @@ def _is_loopback(host: str) -> bool:
 
 
 def _opal_error(request: Request, status: int, code: str, message: str, details: object) -> JSONResponse:
-    """Every error response uses the nested OpalError envelope per opal_event.1.4.0.yaml."""
+    """Every error response uses the nested OpalError envelope per openapi/opal_event_v1.6.0.yaml."""
     ctx = get_opal_context(request)
     return JSONResponse(
         status_code=status,
@@ -111,7 +111,7 @@ def create_app(config_path: str) -> FastAPI:
 
     app = FastAPI(
         title="Opal Event API",
-        version="1.4.0",
+        version="1.6.0",
         lifespan=lifespan,
     )
     app.add_middleware(OpalContextMiddleware)
@@ -129,5 +129,6 @@ def create_app(config_path: str) -> FastAPI:
     app.include_router(operations.router)
     app.include_router(settings.router)
     app.include_router(backup.router)
+    app.include_router(personas.router)
 
     return app

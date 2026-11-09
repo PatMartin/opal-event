@@ -1,4 +1,4 @@
-"""``/api/v1/actions``: CRUD over YAML-persisted action definitions plus manual execution.
+"""``/api/v1/action``: CRUD over YAML-persisted action definitions plus manual execution.
 
 Actions became a bounded configuration catalog in opal_event.1.2.0.yaml: the list endpoint returns
 the complete collection (no cursor pagination) with a strong ETag, and PATCH/DELETE now require a
@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Header, Response
+import jsonschema
+from fastapi import APIRouter, Body, Depends, Header, Request, Response
+from fastapi.responses import JSONResponse
 
-from opal_event.auth import require_auth
+from opal_event.auth import discovery_projection, is_execute_scope, require_auth
 from opal_event.config import ConcurrentUpdateError
 from opal_event.deps import get_config, get_service
 from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
@@ -42,14 +44,19 @@ _PATCH_MODELS = {
 ACTIONS_MAX_COUNT = 10_000
 
 
-@router.get("/api/v1/actions/", response_model=ListActions)
-def list_actions(response: Response, config=Depends(get_config)):
+@router.get("/api/v1/action/", response_model=ListActions)
+def list_actions(request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
-    return ListActions(items=config.settings.actions, next_cursor=None)
+    if is_execute_scope(request):
+        return JSONResponse({"items": [discovery_projection(a) for a in config.settings.actions], "has_more": False})
+    return ListActions(items=config.settings.actions, has_more=False)
 
 
-@router.post("/api/v1/actions/", response_model=Action, status_code=201)
-def create_action(action: Action, response: Response, config=Depends(get_config)):
+@router.post("/api/v1/action/", response_model=Action, status_code=201)
+def create_action(action: Action, response: Response, config=Depends(get_config), if_match: str | None = Header(default=None)):
+    if if_match is None:
+        raise PreconditionRequiredError()
+
     def mutate(raw: dict) -> dict:
         existing = raw.get("actions", [])
         if any(a["id"] == action.id for a in existing):
@@ -60,21 +67,26 @@ def create_action(action: Action, response: Response, config=Depends(get_config)
         raw["actions"] = [*existing, action.model_dump(mode="json")]
         return raw
 
-    new_settings = config.update(mutate)
-    response.headers["Location"] = f"/api/v1/actions/{action.id}"
+    try:
+        new_settings = config.update(mutate, expected_revision=if_match)
+    except ConcurrentUpdateError as exc:
+        raise PreconditionFailedError(str(exc)) from exc
+    response.headers["Location"] = f"/api/v1/action/{action.id}"
     return next(a for a in new_settings.actions if a.id == action.id)
 
 
-@router.get("/api/v1/actions/{action_id}", response_model=Action)
-def get_action(action_id: str, response: Response, config=Depends(get_config)):
+@router.get("/api/v1/action/{action_id}", response_model=Action)
+def get_action(action_id: str, request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     for action in config.settings.actions:
         if action.id == action_id:
+            if is_execute_scope(request):
+                return JSONResponse(discovery_projection(action))
             return action
     raise NotFoundError(f"action '{action_id}' not found")
 
 
-@router.delete("/api/v1/actions/{action_id}", status_code=204)
+@router.delete("/api/v1/action/{action_id}", status_code=204)
 def delete_action(action_id: str, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
         raise PreconditionRequiredError()
@@ -97,7 +109,7 @@ def delete_action(action_id: str, config=Depends(get_config), if_match: str | No
     return Response(status_code=204)
 
 
-@router.patch("/api/v1/actions/{action_id}", response_model=Action)
+@router.patch("/api/v1/action/{action_id}", response_model=Action)
 def patch_action(
     action_id: str,
     patch_body: Annotated[dict[str, Any], Body()],
@@ -130,7 +142,7 @@ def patch_action(
     return next(a for a in new_settings.actions if a.id == action_id)
 
 
-@router.post("/api/v1/actions/{action_id}/execute", response_model=Execution, status_code=202)
+@router.post("/api/v1/action/{action_id}/execute", response_model=Execution, status_code=202)
 def execute_action(
     action_id: str,
     body: ExecutionRequest,
@@ -144,6 +156,15 @@ def execute_action(
         raise ValidationProblem.from_message(["body", "action_id"], f"action '{action_id}' is disabled", "value_error")
 
     event = normalize_event(body.event)
+    if action.input_schema:
+        try:
+            jsonschema.validate(event.get("data"), action.input_schema)
+        except jsonschema.ValidationError as exc:
+            raise ValidationProblem.from_message(
+                ["body", "event", "data"],
+                f"event.data does not satisfy action '{action_id}' input_schema: {exc.message}",
+                "value_error",
+            ) from exc
     settings = config.settings
     record = service.executor.submit(
         action,

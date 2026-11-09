@@ -1,4 +1,4 @@
-"""Pydantic models mirroring the schemas in ``opal_event.yaml``.
+"""Pydantic models mirroring the schemas in ``openapi/opal_event_v1.6.0.yaml``.
 
 Field names, types, constraints, and ``additionalProperties: false`` semantics are kept in lock-step with the
 OpenAPI contract. The contract is authoritative; do not add fields here that are not present there.
@@ -6,9 +6,11 @@ OpenAPI contract. The contract is authoritative; do not add fields here that are
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TOPIC_PATTERN = r"^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$"
 RULE_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -78,6 +80,7 @@ class PublishReceipt(Strict):
 class ListEvents(Strict):
     items: list[Event]
     next_cursor: str | None = None
+    has_more: bool
 
 
 class TopicList(Strict):
@@ -120,7 +123,7 @@ class RulePatch(Strict):
 
 class ListRules(Strict):
     items: list[Rule]
-    next_cursor: str | None = None
+    has_more: bool = False
 
 
 class RuleTestInput(Strict):
@@ -137,6 +140,51 @@ class RuleTestResult(Strict):
 # Actions
 # --------------------------------------------------------------------------------------
 
+
+def _unique_keywords(values: list[str]) -> list[str]:
+    if len(set(values)) != len(values):
+        raise ValueError("keywords must be unique")
+    return values
+
+
+_DESCRIPTION_FIELD = Annotated[str, Field(min_length=1, max_length=2048)]
+_KEYWORDS_FIELD = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=16), AfterValidator(_unique_keywords)
+]
+_SUGGESTED_FIELD = Annotated[list[Annotated[str, Field(min_length=1, max_length=512)]], Field(max_length=8)]
+_MAX_INPUT_SCHEMA_BYTES = 16384
+
+
+def _validate_declared_schema(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fail closed on malformed declared input_schema; reject remote $ref targets."""
+    if schema is None:
+        return None
+    if not isinstance(schema, dict):
+        raise ValueError("input_schema must be a JSON Schema object")
+    text = json.dumps(schema)
+    if len(text.encode()) > _MAX_INPUT_SCHEMA_BYTES:
+        raise ValueError("input_schema exceeds 16 KiB")
+    import jsonschema
+
+    for match in re.finditer(r'"\$ref"\s*:\s*"([^"]+)"', text):
+        if "://" in match.group(1) or not match.group(1).startswith("#"):
+            raise ValueError("input_schema may only use local $ref targets")
+    try:
+        jsonschema.validators.validator_for(schema).check_schema(schema)
+    except jsonschema.SchemaError as exc:
+        raise ValueError(f"input_schema is not a valid JSON Schema: {exc.message}") from exc
+    return schema
+
+
+def _action_metadata_fields() -> dict:
+    return {
+        "description": (_DESCRIPTION_FIELD | None, None),
+        "input_schema": (dict[str, Any] | None, None),
+        "keywords": (_KEYWORDS_FIELD | None, None),
+        "suggested_prompts": (_SUGGESTED_FIELD | None, None),
+    }
+
+
 ShellMode = Literal["exec", "sh", "bash", "cmd", "powershell"]
 _SCRIPT_MODES = {"sh", "bash", "cmd", "powershell"}
 
@@ -145,6 +193,16 @@ class ShellAction(Strict):
     id: str
     type: Literal["shell"]
     enabled: bool = True
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
+    @field_validator("input_schema")
+    @classmethod
+    def _check_declared_schema(cls, v):
+        return _validate_declared_schema(v)
+
     mode: ShellMode
     executable: str | None = None
     script_path: str | None = None
@@ -165,6 +223,16 @@ class HttpAction(Strict):
     id: str
     type: Literal["http"]
     enabled: bool = True
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
+    @field_validator("input_schema")
+    @classmethod
+    def _check_declared_schema(cls, v):
+        return _validate_declared_schema(v)
+
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
     url: str
     headers: dict[str, str] | None = None
@@ -177,6 +245,16 @@ class PythonAction(Strict):
     id: str
     type: Literal["python"]
     enabled: bool = True
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
+    @field_validator("input_schema")
+    @classmethod
+    def _check_declared_schema(cls, v):
+        return _validate_declared_schema(v)
+
     module: Annotated[str, Field(pattern=MODULE_PATTERN)]
     function: Annotated[str, Field(pattern=FUNCTION_PATTERN)]
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
@@ -194,6 +272,11 @@ class ShellActionPatch(Strict):
     stdin: Literal["event_json", "none"] | None = None
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
 
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
     @model_validator(mode="after")
     def _at_least_one(self) -> ShellActionPatch:
         if not self.model_fields_set:
@@ -210,6 +293,11 @@ class HttpActionPatch(Strict):
     body_mode: Literal["template", "event_json", "none"] | None = None
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
 
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
+
     @model_validator(mode="after")
     def _at_least_one(self) -> HttpActionPatch:
         if not self.model_fields_set:
@@ -222,6 +310,11 @@ class PythonActionPatch(Strict):
     module: Annotated[str, Field(pattern=MODULE_PATTERN)] | None = None
     function: Annotated[str, Field(pattern=FUNCTION_PATTERN)] | None = None
     timeout_seconds: Annotated[int, Field(ge=1, le=3600)] | None = None
+
+    description: _DESCRIPTION_FIELD | None = None
+    input_schema: dict[str, Any] | None = None
+    keywords: _KEYWORDS_FIELD | None = None
+    suggested_prompts: _SUGGESTED_FIELD | None = None
 
     @model_validator(mode="after")
     def _at_least_one(self) -> PythonActionPatch:
@@ -236,7 +329,7 @@ ActionPatch = ShellActionPatch | HttpActionPatch | PythonActionPatch
 
 class ListActions(Strict):
     items: list[Action]
-    next_cursor: str | None = None
+    has_more: bool = False
 
 
 # --------------------------------------------------------------------------------------
@@ -278,6 +371,50 @@ class ListExecutions(Strict):
 
 
 # --------------------------------------------------------------------------------------
+# Personas (v1.6.0): named automation identities, optionally bound to an OPAL Say voice
+# --------------------------------------------------------------------------------------
+
+PERSONA_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+
+def _utcnow() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+class PersonaCreate(Strict):
+    persona_id: Annotated[str, Field(pattern=PERSONA_ID_PATTERN, min_length=1, max_length=200)]
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    voice_id: Annotated[str, Field(min_length=1)] | None = None
+    enabled: bool = True
+
+
+class PersonaUpdate(Strict):
+    name: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    voice_id: Annotated[str, Field(min_length=1)] | None = None
+    enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> PersonaUpdate:
+        if not self.model_fields_set:
+            raise ValueError("at least one property is required")
+        return self
+
+
+class PersonaRead(Strict):
+    persona_id: str
+    name: str
+    description: str | None = None
+    voice_id: str | None = None
+    enabled: bool
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+# --------------------------------------------------------------------------------------
 # Operations
 # --------------------------------------------------------------------------------------
 
@@ -309,10 +446,42 @@ class Health(Strict):
     pending_restart: bool
 
 
+class SettingRead(Strict):
+    """One portable setting key/value pair (kernel ``SettingRead``): ``key`` is a dotted path in
+    the portable settings map, ``value`` the live value, ``default`` the schema default, and
+    ``is_default`` whether the live value equals that default."""
+
+    key: str
+    value: Any = None
+    default: Any = None
+    is_default: bool = True
+
+
+class SettingUpdate(Strict):
+    """Replacement value for a single setting key (kernel ``SettingUpdate``)."""
+
+    value: Any
+
+
 class OpalHealthProbe(Strict):
     status: Literal["ok", "degraded", "unavailable"]
     ready: bool
     details: dict[str, str] | None = None
+
+
+class ServiceInfo(Strict):
+    """Kernel ``ServiceInfo``: service identity (name, package version, API contract version)."""
+
+    name: str
+    version: str
+    api_version: str
+    description: str | None = None
+
+
+class LivenessRead(Strict):
+    """Kernel ``LivenessRead``: minimal liveness payload for process supervisors."""
+
+    status: Literal["ok"] = "ok"
 
 
 class Stats(Strict):
@@ -368,6 +537,9 @@ class ZeroMqSettings(Strict):
 class RestAuthSettings(Strict):
     enabled: bool = False
     token_env: str = "OPAL_EVENT_API_TOKEN"
+    # Optional second credential: callers holding this token may only list/show
+    # actions, execute actions, and read executions — never administration.
+    execute_token_env: str | None = None
 
 
 class AllowedHttpDestination(Strict):
@@ -406,6 +578,7 @@ class Settings(Strict):
     persistence: PersistenceSettings
     actions: list[Action] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)
+    personas: list[PersonaRead] = Field(default_factory=list)
 
 
 class PortablePersistenceSettings(Strict):
@@ -442,6 +615,7 @@ class ConfigBackup(Strict):
     settings: PortableSettings
     actions: list[Action]
     rules: list[Rule]
+    personas: list[PersonaRead] = Field(default_factory=list)
 
 
 class ValidationReport(Strict):

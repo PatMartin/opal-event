@@ -1,5 +1,8 @@
+import sys
 import threading
 import time
+
+import pytest
 
 import opal_event.executor as executor_module
 from opal_event.actions import ExecutionOutcome
@@ -7,6 +10,10 @@ from opal_event.db import Database
 from opal_event.executor import Executor
 from opal_event.metrics import Metrics
 from opal_event.models import ExecutionSettings, SecuritySettings, ShellAction
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="requires POSIX executables (/bin/echo, /bin/sleep, /bin/true)"
+)
 
 
 def wait_until(predicate, timeout=2.0, interval=0.02):

@@ -26,7 +26,18 @@ def main(argv: list[str] | None = None) -> int:
     from opal_event.config import ConfigStore
 
     cfg = ConfigStore(args.config)
-    uvicorn.run(app, host=cfg.settings.server.host, port=cfg.settings.server.port, log_level=args.log_level)
+
+    # Record the real server pid for `opal event service stop` — the spawning CLI's
+    # Popen pid can differ (venv python.exe is a shim that re-execs the interpreter).
+    from pathlib import Path
+
+    pid_file = Path("logs") / "opal_event.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        uvicorn.run(app, host=cfg.settings.server.host, port=cfg.settings.server.port, log_level=args.log_level)
+    finally:
+        pid_file.unlink(missing_ok=True)
     return 0
 
 

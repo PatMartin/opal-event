@@ -112,7 +112,7 @@ function opPath(op: OpId, params?: Record<string, string>): string {
 
 /** Thin wrapper exposing one typed call per contract operationId, mirroring the CLI's client.
  * Methods/paths come from api.operations.json — the same manifest the contract tests verify
- * against opal_event.1.4.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
+ * against openapi/opal_event_v1.6.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
 export const api = {
   publishEvent: (body: { topic: string; data: unknown; id?: string; source?: string; timestamp?: string }) =>
     request<{ id: string; status: string; published_at: string }>(
@@ -134,8 +134,12 @@ export const api = {
   // If-Match (428 if omitted server-side, 412 if stale). get{Rule,Action} below fetch-then-mutate
   // to auto-populate If-Match, mirroring the CLI's `_resource_etag` helper.
   listRules: () => request<import("./types").ListRules>(opMethod("get_api_v1_rules"), opPath("get_api_v1_rules")),
-  createRule: (body: import("./types").Rule) =>
-    request<import("./types").Rule>(opMethod("post_api_v1_rules"), opPath("post_api_v1_rules"), body),
+  createRule: async (body: import("./types").Rule) => {
+    const { etag } = await fetchWithEtag<import("./types").ListRules>(opPath("get_api_v1_rules"));
+    return request<import("./types").Rule>(opMethod("post_api_v1_rules"), opPath("post_api_v1_rules"), body, {
+      "If-Match": etag,
+    });
+  },
   getRule: (ruleId: string) =>
     fetchWithEtag<import("./types").Rule>(opPath("get_api_v1_rules_id", { rule_id: ruleId })),
   deleteRule: async (ruleId: string, ifMatch?: string): Promise<void> => {
@@ -157,8 +161,12 @@ export const api = {
     request<import("./types").RuleTestResult>(opMethod("post_api_v1_rules_id_test"), opPath("post_api_v1_rules_id_test", { rule_id: ruleId }), { event }),
 
   listActions: () => request<import("./types").ListActions>(opMethod("get_api_v1_actions"), opPath("get_api_v1_actions")),
-  createAction: (body: import("./types").Action) =>
-    request<import("./types").Action>(opMethod("post_api_v1_actions"), opPath("post_api_v1_actions"), body),
+  createAction: async (body: import("./types").Action) => {
+    const { etag } = await fetchWithEtag<import("./types").ListActions>(opPath("get_api_v1_actions"));
+    return request<import("./types").Action>(opMethod("post_api_v1_actions"), opPath("post_api_v1_actions"), body, {
+      "If-Match": etag,
+    });
+  },
   getAction: (actionId: string) =>
     fetchWithEtag<import("./types").Action>(opPath("get_api_v1_actions_id", { action_id: actionId })),
   deleteAction: async (actionId: string, ifMatch?: string): Promise<void> => {
@@ -191,30 +199,82 @@ export const api = {
       opPath("get_api_v1_executions_id", { execution_id: executionId }),
     ),
 
-  getHealth: () => request<import("./types").Health>(opMethod("get_api_v1_health"), opPath("get_api_v1_health")),
-  getHealthLive: () => request<import("./types").HealthProbe>(opMethod("get_api_v1_health_live"), opPath("get_api_v1_health_live")),
+  getHealth: () => request<import("./types").Health>(opMethod("opal_health_get"), opPath("opal_health_get")),
+  getHealthLive: () => request<import("./types").HealthProbe>(opMethod("opal_health_live_get"), opPath("opal_health_live_get")),
   getHealthReady: () =>
-    request<import("./types").HealthProbe>(opMethod("get_api_v1_health_ready"), opPath("get_api_v1_health_ready")),
+    request<import("./types").HealthProbe>(opMethod("opal_health_ready_get"), opPath("opal_health_ready_get")),
   getStats: () => request<import("./types").Stats>(opMethod("get_api_v1_stats"), opPath("get_api_v1_stats")),
 
   getSettings: async (): Promise<{ settings: import("./types").PortableSettings; etag: string }> => {
-    const resp = await fetch(opPath("get_api_v1_settings"), { headers: { ...contextHeaders(), ...authHeaders() } });
+    const resp = await fetch(opPath("opal_setting_list"), { headers: { ...contextHeaders(), ...authHeaders() } });
     const data = await resp.json();
     if (!resp.ok) throw new ApiError(resp.status, data);
     return { settings: data, etag: resp.headers.get("etag") || "" };
   },
   patchSettings: (patch: Record<string, unknown>, ifMatch: string) =>
-    request<import("./types").PortableSettings>(opMethod("patch_api_v1_settings"), opPath("patch_api_v1_settings"), patch, {
+    request<import("./types").PortableSettings>(opMethod("opal_setting_patch"), opPath("opal_setting_patch"), patch, {
+      "If-Match": ifMatch,
+    }),
+  getSetting: (key: string) =>
+    request<import("./types").SettingRead>(opMethod("opal_setting_get"), opPath("opal_setting_get", { key })),
+  putSetting: (key: string, value: unknown, ifMatch: string) =>
+    request<import("./types").SettingRead>(opMethod("opal_setting_put"), opPath("opal_setting_put", { key }), { value }, {
+      "If-Match": ifMatch,
+    }),
+  deleteSetting: (key: string, ifMatch: string) =>
+    request<void>(opMethod("opal_setting_delete"), opPath("opal_setting_delete", { key }), undefined, {
       "If-Match": ifMatch,
     }),
 
-  exportBackup: () => request<import("./types").ConfigBackup>(opMethod("get_api_v1_backup_export"), opPath("get_api_v1_backup_export")),
+  exportBackup: () => request<import("./types").ConfigBackup>(opMethod("opal_backup_export"), opPath("opal_backup_export")),
   validateBackup: (backup: unknown) =>
-    request<import("./types").ValidationReport>(opMethod("post_api_v1_backup_validate"), opPath("post_api_v1_backup_validate"), backup),
+    request<import("./types").ValidationReport>(opMethod("opal_backup_validate_post"), opPath("opal_backup_validate_post"), backup),
   importBackup: (backup: unknown, ifMatch: string) =>
-    request<import("./types").BackupImportResult>(opMethod("post_api_v1_backup_import"), opPath("post_api_v1_backup_import"), { backup }, {
+    request<import("./types").BackupImportResult>(opMethod("opal_backup_import"), opPath("opal_backup_import"), { backup }, {
       "If-Match": ifMatch,
     }),
+
+  getInfo: () => request<import("./types").ServiceInfo>(opMethod("opal_info_get"), opPath("opal_info_get")),
+  pingInfo: () => request<import("./types").LivenessRead>(opMethod("opal_info_ping"), opPath("opal_info_ping")),
+
+  // Personas are a bounded configuration catalog (v1.6.0): list returns the complete
+  // collection with a strong ETag, and every mutation requires If-Match (428/412).
+  listPersonas: (enabled?: boolean) =>
+    request<import("./types").Persona[]>(
+      opMethod("opal_persona_list"),
+      withQuery(opPath("opal_persona_list"), { enabled: enabled === undefined ? undefined : String(enabled) }),
+    ),
+  createPersona: async (body: import("./types").PersonaCreate) => {
+    const { etag } = await fetchWithEtag<import("./types").Persona[]>(opPath("opal_persona_list"));
+    return request<import("./types").Persona>(opMethod("opal_persona_create"), opPath("opal_persona_create"), body, {
+      "If-Match": etag,
+    });
+  },
+  getPersona: (personaId: string) =>
+    fetchWithEtag<import("./types").Persona>(opPath("opal_persona_get", { persona_id: personaId })),
+  patchPersona: async (personaId: string, patch: import("./types").PersonaUpdate, ifMatch?: string) => {
+    const etag = ifMatch ?? (await api.getPersona(personaId)).etag;
+    return request<import("./types").Persona>(
+      opMethod("opal_persona_patch"),
+      opPath("opal_persona_patch", { persona_id: personaId }),
+      patch,
+      { "If-Match": etag },
+    );
+  },
+  deletePersona: async (personaId: string, ifMatch?: string): Promise<void> => {
+    const etag = ifMatch ?? (await api.getPersona(personaId)).etag;
+    await request<void>(
+      opMethod("opal_persona_delete"),
+      opPath("opal_persona_delete", { persona_id: personaId }),
+      undefined,
+      { "If-Match": etag },
+    );
+  },
+  validatePersona: (personaId: string) =>
+    request<import("./types").ValidationReport>(
+      opMethod("opal_persona_validate"),
+      opPath("opal_persona_validate", { persona_id: personaId }),
+    ),
 } satisfies Record<ClientKey, unknown>;
 
 function authHeaders(): Record<string, string> {

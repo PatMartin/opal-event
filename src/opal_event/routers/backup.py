@@ -55,6 +55,12 @@ def _validate_backup(backup: ConfigBackup) -> ValidationReport:
             if action_id not in seen_action_ids:
                 warnings.append(f"rule '{rule.id}' references unknown action '{action_id}'")
 
+    seen_persona_ids: set[str] = set()
+    for persona in backup.personas:
+        if persona.persona_id in seen_persona_ids:
+            errors.append(f"duplicate persona id: {persona.persona_id}")
+        seen_persona_ids.add(persona.persona_id)
+
     return ValidationReport(valid=not errors, errors=errors, warnings=warnings)
 
 
@@ -66,6 +72,7 @@ def export_backup(config=Depends(get_config)):
         settings=_portable_view(settings),
         actions=settings.actions,
         rules=settings.rules,
+        personas=settings.personas,
     )
 
 
@@ -92,6 +99,7 @@ def import_backup(request: BackupImportRequest, config=Depends(get_config), if_m
         raw["zeromq"] = {**raw.get("zeromq", {}), "max_event_bytes": portable.max_event_bytes}
         raw["actions"] = [a.model_dump(mode="json") for a in request.backup.actions]
         raw["rules"] = [r.model_dump(mode="json") for r in request.backup.rules]
+        raw["personas"] = [p.model_dump(mode="json") for p in request.backup.personas]
         return raw
 
     try:

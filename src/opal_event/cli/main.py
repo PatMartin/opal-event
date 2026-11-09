@@ -653,7 +653,7 @@ def service_start(
     kwargs: dict = {"start_new_session": True}
     if sys.platform == "win32":
         kwargs = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
-    with LOG_FILE.open("a", encoding="utf-8") as log:
+    with LOG_FILE.open("w", encoding="utf-8") as log:
         proc = subprocess.Popen(
             [sys.executable, "-m", "opal_event", "--config", config_path, "--log-level", log_level],
             stdout=log,

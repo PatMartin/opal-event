@@ -660,109 +660,98 @@ def personas_validate(ctx: typer.Context, persona_id: str = typer.Argument(...))
 
 
 PID_FILE = Path("logs") / "opal_event.pid"
-LOG_FILE = Path("logs") / "opal_events.log"
+LOG_FILE = Path("logs") / "opal_event.log"
 
 
-def _pid_alive(pid: int) -> bool:
-    """Best-effort liveness probe for a recorded pid (tasklist on Windows, kill(0) elsewhere)."""
-    import sys
+def _manager(config_path: str | None = None):
+    """Local fallback handle mirroring the REST ``/api/v1/service/*`` manager."""
+    from opal_event.lifecycle import ServiceProcessManager
 
-    if sys.platform == "win32":
-        import subprocess
-
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
-        return f',"{pid}",' in out.replace(" ", "")
-    import os as _os
-
-    try:
-        _os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return ServiceProcessManager(config_path=config_path)
 
 
 @service_app.command("start")
 def service_start(
+    ctx: typer.Context,
     config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
-    log_level: str = typer.Option("info", "--log-level", help="Uvicorn log level (critical/error/warning/info/debug)"),
+    append: bool = typer.Option(False, "--append", help="Append to the service log instead of truncating it"),
 ) -> None:
-    """Start opal-event-svc in the background and return immediately.
+    """Start the managed server in the background (restarts one already running).
 
-    Logs append to logs/opal_events.log; the child pid is recorded in logs/opal_event.pid
-    for `service stop`. Tail output with `opal event log`."""
+    Calls POST /api/v1/service/start first so remote management works; when the API
+    is unreachable it falls back to the same pidfile/log bookkeeping locally, which
+    is what lets `service start` cold-start a stopped service."""
     import os
-    import subprocess
-    import sys
 
     config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
-    if PID_FILE.exists():
-        old_pid = int(PID_FILE.read_text(encoding="utf-8").strip())
-        if _pid_alive(old_pid):
-            typer.echo(f"opal-event-svc is already running (pid {old_pid}); nothing to do")
-            return
-        PID_FILE.unlink()  # stale pid file — clean up and start fresh
-        typer.echo(f"removed stale pid file for dead pid {old_pid}", err=True)
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    kwargs: dict = {"start_new_session": True}
-    if sys.platform == "win32":
-        kwargs = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
-    with LOG_FILE.open("w", encoding="utf-8") as log:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "opal_event", "--config", config_path, "--log-level", log_level],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            **kwargs,
-        )
-    # The child writes its own pidfile on startup (venv python.exe is a shim whose
-    # Popen pid differs from the real server process); wait briefly for it.
-    import time
-
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            typer.echo(f"opal-event-svc failed to start (exit {proc.returncode}); see {LOG_FILE}", err=True)
-            raise typer.Exit(1)
-        if PID_FILE.exists():
-            pid = int(PID_FILE.read_text(encoding="utf-8").strip())
-            typer.echo(f"opal-event-svc started in background (pid {pid}); logs: {LOG_FILE}")
-            return
-        time.sleep(0.25)
-    typer.echo("timed out waiting for service to write its pid file", err=True)
-    raise typer.Exit(1)
+    try:
+        _emit(ctx, _call(ctx, "opal_service_start", json={"append": append}).json())
+        return
+    except ApiCallError as exc:
+        typer.echo(f"Error: {exc.describe()}", err=True)
+        raise typer.Exit(1) from None
+    except httpx.HTTPError:
+        pass  # API unreachable: spawn the managed server locally
+    proc = _manager(config_path).launch(append=append)
+    typer.echo(f"opal-event-svc started in background (pid {proc.pid}); logs: {LOG_FILE}")
 
 
 @service_app.command("stop")
-def service_stop(
-    config: str = typer.Option(None, "--config", help="YAML configuration file [env: OPAL_EVENT_CONFIG]"),
-) -> None:
-    """Stop the background opal-event-svc (SIGTERM by pid file)."""
-    import os
-    import signal
-
-    if not PID_FILE.exists():
-        typer.echo("No pid file found; service is not running (or was not started via `service start`)", err=True)
-        raise typer.Exit(1)
-    pid = int(PID_FILE.read_text(encoding="utf-8").strip())
+def service_stop(ctx: typer.Context) -> None:
+    """Stop the managed server if it is running (not an error when already stopped)."""
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        PID_FILE.unlink(missing_ok=True)
-        typer.echo(f"Stale pid file removed; no process {pid}", err=True)
+        _emit(ctx, _call(ctx, "opal_service_stop").json())
+        return
+    except ApiCallError as exc:
+        typer.echo(f"Error: {exc.describe()}", err=True)
         raise typer.Exit(1) from None
-    typer.echo(f"sent SIGTERM to opal-event-svc (pid {pid})")
+    except httpx.HTTPError:
+        pass  # API unreachable: stop the tracked pid locally
+    status, _ = _manager().stop()
+    if status["previous_pid"] is None:
+        typer.echo("no managed server running")
+    else:
+        typer.echo(f"server stopped (pid {status['previous_pid']})")
+
+
+@service_app.command("log")
+def service_log_cmd(ctx: typer.Context, lines: int = typer.Option(10, "--lines", "-n", min=1, max=1000)) -> None:
+    """Tail the service log file (default: last 10 lines)."""
+    try:
+        data = _call(ctx, "opal_service_log", params={"lines": lines}).json()
+        if _state(ctx).json_output:
+            _emit(ctx, data)
+        else:
+            for line in data["lines"]:
+                typer.echo(line)
+        return
+    except ApiCallError as exc:
+        typer.echo(f"Error: {exc.describe()}", err=True)
+        raise typer.Exit(1) from None
+    except httpx.HTTPError:
+        pass  # API unreachable: read the local log file
+    tail = _manager().tail_log(lines)
+    if tail is None:
+        typer.echo(f"No log file at {LOG_FILE}; start the service via `service start` first", err=True)
+        raise typer.Exit(1)
+    for line in tail["lines"]:
+        typer.echo(line)
 
 
 @service_app.command("view")
-def service_view() -> None:
-    """Print the last 100 lines of the service log."""
-    if not LOG_FILE.exists():
+def service_view(ctx: typer.Context) -> None:
+    """Print the last 100 lines of the service log (alias of `service log -n 100`)."""
+    try:
+        data = _call(ctx, "opal_service_log", params={"lines": 100}).json()
+        typer.echo("\n".join(data["lines"]) + ("\n" if data["lines"] else ""), nl=False)
+        return
+    except (ApiCallError, httpx.HTTPError):
+        pass
+    tail = _manager().tail_log(100)
+    if tail is None:
         typer.echo(f"No log file at {LOG_FILE}; start the service via `service start` first", err=True)
         raise typer.Exit(1)
-    typer.echo("".join(LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)[-100:]), nl=False)
+    typer.echo("\n".join(tail["lines"]) + ("\n" if tail["lines"] else ""), nl=False)
 
 
 @event_app.command("log")

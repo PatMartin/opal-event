@@ -15,16 +15,8 @@ CONTRACT_PATH = Path(__file__).resolve().parents[2] / "openapi" / "opal_event_v1
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
 # Contract operations declared in v1.7.1 but not yet wired into the REST app. The v1.7.1
-# migration lands surface-by-surface; each step removes the ops it implements, and the set
-# must be empty (and this scaffolding removed) when the migration completes. CLI and SPA
-# surfaces always carry the full operation map, so the allowance is app-side only.
-PENDING_OPS: frozenset[str] = frozenset(
-    {
-        "opal_service_start",
-        "opal_service_stop",
-        "opal_service_log",
-    }
-)
+# migration landed surface-by-surface; now empty — full parity is enforced.
+PENDING_OPS: frozenset[str] = frozenset()
 
 
 @functools.lru_cache(maxsize=1)

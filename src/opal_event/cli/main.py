@@ -33,10 +33,12 @@ settings_app = typer.Typer(help="Portable, live-adjustable service settings.", n
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
 service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
+history_app = typer.Typer(help="Stored-event history: list, inspect, and remove retained events.", no_args_is_help=True)
 for _sub, _name in (
     (rules_app, "rules"),
     (actions_app, "actions"),
     (executions_app, "executions"),
+    (history_app, "history"),
     (info_app, "info"),
     (settings_app, "settings"),
     (backup_app, "backup"),
@@ -176,6 +178,38 @@ def publish(
     _emit(ctx, resp.json())
 
 
+def _list_events(ctx: typer.Context, limit: int, topic: str | None, source: str | None,
+                 event_from: str | None, event_to: str | None) -> None:
+    raw_params = dict(limit=limit, topic=topic, source=source, **{"from": event_from, "to": event_to})
+    params = {k: v for k, v in raw_params.items() if v is not None}
+    data = _call(ctx, "get_api_v1_events", params=params).json()
+    _emit(ctx, data, columns=["id", "topic", "source", "timestamp"])
+
+
+def _show_event(ctx: typer.Context, event_id: str) -> None:
+    _emit(ctx, _call(ctx, "get_api_v1_events_id", path_params={"event_id": event_id}).json())
+
+
+def _remove_event(ctx: typer.Context, event_id: str) -> None:
+    _call(ctx, "delete_api_v1_events_id", path_params={"event_id": event_id})
+    if _state(ctx).json_output:
+        typer.echo(json.dumps({"deleted": event_id}))
+    else:
+        typer.echo(f"Deleted event '{event_id}'.")
+
+
+def _clear_events(ctx: typer.Context) -> None:
+    _call(ctx, "delete_api_v1_events")
+    if _state(ctx).json_output:
+        typer.echo(json.dumps({"cleared": True}))
+    else:
+        typer.echo("Cleared all events.")
+
+
+def _topics(ctx: typer.Context) -> None:
+    _emit(ctx, _call(ctx, "get_api_v1_topics").json()["items"])
+
+
 @event_app.command("list")
 def list_events(
     ctx: typer.Context,
@@ -185,44 +219,69 @@ def list_events(
     event_from: str = typer.Option(None, "--from"),
     event_to: str = typer.Option(None, "--to"),
 ) -> None:
-    """List stored events."""
-    raw_params = dict(limit=limit, topic=topic, source=source, **{"from": event_from, "to": event_to})
-    params = {k: v for k, v in raw_params.items() if v is not None}
-    resp = _call(ctx, "get_api_v1_events", params=params)
-    data = resp.json()
-    _emit(ctx, data, columns=["id", "topic", "source", "timestamp"])
+    """List stored events (alias of `history list`)."""
+    _list_events(ctx, limit, topic, source, event_from, event_to)
 
 
 @event_app.command("get")
 def get_event(ctx: typer.Context, event_id: str = typer.Argument(...)) -> None:
-    """Get a stored event by ID."""
-    _emit(ctx, _call(ctx, "get_api_v1_events_id", path_params={"event_id": event_id}).json())
+    """Get a stored event by ID (alias of `history show`)."""
+    _show_event(ctx, event_id)
 
 
 @event_app.command("delete")
 def delete_event_cmd(ctx: typer.Context, event_id: str = typer.Argument(..., help="Event ID to delete")) -> None:
-    """Delete a stored event by ID."""
-    _call(ctx, "delete_api_v1_events_id", path_params={"event_id": event_id})
-    if _state(ctx).json_output:
-        typer.echo(json.dumps({"deleted": event_id}))
-    else:
-        typer.echo(f"Deleted event '{event_id}'.")
+    """Delete a stored event by ID (alias of `history remove`)."""
+    _remove_event(ctx, event_id)
 
 
 @event_app.command("clear")
 def clear_events_cmd(ctx: typer.Context) -> None:
-    """Clear all events from all topics."""
-    _call(ctx, "delete_api_v1_events")
-    if _state(ctx).json_output:
-        typer.echo(json.dumps({"cleared": True}))
-    else:
-        typer.echo("Cleared all events.")
+    """Clear all events from all topics (alias of `history clear`)."""
+    _clear_events(ctx)
 
 
 @event_app.command("topics")
 def topics(ctx: typer.Context) -> None:
+    """List observed topics, incomplete when persistence is off (alias of `history topics`)."""
+    _topics(ctx)
+
+
+@history_app.command("list")
+def history_list(
+    ctx: typer.Context,
+    limit: int = typer.Option(50, "--limit"),
+    topic: str = typer.Option(None, "--topic"),
+    source: str = typer.Option(None, "--source"),
+    event_from: str = typer.Option(None, "--from"),
+    event_to: str = typer.Option(None, "--to"),
+) -> None:
+    """List stored events."""
+    _list_events(ctx, limit, topic, source, event_from, event_to)
+
+
+@history_app.command("show")
+def history_show(ctx: typer.Context, event_id: str = typer.Argument(...)) -> None:
+    """Show one stored event."""
+    _show_event(ctx, event_id)
+
+
+@history_app.command("remove")
+def history_remove(ctx: typer.Context, event_id: str = typer.Argument(..., help="Event ID to delete")) -> None:
+    """Delete one stored event by ID."""
+    _remove_event(ctx, event_id)
+
+
+@history_app.command("clear")
+def history_clear(ctx: typer.Context) -> None:
+    """Delete every stored event in every topic."""
+    _clear_events(ctx)
+
+
+@history_app.command("topics")
+def history_topics(ctx: typer.Context) -> None:
     """List observed topics (incomplete when persistence is off)."""
-    _emit(ctx, _call(ctx, "get_api_v1_topics").json()["items"])
+    _topics(ctx)
 
 
 @info_app.command("get")

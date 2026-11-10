@@ -8,6 +8,7 @@ import SettingsPage from "./pages/SettingsPage";
 import BackupPage from "./pages/BackupPage";
 import HealthPage from "./pages/HealthPage";
 import PersonasPage from "./pages/PersonasPage";
+import ProfilesPage from "./pages/ProfilesPage";
 
 const TABS = [
   { key: "health", label: "Health", component: HealthPage },
@@ -15,6 +16,7 @@ const TABS = [
   { key: "rules", label: "Rules", component: RulesPage },
   { key: "actions", label: "Actions", component: ActionsPage },
   { key: "personas", label: "Personas", component: PersonasPage },
+  { key: "profiles", label: "Profiles", component: ProfilesPage },
   { key: "executions", label: "Executions", component: ExecutionsPage },
   { key: "settings", label: "Settings", component: SettingsPage },
   { key: "backup", label: "Backup", component: BackupPage },

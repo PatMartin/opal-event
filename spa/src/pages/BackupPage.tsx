@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
-import type { BackupImportResult, ConfigBackup, ValidationReport } from "../types";
+import type { BackupImportResult, BackupInfo, ConfigBackup, ValidationReport } from "../types";
 import { createRequestGate, fetchGuarded } from "../requestGate";
 
 export default function BackupPage() {
@@ -16,9 +16,70 @@ export default function BackupPage() {
   // Gate for file-select -> validate -> etag flow: a newer selection supersedes all in-flight
   // reads/validations so a stale response can't overwrite the newer file's state.
   const gate = useRef(createRequestGate()).current;
+  const [archives, setArchives] = useState<BackupInfo[]>([]);
 
-  useEffect(() => () => gate.invalidate(), [gate]);
+  useEffect(() => {
+    void loadArchives();
+    return () => gate.invalidate();
+  }, [gate]);
   const [result, setResult] = useState<BackupImportResult | null>(null);
+
+  async function loadArchives() {
+    try {
+      setArchives(await api.listBackups());
+    } catch {
+      setArchives([]); // archive dir absent until first create — fine
+    }
+  }
+
+  async function createArchive() {
+    try {
+      setError(null);
+      await api.createBackup();
+      await loadArchives();
+    } catch (err) {
+      setError(describe(err));
+    }
+  }
+
+  async function downloadArchive(filename: string) {
+    try {
+      setError(null);
+      const blob = await api.downloadBackup(filename);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(describe(err));
+    }
+  }
+
+  async function restoreArchive(filename: string) {
+    if (!window.confirm(`Restore configuration from ${filename}? This replaces portable settings, rules, actions, personas and profiles.`)) {
+      return;
+    }
+    try {
+      setError(null);
+      setResult(await api.restoreBackup(filename));
+      await loadArchives();
+    } catch (err) {
+      setError(describe(err));
+    }
+  }
+
+  async function deleteArchive(filename: string) {
+    if (!window.confirm(`Delete archive ${filename}?`)) return;
+    try {
+      setError(null);
+      await api.deleteBackup(filename);
+      await loadArchives();
+    } catch (err) {
+      setError(describe(err));
+    }
+  }
 
   function describe(err: unknown): string {
     return err instanceof ApiError ? err.message : String(err);
@@ -124,6 +185,48 @@ export default function BackupPage() {
         <button className="secondary" onClick={() => void downloadBackup()}>
           Download backup
         </button>
+      </div>
+
+      <div className="panel">
+        <h3>Managed archives</h3>
+        <p className="muted">
+          Server-side .tar.gz bundles created under the service's backup directory; restore applies a bundle
+          atomically with validation.
+        </p>
+        <button className="secondary" onClick={() => void createArchive()}>
+          Create archive
+        </button>
+        <table>
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Size</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {archives.map((b) => (
+              <tr key={b.filename}>
+                <td>{b.filename}</td>
+                <td>{b.size_bytes} B</td>
+                <td>{b.created_at}</td>
+                <td>
+                  <button type="button" className="secondary" onClick={() => void downloadArchive(b.filename)}>
+                    Download
+                  </button>{" "}
+                  <button type="button" className="secondary" onClick={() => void restoreArchive(b.filename)}>
+                    Restore
+                  </button>{" "}
+                  <button type="button" className="danger" onClick={() => void deleteArchive(b.filename)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {archives.length === 0 && <p className="muted">No managed archives yet.</p>}
       </div>
 
       <div className="panel">

@@ -142,7 +142,10 @@ export default function PersonasPage() {
           {items.map((persona) => (
             <tr key={persona.persona_id}>
               <td>{persona.persona_id}</td>
-              <td>{persona.name}</td>
+              <td>
+                {persona.name}
+                {persona.origin === "owner" && <span className="badge"> owner</span>}
+              </td>
               <td>
                 <span className={`badge ${persona.enabled ? "enabled" : "degraded"}`}>
                   {persona.enabled ? "enabled" : "disabled"}

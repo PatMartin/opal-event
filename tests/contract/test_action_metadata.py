@@ -140,7 +140,7 @@ def test_execute_rejects_before_side_effect(app_client: TestClient) -> None:
 
 def test_list_actions_returns_metadata(app_client: TestClient) -> None:
     assert _post_action(app_client, _shell_action()).status_code in (200, 201)
-    items = app_client.get("/api/v1/action/").json()["items"]
+    items = app_client.get("/api/v1/action/").json()
     entry = next(a for a in items if a["id"] == "schema_action")
     for field, value in _META.items():
         assert entry[field] == value

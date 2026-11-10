@@ -149,10 +149,10 @@ class TestDiscoveryProjection:
                 action["description"] = "d"
                 etag = c.get("/api/v1/action/", headers=_ADMIN).headers["etag"]
                 assert c.post("/api/v1/action/", json=action, headers={**_ADMIN, "If-Match": etag}).status_code in (200, 201)
-            items = {a["id"]: a for a in c.get("/api/v1/action/", headers=_EXEC).json()["items"]}
+            items = {a["id"]: a for a in c.get("/api/v1/action/", headers=_EXEC).json()}
             for entry in items.values():
                 assert set(entry) == {"id", "type", "enabled", "description", "input_schema", "keywords", "suggested_prompts"}
-            admin_items = {a["id"]: a for a in c.get("/api/v1/action/", headers=_ADMIN).json()["items"]}
+            admin_items = {a["id"]: a for a in c.get("/api/v1/action/", headers=_ADMIN).json()}
             assert admin_items["sh"]["executable"] == "/opt/x"  # admin still sees full definitions
             assert admin_items["ht"]["headers"] == {"x-api-key": "s"}
 

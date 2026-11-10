@@ -179,7 +179,6 @@ def publish(
 @event_app.command("list")
 def list_events(
     ctx: typer.Context,
-    cursor: str = typer.Option(None, "--cursor"),
     limit: int = typer.Option(50, "--limit"),
     topic: str = typer.Option(None, "--topic"),
     source: str = typer.Option(None, "--source"),
@@ -187,11 +186,11 @@ def list_events(
     event_to: str = typer.Option(None, "--to"),
 ) -> None:
     """List stored events."""
-    raw_params = dict(cursor=cursor, limit=limit, topic=topic, source=source, **{"from": event_from, "to": event_to})
+    raw_params = dict(limit=limit, topic=topic, source=source, **{"from": event_from, "to": event_to})
     params = {k: v for k, v in raw_params.items() if v is not None}
     resp = _call(ctx, "get_api_v1_events", params=params)
     data = resp.json()
-    _emit(ctx, data["items"], columns=["id", "topic", "source", "timestamp"])
+    _emit(ctx, data, columns=["id", "topic", "source", "timestamp"])
 
 
 @event_app.command("get")
@@ -403,7 +402,6 @@ def actions_execute(
 @executions_app.command("list")
 def executions_list(
     ctx: typer.Context,
-    cursor: str = typer.Option(None, "--cursor"),
     limit: int = typer.Option(100, "--limit"),
     status: str = typer.Option(None, "--status"),
     rule_id: str = typer.Option(None, "--rule-id"),
@@ -411,10 +409,10 @@ def executions_list(
     event_id: str = typer.Option(None, "--event-id"),
 ) -> None:
     """List executions."""
-    raw_params = dict(cursor=cursor, limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id)
+    raw_params = dict(limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id)
     params = {k: v for k, v in raw_params.items() if v is not None}
     data = _call(ctx, "get_api_v1_executions", params=params).json()
-    _emit(ctx, data["items"], columns=["id", "action_id", "status", "trigger", "created_at"])
+    _emit(ctx, data, columns=["id", "action_id", "status", "trigger", "created_at"])
 
 
 @executions_app.command("get")

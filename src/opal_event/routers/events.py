@@ -12,10 +12,9 @@ from opal_event.auth import require_auth
 from opal_event.db import _ts_to_us
 from opal_event.deps import get_config, get_service
 from opal_event.errors import NotFoundError, PayloadTooLargeError, ServiceUnavailableError
-from opal_event.models import Event, EventInput, ListEvents, PublishReceipt, TopicList
+from opal_event.models import Event, EventInput, EventList, PublishReceipt, TopicList
 from opal_event.normalization import is_rfc3339_datetime, normalize_event
 from opal_event.opal_context import get_opal_context
-from opal_event.pagination import decode_scoped_cursor, encode_scoped_cursor
 from opal_event.service import EventService
 from opal_event.zeromq_broker import PublisherQueueFullError
 
@@ -78,10 +77,9 @@ def publish_event(
     return PublishReceipt(id=envelope["id"], status="accepted", published_at=envelope["timestamp"])
 
 
-@router.get("/api/v1/event/", response_model=ListEvents)
+@router.get("/api/v1/event/", response_model=EventList)
 def list_events(
     service: Annotated[EventService, Depends(get_service)],
-    cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     topic: str | None = None,
     source: str | None = None,
@@ -89,15 +87,10 @@ def list_events(
     to: str | None = None,
 ):
     _check_time_filters(from_, to)
-    filters = {"topic": topic, "source": source, "from": from_, "to": to}
-    inner_cursor = decode_scoped_cursor(cursor, filters) if cursor else None
-    items, next_inner_cursor = service.db.list_events(
-        cursor=inner_cursor, limit=limit, topic=topic, source=source, time_from=from_, time_to=to
+    items = service.db.list_events(
+        limit=limit, topic=topic, source=source, time_from=from_, time_to=to
     )
-    next_cursor = encode_scoped_cursor(next_inner_cursor, filters) if next_inner_cursor else None
-    return ListEvents(
-        items=[Event.model_validate(item) for item in items], next_cursor=next_cursor, has_more=next_cursor is not None
-    )
+    return [Event.model_validate(item) for item in items]
 
 
 @router.get("/api/v1/event/{event_id}", response_model=Event)

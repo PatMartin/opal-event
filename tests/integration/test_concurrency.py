@@ -12,13 +12,9 @@ class TestRulesConcurrency:
         get_resp = app_client.get("/api/v1/rule/front_door_alert")
         assert get_resp.headers["etag"] == list_resp.headers["etag"]
 
-    def test_list_is_a_full_catalog_with_no_cursor(self, app_client):
+    def test_list_is_a_full_catalog(self, app_client):
         data = app_client.get("/api/v1/rule/").json()
-        assert data["has_more"] is False
-        assert isinstance(data["items"], list)
-        # cursor/limit query params are no longer part of the contract; passing them is harmless no-ops.
-        resp = app_client.get("/api/v1/rule/", params={"cursor": "ignored", "limit": 1})
-        assert len(resp.json()["items"]) == len(data["items"])
+        assert isinstance(data, list)
 
     def test_patch_without_if_match_is_428(self, app_client):
         resp = app_client.patch("/api/v1/rule/front_door_alert", json={"enabled": False})
@@ -57,9 +53,9 @@ class TestActionsConcurrency:
         get_resp = app_client.get("/api/v1/action/echo_action")
         assert get_resp.headers["etag"] == list_resp.headers["etag"]
 
-    def test_list_is_a_full_catalog_with_no_cursor(self, app_client):
+    def test_list_is_a_full_catalog(self, app_client):
         data = app_client.get("/api/v1/action/").json()
-        assert data["has_more"] is False
+        assert isinstance(data, list)
 
     def test_patch_without_if_match_is_428(self, app_client):
         resp = app_client.patch("/api/v1/action/echo_action", json={"enabled": False})

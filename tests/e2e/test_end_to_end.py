@@ -88,12 +88,12 @@ class TestEndToEndPipeline:
         assert resp.status_code == 202
         event_id = resp.json()["id"]
 
-        assert wait_until(lambda: app_client.get("/api/v1/event/").json()["items"])
-        events = app_client.get("/api/v1/event/").json()["items"]
+        assert wait_until(lambda: app_client.get("/api/v1/event/").json())
+        events = app_client.get("/api/v1/event/").json()
         assert any(e["id"] == event_id for e in events)
 
-        assert wait_until(lambda: app_client.get("/api/v1/execution/").json()["items"])
-        executions = app_client.get("/api/v1/execution/").json()["items"]
+        assert wait_until(lambda: app_client.get("/api/v1/execution/").json())
+        executions = app_client.get("/api/v1/execution/").json()
         matching = [e for e in executions if e["event_id"] == event_id]
         assert matching
         assert matching[0]["rule_id"] == "front_door_alert"
@@ -105,8 +105,8 @@ class TestEndToEndPipeline:
 
     def test_non_matching_topic_does_not_trigger_actions(self, app_client):
         app_client.post("/api/v1/event/", json={"topic": "other.topic", "data": {}})
-        assert wait_until(lambda: app_client.get("/api/v1/event/").json()["items"])
-        executions_before = app_client.get("/api/v1/execution/").json()["items"]
+        assert wait_until(lambda: app_client.get("/api/v1/event/").json())
+        executions_before = app_client.get("/api/v1/execution/").json()
         assert not any(e["event_id"] for e in executions_before if e.get("rule_id") == "front_door_alert")
 
     def test_rule_lifecycle_crud(self, app_client):
@@ -134,8 +134,8 @@ class TestEndToEndPipeline:
     def test_clear_events_operation(self, app_client):
         resp = app_client.post("/api/v1/event/", json={"topic": "vision.object.detected", "data": {"object": "person"}})
         assert resp.status_code == 202
-        assert wait_until(lambda: app_client.get("/api/v1/event/").json()["items"])
-        assert len(app_client.get("/api/v1/event/").json()["items"]) > 0
+        assert wait_until(lambda: app_client.get("/api/v1/event/").json())
+        assert len(app_client.get("/api/v1/event/").json()) > 0
 
         # DELETE /api/v1/event/ should clear all events from all topics
         clear_resp = app_client.delete("/api/v1/event/")
@@ -143,7 +143,7 @@ class TestEndToEndPipeline:
 
         # Events list should now be empty
         events_resp = app_client.get("/api/v1/event/").json()
-        assert events_resp["items"] == []
+        assert events_resp == []
         topics_resp = app_client.get("/api/v1/topic/").json()
         assert topics_resp["items"] == []
 

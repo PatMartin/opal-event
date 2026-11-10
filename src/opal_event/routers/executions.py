@@ -9,32 +9,25 @@ from fastapi import APIRouter, Depends, Query
 from opal_event.auth import require_auth
 from opal_event.deps import get_service
 from opal_event.errors import NotFoundError
-from opal_event.models import Execution, ListExecutions
-from opal_event.pagination import decode_scoped_cursor, encode_scoped_cursor
+from opal_event.models import Execution, ExecutionList
 from opal_event.service import EventService
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
 
-@router.get("/api/v1/execution/", response_model=ListExecutions)
+@router.get("/api/v1/execution/", response_model=ExecutionList)
 def list_executions(
     service: Annotated[EventService, Depends(get_service)],
-    cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     status: str | None = None,
     rule_id: str | None = None,
     action_id: str | None = None,
     event_id: str | None = None,
 ):
-    filters = {"status": status, "rule_id": rule_id, "action_id": action_id, "event_id": event_id}
-    inner_cursor = decode_scoped_cursor(cursor, filters) if cursor else None
-    items, next_inner_cursor = service.db.list_executions(
-        cursor=inner_cursor, limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id
+    items = service.db.list_executions(
+        limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id
     )
-    next_cursor = encode_scoped_cursor(next_inner_cursor, filters) if next_inner_cursor else None
-    return ListExecutions(
-        items=[Execution.model_validate(item) for item in items], next_cursor=next_cursor, has_more=next_cursor is not None
-    )
+    return [Execution.model_validate(item) for item in items]
 
 
 @router.get("/api/v1/execution/{execution_id}", response_model=Execution)

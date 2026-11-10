@@ -73,15 +73,6 @@ def _ts_to_us(value: str) -> int | None:
     return int(dt.timestamp() * 1_000_000)
 
 
-def _encode_cursor(seq: int) -> str:
-    return base64.urlsafe_b64encode(str(seq).encode("ascii")).decode("ascii")
-
-
-def _decode_cursor(cursor: str) -> int:
-    try:
-        return int(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("ascii"))
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise ValueError("invalid cursor") from exc
 
 
 class Database:
@@ -153,18 +144,14 @@ class Database:
 
     def list_events(
         self,
-        cursor: str | None = None,
         limit: int = 50,
         topic: str | None = None,
         source: str | None = None,
         time_from: str | None = None,
         time_to: str | None = None,
-    ) -> tuple[list[dict[str, Any]], str | None]:
+    ) -> list[dict[str, Any]]:
         clauses = []
         params: list[Any] = []
-        if cursor:
-            clauses.append("seq < ?")
-            params.append(_decode_cursor(cursor))
         if topic:
             clauses.append("topic = ?")
             params.append(topic)
@@ -260,18 +247,14 @@ class Database:
 
     def list_executions(
         self,
-        cursor: str | None = None,
         limit: int = 50,
         status: str | None = None,
         rule_id: str | None = None,
         action_id: str | None = None,
         event_id: str | None = None,
-    ) -> tuple[list[dict[str, Any]], str | None]:
+    ) -> list[dict[str, Any]]:
         clauses = []
         params: list[Any] = []
-        if cursor:
-            clauses.append("seq < ?")
-            params.append(_decode_cursor(cursor))
         if status:
             clauses.append("status = ?")
             params.append(status)
@@ -286,10 +269,10 @@ class Database:
             params.append(event_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM executions {where} ORDER BY seq DESC LIMIT ?"
-        params.append(limit + 1)
+        params.append(limit)
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
-        return self._paginate(rows, limit, self._row_to_execution)
+        return [self._row_to_execution(row) for row in rows[:limit]]
 
     @staticmethod
     def _row_to_execution(row: sqlite3.Row) -> dict[str, Any]:
@@ -317,11 +300,8 @@ class Database:
     # -- shared helpers --------------------------------------------------------------
 
     @staticmethod
-    def _paginate(rows: list[sqlite3.Row], limit: int, to_dict) -> tuple[list[dict[str, Any]], str | None]:
-        has_more = len(rows) > limit
-        page = rows[:limit]
-        next_cursor = _encode_cursor(page[-1]["seq"]) if has_more and page else None
-        return [to_dict(row) for row in page], next_cursor
+    def _paginate(rows: list[sqlite3.Row], limit: int, to_dict) -> list[dict[str, Any]]:
+        return [to_dict(row) for row in rows[:limit]]
 
     def reconcile_interrupted_executions(self) -> int:
         """Closes out executions left ``queued``/``running`` by an abrupt shutdown.

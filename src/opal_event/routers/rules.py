@@ -15,7 +15,7 @@ from opal_event.auth import require_auth
 from opal_event.config import ConcurrentUpdateError
 from opal_event.deps import get_config
 from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
-from opal_event.models import EventInput, ListRules, Rule, RulePatch, RuleTestInput, RuleTestResult
+from opal_event.models import EventInput, Rule, RuleList, RulePatch, RuleTestInput, RuleTestResult
 from opal_event.normalization import normalize_event
 from opal_event.rules import evaluate_rule
 
@@ -31,10 +31,10 @@ def _normalize_event_input(event_input: EventInput) -> dict[str, Any]:
     return normalize_event(event_input)
 
 
-@router.get("/api/v1/rule/", response_model=ListRules)
+@router.get("/api/v1/rule/", response_model=RuleList)
 def list_rules(response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
-    return ListRules(items=config.settings.rules, has_more=False)
+    return config.settings.rules
 
 
 @router.post("/api/v1/rule/", response_model=Rule, status_code=201)

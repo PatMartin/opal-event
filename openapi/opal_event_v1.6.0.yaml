@@ -79,10 +79,8 @@ info:
 
     Standard health routes: /api/v1/health/, /api/v1/health/live, /api/v1/health/ready. Settings: GET and PATCH
     /api/v1/settings/ exclusively; PATCH is atomic. Mutable configuration uses strong ETags and mandatory If-Match
-    with 428 missing, 412 stale. For bounded configuration catalogs return full arrays (subject to explicit
-    deployment caps); for growing histories use cursor pagination with stable deterministic ordering, opaque
-    next_cursor and has_more. Cursors are scoped to the exact filter set and invalidate on mismatch (422);
-    cursor values expire explicitly. Standard HTTP creation 201 Location, async admission 202, empty deletion
+    with 428 missing, 412 stale. Collections return bounded arrays (subject to explicit
+    deployment caps and `limit`); ordering is stable and deterministic (newest first). Standard HTTP creation 201 Location, async admission 202, empty deletion
     204. Streaming keeps media-specific transports but exposes correlation headers, defined failure behavior,
     and no unsupported replay guarantee. Configuration export/import/validation excludes secrets and history.
 
@@ -179,7 +177,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListEvents'
+                $ref: '#/components/schemas/EventList'
           headers:
             X-Opal-Session-Id:
               $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
@@ -204,10 +202,6 @@ paths:
         '500':
           $ref: './shared/opal_kernel.yaml#/components/responses/OperationFailed'
       parameters:
-      - name: cursor
-        in: query
-        schema:
-          type: string
       - name: limit
         in: query
         schema:
@@ -428,7 +422,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListRules'
+                $ref: '#/components/schemas/RuleList'
           headers:
             X-Opal-Session-Id:
               $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
@@ -740,7 +734,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListActions'
+                $ref: '#/components/schemas/ActionList'
           headers:
             X-Opal-Session-Id:
               $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
@@ -1046,8 +1040,7 @@ paths:
       summary: List executions
       description: '
 
-        Use cursor pagination, stable descending time-plus-ID ordering; filters are bound into the cursor.
-        Invalid or mismatched cursors return 422. Response next_cursor is null at end.
+        Bounded list, stable descending time-plus-ID ordering; `limit` caps the returned items.
 
         '
       responses:
@@ -1056,7 +1049,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListExecutions'
+                $ref: '#/components/schemas/ExecutionList'
           headers:
             X-Opal-Session-Id:
               $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
@@ -1106,13 +1099,6 @@ paths:
           maximum: 500
           default: 100
         description: Maximum items per page.
-      - name: cursor
-        in: query
-        required: false
-        schema:
-          type: string
-          minLength: 1
-        description: Opaque continuation token returned from the preceding page.
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
@@ -2080,72 +2066,26 @@ components:
       - matched
       - action_ids
       - checks
-    ListEvents:
-      type: object
-      description: Paginated events from SQLite. No delivery guarantee or replay.
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Event'
-        next_cursor:
-          type:
-          - string
-          - 'null'
-        has_more:
-          type: boolean
-      additionalProperties: false
-      required:
-      - items
-      - next_cursor
-      - has_more
-    ListRules:
-      type: object
+    EventList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Event'
+      description: Bounded list, newest first; `limit` caps the returned items.
+    RuleList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Rule'
       description: Complete bounded collection.
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Rule'
-        has_more:
-          type: boolean
-      additionalProperties: false
-      required:
-      - items
-      - has_more
-    ListActions:
-      type: object
+    ActionList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Action'
       description: Complete bounded collection.
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Action'
-        has_more:
-          type: boolean
-      additionalProperties: false
-      required:
-      - items
-      - has_more
-    ListExecutions:
-      type: object
-      description: Cursor-paginated list.
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Execution'
-        next_cursor:
-          type:
-          - string
-          - 'null'
-        has_more:
-          type: boolean
-      additionalProperties: false
-      required:
-      - items
-      - next_cursor
-      - has_more
+    ExecutionList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Execution'
+      description: Bounded list, newest first; `limit` caps the returned items.
     TopicList:
       type: object
       description: Observed topic names; incomplete when persistence is off.
@@ -2554,7 +2494,7 @@ x-opal-context-standard:
     $ref: './shared/opal_kernel.yaml#/x-opal-event-envelope'
     metadata_schema_version: '1.0'
   pagination:
-    history: cursor
+    history: none
     configuration: none
     default_limit: 100
     max_limit: 500

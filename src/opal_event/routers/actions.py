@@ -22,7 +22,7 @@ from opal_event.models import (
     Execution,
     ExecutionRequest,
     HttpActionPatch,
-    ListActions,
+    ActionList,
     PythonActionPatch,
     ShellActionPatch,
 )
@@ -44,12 +44,12 @@ _PATCH_MODELS = {
 ACTIONS_MAX_COUNT = 10_000
 
 
-@router.get("/api/v1/action/", response_model=ListActions)
+@router.get("/api/v1/action/", response_model=ActionList)
 def list_actions(request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     if is_execute_scope(request):
-        return JSONResponse({"items": [discovery_projection(a) for a in config.settings.actions], "has_more": False})
-    return ListActions(items=config.settings.actions, has_more=False)
+        return JSONResponse([discovery_projection(a) for a in config.settings.actions])
+    return config.settings.actions
 
 
 @router.post("/api/v1/action/", response_model=Action, status_code=201)

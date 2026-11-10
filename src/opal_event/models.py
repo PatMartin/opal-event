@@ -77,10 +77,7 @@ class PublishReceipt(Strict):
     published_at: str
 
 
-class ListEvents(Strict):
-    items: list[Event]
-    next_cursor: str | None = None
-    has_more: bool
+EventList = list[Event]
 
 
 class TopicList(Strict):
@@ -121,9 +118,7 @@ class RulePatch(Strict):
         return self
 
 
-class ListRules(Strict):
-    items: list[Rule]
-    has_more: bool = False
+RuleList = list[Rule]
 
 
 class RuleTestInput(Strict):
@@ -327,9 +322,7 @@ class PythonActionPatch(Strict):
 ActionPatch = ShellActionPatch | HttpActionPatch | PythonActionPatch
 
 
-class ListActions(Strict):
-    items: list[Action]
-    has_more: bool = False
+ActionList = list[Action]
 
 
 # --------------------------------------------------------------------------------------
@@ -364,10 +357,7 @@ class ExecutionRequest(Strict):
     event: EventInput
 
 
-class ListExecutions(Strict):
-    items: list[Execution]
-    next_cursor: str | None = None
-    has_more: bool
+ExecutionList = list[Execution]
 
 
 # --------------------------------------------------------------------------------------

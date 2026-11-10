@@ -341,7 +341,7 @@ wheels = [
 
 [[package]]
 name = "opal-event"
-version = "1.6.0"
+version = "1.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -350,6 +350,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "pyzmq" },
+    { name = "rich" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
@@ -378,6 +379,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "pyzmq", specifier = ">=25.1" },
+    { name = "rich", specifier = ">=13" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },

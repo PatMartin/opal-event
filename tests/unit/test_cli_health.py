@@ -81,8 +81,19 @@ def test_old_probe_commands_are_removed(api, old_name):
 
 
 class TestCommandTree:
-    def test_tree_renders_commands_and_params(self):
+    def test_tree_defaults_to_rich_output(self):
         result = runner.invoke(cli_main.app, ["event", "tree"])
+        assert result.exit_code == 0
+        out = result.output
+        assert "opal event" in out
+        # rich guides and nodes; no ASCII guides
+        for line in ("├── publish", "├── rules", "├── personas", "└── service"):
+            assert line in out
+        assert "|--" not in out
+        assert "`--" not in out
+
+    def test_tree_ascii_renders_commands_and_params(self):
+        result = runner.invoke(cli_main.app, ["event", "tree", "--ascii"])
         assert result.exit_code == 0
         out = result.output
         assert out.startswith("opal event")

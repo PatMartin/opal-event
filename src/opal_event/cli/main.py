@@ -793,9 +793,16 @@ def service_log(
 
 
 @event_app.command("tree")
-def command_tree() -> None:
+def command_tree(
+    ascii: bool = typer.Option(False, "--ascii", help="Plain ASCII output instead of a color-coded tree"),
+) -> None:
     """Print this CLI's command/argument tree, generated from the live Typer app."""
-    typer.echo(_render_command_tree())
+    if ascii:
+        typer.echo(_render_command_tree())
+        return
+    from rich.console import Console
+
+    Console().print(_render_rich_command_tree())
 
 
 # -- `opal event config setting` + `setting` aliases (x-opal-cli canonical bindings) --------------
@@ -1031,25 +1038,31 @@ def _param_label(param) -> str | None:
     return f"[ {core}{suffix} ]"
 
 
+def _command_children(cmd) -> list[tuple[str, Any]]:
+    """One node's children for the command tree: visible params first (as ``(label, None)``),
+    then visible subcommands (as ``(name, command)``)."""
+    children: list[tuple[str, Any]] = []
+    for param in getattr(cmd, "params", []):
+        label = _param_label(param)
+        if label is not None:
+            children.append((label, None))
+    subcommands = getattr(cmd, "commands", None)
+    if subcommands:
+        for sub in subcommands.values():
+            if not getattr(sub, "hidden", False):
+                children.append((sub.name, sub))
+    return children
+
+
 def _render_command_tree() -> str:
     """Walk the click tree under ``event_app``: each node's children are its params first,
     then its subcommands, drawn with single-line ASCII guides."""
-    import click
     from typer.main import get_command
 
     lines = ["opal event"]
 
-    def walk(cmd: click.Command, prefix: str) -> None:
-        children: list[tuple[str, click.Command | None]] = []
-        for param in getattr(cmd, "params", []):
-            label = _param_label(param)
-            if label is not None:
-                children.append((label, None))
-        subcommands = getattr(cmd, "commands", None)
-        if subcommands:
-            for sub in subcommands.values():
-                if not getattr(sub, "hidden", False):
-                    children.append((sub.name, sub))
+    def walk(cmd, prefix: str) -> None:
+        children = _command_children(cmd)
         for index, (label, sub) in enumerate(children):
             last = index == len(children) - 1
             lines.append(f"{prefix}{'`-- ' if last else '|-- '}{label}")
@@ -1058,6 +1071,28 @@ def _render_command_tree() -> str:
 
     walk(get_command(event_app), "")
     return "\n".join(lines)
+
+
+def _render_rich_command_tree():
+    """Same walk as :func:`_render_command_tree` but as a color-coded ``rich`` tree:
+    groups are bold cyan, commands green, params yellow, guides dimmed."""
+    import click
+    from rich.text import Text
+    from rich.tree import Tree
+    from typer.main import get_command
+
+    root = Tree(Text("opal event", style="bold blue"), guide_style="bright_black")
+
+    def walk(cmd, node: Tree) -> None:
+        for label, sub in _command_children(cmd):
+            if sub is None:
+                node.add(Text(label, style="yellow"))
+                continue
+            style = "bold cyan" if isinstance(sub, click.Group) else "green"
+            walk(sub, node.add(Text(label, style=style)))
+
+    walk(get_command(event_app), root)
+    return root
 
 
 if __name__ == "__main__":

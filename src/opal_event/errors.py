@@ -58,6 +58,13 @@ class ServiceUnavailableError(ProblemError):
         super().__init__(503, "unavailable", message)
 
 
+class OperationFailedError(ProblemError):
+    """500 for a failed privileged operation (kernel ``OperationFailed`` response)."""
+
+    def __init__(self, message: str = "Operation failed"):
+        super().__init__(500, "operation_failed", message)
+
+
 async def problem_exception_handler(request: Request, exc: ProblemError) -> JSONResponse:
     context = get_opal_context(request)
     return JSONResponse(

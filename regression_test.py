@@ -412,10 +412,10 @@ def t_backup_export_validate_import():
     check(backup.get("format_version") == 1 and "actions" in backup and "rules" in backup, f"bad backup shape: {list(backup)}")
     v = CLIENT.post("/api/v1/backup/validate", json=backup)
     check(v.status_code == 200 and v.json()["valid"] is True, f"validate -> {v.status_code} {v.text[:200]}")
-    r2 = CLIENT.post("/api/v1/backup/import", json={"backup": backup})
-    check(r2.status_code == 422, f"import w/o If-Match -> {r2.status_code} (want 422 required header)")
+    r2 = CLIENT.post("/api/v1/backup/import", json=backup)
+    check(r2.status_code == 428, f"import w/o If-Match -> {r2.status_code} (want 428)")
     etag = CLIENT.get("/api/v1/setting/").headers["etag"]
-    r3 = CLIENT.post("/api/v1/backup/import", json={"backup": backup}, headers={"If-Match": etag})
+    r3 = CLIENT.post("/api/v1/backup/import", json=backup, headers={"If-Match": etag})
     check(r3.status_code == 200, f"import -> {r3.status_code} {r3.text[:200]}")
     check("revision" in r3.json() and "pending_restart" in r3.json(), f"bad import result: {r3.text[:200]}")
 

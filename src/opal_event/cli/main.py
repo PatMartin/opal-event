@@ -574,8 +574,8 @@ def backup_validate(
 @backup_app.command("import")
 def backup_import(
     ctx: typer.Context,
-    json_str: str = typer.Option(None, "--json", help="Full BackupImportRequest JSON body ({'backup': {...}})"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the BackupImportRequest JSON body"),
+    json_str: str = typer.Option(None, "--json", help="Full ConfigBackup JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the ConfigBackup JSON body"),
     if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
 ) -> None:
     """Import a portable backup atomically (replaces portable rules/actions/settings)."""

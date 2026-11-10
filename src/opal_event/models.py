@@ -667,10 +667,6 @@ class ValidationReport(Strict):
     warnings: list[str]
 
 
-class BackupImportRequest(Strict):
-    backup: ConfigBackup
-
-
 class BackupImportResult(Strict):
     revision: str
     pending_restart: bool

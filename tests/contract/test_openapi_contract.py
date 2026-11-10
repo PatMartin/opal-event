@@ -20,12 +20,6 @@ SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.o
 # surfaces always carry the full operation map, so the allowance is app-side only.
 PENDING_OPS: frozenset[str] = frozenset(
     {
-        "opal_profile_list",
-        "opal_profile_create",
-        "opal_profile_get",
-        "opal_profile_patch",
-        "opal_profile_delete",
-        "opal_profile_activate",
         "opal_backup_list",
         "opal_backup_create",
         "opal_backup_download",

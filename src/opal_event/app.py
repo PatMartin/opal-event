@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from opal_event.config import ConfigStore
 from opal_event.errors import OpalContextualError, ProblemError, opal_contextual_error_handler, problem_exception_handler
 from opal_event.opal_context import OpalContextMiddleware, get_opal_context
-from opal_event.routers import actions, backup, events, executions, operations, personas, rules, settings
+from opal_event.routers import actions, backup, events, executions, operations, personas, profiles, rules, settings
 from opal_event.service import EventService
 from opal_event.validation import ValidationProblem
 
@@ -130,5 +130,6 @@ def create_app(config_path: str) -> FastAPI:
     app.include_router(settings.router)
     app.include_router(backup.router)
     app.include_router(personas.router)
+    app.include_router(profiles.router)
 
     return app

@@ -47,21 +47,26 @@ def patch_settings(patch: PortableSettingsPatch, config=Depends(get_config), if_
         raise PreconditionRequiredError("If-Match header (from GET /api/v1/setting/) is required for this update")
 
     def mutate(raw: dict) -> dict:
-        raw = dict(raw)
-        fields = patch.model_dump(mode="json", exclude_unset=True)
-        if "execution" in fields:
-            raw["execution"] = {**raw.get("execution", {}), **fields["execution"]}
-        if "persistence" in fields:
-            raw["persistence"] = {**raw.get("persistence", {}), **fields["persistence"]}
-        if "max_event_bytes" in fields:
-            raw["zeromq"] = {**raw.get("zeromq", {}), "max_event_bytes": fields["max_event_bytes"]}
-        return raw
+        return _apply_portable_patch(raw, patch.model_dump(mode="json", exclude_unset=True))
 
     try:
         new_settings = config.update(mutate, expected_revision=if_match)
     except ConcurrentUpdateError as exc:
         raise PreconditionFailedError(str(exc)) from exc
     return _portable_view(new_settings)
+
+
+def _apply_portable_patch(raw: dict, fields: dict) -> dict:
+    """Merge a ``PortableSettingsPatch``'s set fields into the raw config dict. Shared with
+    profile activation (``routers/profiles.py``), which applies a stored preset identically."""
+    raw = dict(raw)
+    if "execution" in fields:
+        raw["execution"] = {**raw.get("execution", {}), **fields["execution"]}
+    if "persistence" in fields:
+        raw["persistence"] = {**raw.get("persistence", {}), **fields["persistence"]}
+    if "max_event_bytes" in fields:
+        raw["zeromq"] = {**raw.get("zeromq", {}), "max_event_bytes": fields["max_event_bytes"]}
+    return raw
 
 
 _PERSISTENCE_KEYS = ("event_mode", "retention_days", "execution_history_enabled")

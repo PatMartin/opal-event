@@ -69,7 +69,7 @@ The install gives you **three commands**:
 
 The Python distribution currently declares version **1.2.0**; the repository also carries the newer **1.4.0 OpenAPI contract**. These are different version identifiers, not interchangeable names.
 
-`openapi/opal_event_v1.6.0.yaml` is the authoritative contract, with `openapi/shared/opal_kernel.yaml` as the shared OPAL suite kernel. v1.6.0 renamed every collection route to its singular form (`/api/v1/event/`, `/api/v1/rule/`, `/api/v1/action/`, `/api/v1/execution/`, `/api/v1/topic/`, `/api/v1/setting/`), added `GET /api/v1/info/` + `GET /api/v1/info/ping`, added the `/api/v1/persona/` resource, and made `If-Match` mandatory on collection POST creates (428/412) as well as PATCH/DELETE.
+`openapi/opal_event_v1.7.1.yaml` is the authoritative contract, with `openapi/shared/opal_kernel.yaml` as the shared OPAL suite kernel. v1.7.1 adds kernel-mounted `/api/v1/profile/` (named presets of portable settings; activation applies a profile to live config atomically, one active at a time), managed backup archives (`/api/v1/backup/list|create|download|restore|delete` as `.tar.gz` bundles), and service process lifecycle (`/api/v1/service/start|stop|log`, pidfile-tracked with start-as-restart). `POST /api/v1/backup/import` now takes the bare config bundle with mandatory `If-Match` (428/412), and personas read back an `origin` field (`local`|`owner`).
 
 ### 2. Start the service
 
@@ -585,7 +585,7 @@ The ZeroMQ proxy forwards messages as a best-effort transport. The internal obse
 
 ### REST-first by design
 
-The [OpenAPI contract](openapi/opal_event_v1.6.0.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
+The [OpenAPI contract](openapi/opal_event_v1.7.1.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
 
 | Interface | Role |
 | --- | --- |
@@ -670,7 +670,7 @@ opal-event/
 ├── opal-event.png                 project artwork
 ├── README.md                      this guide
 ├── pyproject.toml                 package + CLI entry points
-├── openapi/opal_event_v1.6.0.yaml  OpenAPI contract
+├── openapi/opal_event_v1.7.1.yaml  OpenAPI contract
 ├── config/opal_event.example.yaml
 ├── examples/                      sample JSON payloads
 ├── docs/CLI.md                    detailed command reference

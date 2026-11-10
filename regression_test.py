@@ -420,6 +420,41 @@ def t_backup_export_validate_import():
     check("revision" in r3.json() and "pending_restart" in r3.json(), f"bad import result: {r3.text[:200]}")
 
 
+def t_profiles():
+    etag = CLIENT.get("/api/v1/profile/").headers["etag"]
+    body = {"name": f"regression_{RUN}", "settings": {"execution": {"max_workers": 2}}}
+    r = CLIENT.post("/api/v1/profile/", json=body, headers={"If-Match": etag})
+    check(r.status_code == 201, f"profile create -> {r.status_code} {r.text[:200]}")
+    pid = r.json()["id"]
+    check(isinstance(pid, int) and r.headers.get("location") == f"/api/v1/profile/{pid}", "bad profile id/location")
+    etag = CLIENT.get("/api/v1/profile/").headers["etag"]
+    r2 = CLIENT.post(f"/api/v1/profile/{pid}/activate", headers={"If-Match": etag})
+    check(r2.status_code == 200 and r2.json()["is_active"] is True, f"activate -> {r2.status_code}")
+    check(CLIENT.get("/api/v1/setting/").json()["execution"]["max_workers"] == 2, "preset not applied")
+    etag = CLIENT.get(f"/api/v1/profile/{pid}").headers["etag"]
+    check(CLIENT.delete(f"/api/v1/profile/{pid}", headers={"If-Match": etag}).status_code == 204, "profile delete")
+
+
+def t_backup_archives():
+    r = CLIENT.post("/api/v1/backup/create")
+    check(r.status_code == 201, f"backup create -> {r.status_code}")
+    fn = r.json()["filename"]
+    check(r.headers.get("location") == f"/api/v1/backup/download/{fn}", "bad archive Location")
+    check(any(b["filename"] == fn for b in CLIENT.get("/api/v1/backup/list").json()), "archive not listed")
+    dl = CLIENT.get(f"/api/v1/backup/download/{fn}")
+    check(dl.status_code == 200 and dl.content[:2] == b"\x1f\x8b", "download not gzip")
+    etag = CLIENT.get("/api/v1/setting/").headers["etag"]
+    check(CLIENT.post(f"/api/v1/backup/restore/{fn}", headers={"If-Match": etag}).status_code == 200, "restore")
+    check(CLIENT.delete(f"/api/v1/backup/{fn}").status_code == 204, "archive delete")
+
+
+def t_service_log():
+    r = CLIENT.get("/api/v1/service/log?lines=5")
+    check(r.status_code in (200, 404), f"service log -> {r.status_code} (200 if log exists, else 404)")
+    if r.status_code == 200:
+        check(isinstance(r.json().get("lines"), list), "bad service log shape")
+
+
 def t_e2e_pipeline():
     """Own rule+action so the test does not depend on the example config."""
     action = {
@@ -564,6 +599,9 @@ TESTS = [
     ("action delete 428/204", t_action_delete),
     ("settings get + patch", t_settings_get_and_patch),
     ("backup export/validate/import", t_backup_export_validate_import),
+    ("profiles catalog + activate", t_profiles),
+    ("backup archives lifecycle", t_backup_archives),
+    ("service log tail", t_service_log),
     ("e2e rule->action pipeline", t_e2e_pipeline),
     ("zmq raw publish", t_zmq_publish),
     ("zmq invalid frame rejected", t_zmq_invalid_frame),
@@ -575,7 +613,7 @@ def _cleanup() -> None:
     """Best-effort removal of any rules/actions this run left behind (e.g. after a mid-test failure)."""
     for kind in ("rule", "action"):  # rules first: an action referenced by a rule can't be deleted (409)
         with contextlib.suppress(httpx.HTTPError, KeyError, ValueError):
-            for item in CLIENT.get(f"/api/v1/{kind}/").json()["items"]:
+            for item in CLIENT.get(f"/api/v1/{kind}/").json():  # bounded catalog: bare array
                 if RUN in item["id"]:
                     etag = CLIENT.get(f"/api/v1/{kind}/{item['id']}").headers.get("etag", "")
                     CLIENT.delete(f"/api/v1/{kind}/{item['id']}", headers={"If-Match": etag})

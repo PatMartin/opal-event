@@ -26,7 +26,7 @@ export default function RulesPage() {
     try {
       setError(null);
       const data = await api.listRules();
-      setItems(data.items);
+      setItems(data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }

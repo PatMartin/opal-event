@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Opal Event API
-  version: 1.6.0
+  version: 1.7.1
   description: 'REST management and HTTP event ingress for opal-event-svc. API-first contract, release v1.
 
 
@@ -79,8 +79,9 @@ info:
 
     Standard health routes: /api/v1/health/, /api/v1/health/live, /api/v1/health/ready. Settings: GET and PATCH
     /api/v1/settings/ exclusively; PATCH is atomic. Mutable configuration uses strong ETags and mandatory If-Match
-    with 428 missing, 412 stale. Collections return bounded arrays (subject to explicit
-    deployment caps and `limit`); ordering is stable and deterministic (newest first). Standard HTTP creation 201 Location, async admission 202, empty deletion
+    with 428 missing, 412 stale. For bounded configuration catalogs return full arrays (subject to explicit
+    deployment caps); growing histories return bounded arrays in stable deterministic order and `limit`
+    caps the returned items. Standard HTTP creation 201 Location, async admission 202, empty deletion
     204. Streaming keeps media-specific transports but exposes correlation headers, defined failure behavior,
     and no unsupported replay guarantee. Configuration export/import/validation excludes secrets and history.
 
@@ -111,6 +112,8 @@ tags:
   description: Manage named persona identities adopting the shared OPAL persona identifiers introduced by OPAL Say v1.6.0.
 - name: info
   description: Service identity, version and liveness probes.
+- name: service
+  description: Service process lifecycle (start, stop, log tail).
 security:
 - BearerAuth: []
 paths:
@@ -1040,7 +1043,7 @@ paths:
       summary: List executions
       description: '
 
-        Bounded list, stable descending time-plus-ID ordering; `limit` caps the returned items.
+        Bounded list in stable descending time-plus-ID order; `limit` caps the returned items.
 
         '
       responses:
@@ -1098,7 +1101,7 @@ paths:
           minimum: 1
           maximum: 500
           default: 100
-        description: Maximum items per page.
+        description: Maximum items to return.
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
@@ -1197,10 +1200,53 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
+  /api/v1/profile/:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/profiles_collection'
+  /api/v1/profile/{profile_id}:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/profile_item'
+  /api/v1/profile/{profile_id}/activate:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/profile_activate'
   /api/v1/setting/:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/settings_collection'
+    x-opal-cli:
+      get:
+        parent: config
+        group: setting
+        command: list
+
+        aliases:
+        - setting get
+      patch:
+        parent: config
+        group: setting
+        command: update
+
+        aliases:
+        - config setting patch
   /api/v1/setting/{key}:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/settings_key'
+    x-opal-cli:
+      get:
+        parent: config
+        group: setting
+        command: show
+
+        aliases:
+        - setting get-key
+      put:
+        parent: config
+        group: setting
+        command: set
+
+        aliases:
+        - setting set-key
+      delete:
+        parent: config
+        group: setting
+        command: remove
+
+        aliases:
+        - setting reset-key
   /api/v1/info/:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/info'
   /api/v1/info/ping:
@@ -1209,12 +1255,40 @@ paths:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/health_live'
   /api/v1/health/ready:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/health_ready'
+  /api/v1/backup/list:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_list'
+  /api/v1/backup/create:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_create'
+  /api/v1/backup/download/{filename}:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_download'
+  /api/v1/backup/restore/{filename}:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_restore'
+  /api/v1/backup/{filename}:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_delete'
   /api/v1/backup/export:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_export'
-  /api/v1/backup/validate:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_validate_post'
   /api/v1/backup/import:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_import'
+  /api/v1/backup/validate:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_validate_post'
+  /api/v1/service/start:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/service_start'
+    x-opal-cli:
+      post:
+        group: service
+        command: start
+  /api/v1/service/stop:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/service_stop'
+    x-opal-cli:
+      post:
+        group: service
+        command: stop
+  /api/v1/service/log:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/service_log'
+    x-opal-cli:
+      get:
+        group: service
+        command: log
   /api/v1/persona/:
     get:
       tags:
@@ -1482,16 +1556,7 @@ paths:
 components:
   parameters:
     PersonaId:
-      name: persona_id
-      in: path
-      required: true
-      description: Globally unique OPAL persona identifier.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 200
-        pattern: ^[A-Za-z0-9][A-Za-z0-9._-]*$
-      example: amy
+      $ref: './shared/opal_kernel.yaml#/components/parameters/OpalPersonaIdParameter'
   securitySchemes:
     BearerAuth: {$ref: './shared/opal_kernel.yaml#/components/securitySchemes/BearerAuth'}
   schemas:
@@ -2070,7 +2135,7 @@ components:
       type: array
       items:
         $ref: '#/components/schemas/Event'
-      description: Bounded list, newest first; `limit` caps the returned items.
+      description: Bounded list of stored events, newest first; `limit` caps the returned items. No delivery guarantee or replay.
     RuleList:
       type: array
       items:
@@ -2085,7 +2150,7 @@ components:
       type: array
       items:
         $ref: '#/components/schemas/Execution'
-      description: Bounded list, newest first; `limit` caps the returned items.
+      description: Bounded list of executions, newest first; `limit` caps the returned items.
     TopicList:
       type: object
       description: Observed topic names; incomplete when persistence is off.
@@ -2383,103 +2448,11 @@ components:
       - $ref: '#/components/schemas/HttpActionPatch'
       - $ref: '#/components/schemas/PythonActionPatch'
     PersonaCreate:
-      type: object
-      additionalProperties: false
-      required:
-      - persona_id
-      - name
-      properties:
-        persona_id:
-          type: string
-          minLength: 1
-          maxLength: 200
-          pattern: ^[A-Za-z0-9][A-Za-z0-9._-]*
-          description: Globally unique OPAL persona identifier.
-          example: amy
-        name:
-          type: string
-          minLength: 1
-          maxLength: 200
-          description: Human-readable persona name.
-          example: Amy
-        description:
-          anyOf:
-          - type: string
-            maxLength: 1000
-          - type: 'null'
-          description: Optional human-readable description or character notes.
-        voice_id:
-          anyOf:
-          - type: string
-            minLength: 1
-          - type: 'null'
-          description: Optional OPAL Say voice identifier associated with this persona.
-          example: en-gb-alan-low
-        enabled:
-          type: boolean
-          default: true
-          description: Whether this persona may be selected.
-      example:
-        persona_id: amy
-        name: Amy
-        voice_id: en-gb-alan-low
-        enabled: true
+      $ref: './shared/opal_kernel.yaml#/components/schemas/OpalPersonaCreate'
     PersonaUpdate:
-      type: object
-      minProperties: 1
-      additionalProperties: false
-      description: Partial update to a persona.
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 200
-        description:
-          anyOf:
-          - type: string
-            maxLength: 1000
-          - type: 'null'
-        voice_id:
-          anyOf:
-          - type: string
-            minLength: 1
-          - type: 'null'
-          description: Rebind the persona to a different OPAL Say voice identifier.
-        enabled:
-          type: boolean
+      $ref: './shared/opal_kernel.yaml#/components/schemas/OpalPersonaUpdate'
     PersonaRead:
-      type: object
-      required:
-      - persona_id
-      - name
-      - enabled
-      - created_at
-      - updated_at
-      properties:
-        persona_id:
-          type: string
-          description: Globally unique OPAL persona identifier.
-          example: amy
-        name:
-          type: string
-          example: Amy
-        description:
-          anyOf:
-          - type: string
-          - type: 'null'
-        voice_id:
-          anyOf:
-          - type: string
-          - type: 'null'
-          description: Optional OPAL Say voice identifier associated with this persona.
-        enabled:
-          type: boolean
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
+      $ref: './shared/opal_kernel.yaml#/components/schemas/OpalPersonaRead'
 x-opal-context-standard:
   version: '1.2'
   headers:

@@ -13,11 +13,8 @@ export interface EventItem {
   data: unknown;
 }
 
-export interface ListEvents {
-  items: EventItem[];
-  next_cursor: string | null;
-  has_more: boolean;
-}
+// History endpoints return bounded arrays (newest first); `limit` caps the count.
+export type ListEvents = EventItem[];
 
 export interface Condition {
   path: string;
@@ -33,10 +30,8 @@ export interface Rule {
   actions: string[];
 }
 
-export interface ListRules {
-  items: Rule[];
-  has_more: boolean;
-}
+// Bounded configuration catalogs return the complete array (no pagination).
+export type ListRules = Rule[];
 
 export type Action =
   | {
@@ -70,10 +65,7 @@ export type Action =
       timeout_seconds?: number | null;
     };
 
-export interface ListActions {
-  items: Action[];
-  has_more: boolean;
-}
+export type ListActions = Action[];
 
 export interface Execution {
   id: string;
@@ -96,11 +88,7 @@ export interface Execution {
   action_revision?: string | null;
 }
 
-export interface ListExecutions {
-  items: Execution[];
-  next_cursor: string | null;
-  has_more: boolean;
-}
+export type ListExecutions = Execution[];
 
 export interface Health {
   status: "ok" | "degraded";
@@ -154,6 +142,8 @@ export interface Persona {
   description?: string | null;
   voice_id?: string | null;
   enabled: boolean;
+  // Kernel OpalPersonaRead provenance; "local" when authored here (opal-event is standalone).
+  origin?: "local" | "owner";
   created_at: string;
   updated_at: string;
 }
@@ -184,12 +174,76 @@ export interface LivenessRead {
   status: "ok";
 }
 
+// ---------------------------------------------------------------------------
+// Profiles (v1.7.1): named presets of portable operating defaults
+// ---------------------------------------------------------------------------
+
+export interface PortableSettingsPatch {
+  execution?: Partial<ExecutionSettings>;
+  persistence?: Partial<PortablePersistenceSettings>;
+  max_event_bytes?: number;
+}
+
+export interface Profile {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
+  settings?: PortableSettingsPatch | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileCreate {
+  id?: number;
+  name: string;
+  description?: string | null;
+  is_active?: boolean;
+  settings?: PortableSettingsPatch | null;
+}
+
+export interface ProfilePatch {
+  name?: string;
+  description?: string | null;
+  is_active?: boolean;
+  settings?: PortableSettingsPatch | null;
+}
+
+// ---------------------------------------------------------------------------
+// Managed backup archives + service lifecycle (v1.7.1)
+// ---------------------------------------------------------------------------
+
+export interface BackupInfo {
+  filename: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface BackupCreateResponse {
+  filename: string;
+  message?: string | null;
+}
+
+export interface ServiceStatus {
+  state: "running" | "stopped";
+  pid?: number | null;
+  previous_pid?: number | null;
+  log_file?: string | null;
+}
+
+export interface ServiceLogTail {
+  log_file: string;
+  lines: string[];
+}
+
 export interface ConfigBackup {
   format_version: 1;
+  exported_at?: string | null;
   settings: PortableSettings;
   actions: Action[];
   rules: Rule[];
   personas: Persona[];
+  profiles: Profile[];
 }
 
 export interface ValidationReport {
@@ -205,6 +259,7 @@ export interface BackupImportResult {
 
 export interface HealthProbe {
   status: "ok" | "degraded" | "unavailable";
+  ready: boolean;
   details?: Record<string, string> | null;
 }
 

@@ -178,8 +178,9 @@ def publish(
     _emit(ctx, resp.json())
 
 
-def _list_events(ctx: typer.Context, limit: int, topic: str | None, source: str | None,
-                 event_from: str | None, event_to: str | None) -> None:
+def _list_events(
+    ctx: typer.Context, limit: int, topic: str | None, source: str | None, event_from: str | None, event_to: str | None
+) -> None:
     raw_params = dict(limit=limit, topic=topic, source=source, **{"from": event_from, "to": event_to})
     params = {k: v for k, v in raw_params.items() if v is not None}
     data = _call(ctx, "get_api_v1_events", params=params).json()
@@ -322,7 +323,7 @@ def info_stats(ctx: typer.Context) -> None:
 def rules_list(ctx: typer.Context) -> None:
     """List rules (complete bounded catalog; no pagination)."""
     data = _call(ctx, "get_api_v1_rules").json()
-    _emit(ctx, data["items"], columns=["id", "enabled", "topic", "actions"])
+    _emit(ctx, data, columns=["id", "enabled", "topic", "actions"])
 
 
 @rules_app.command("create")
@@ -390,7 +391,7 @@ def rules_test(
 def actions_list(ctx: typer.Context) -> None:
     """List actions (complete bounded catalog; no pagination)."""
     data = _call(ctx, "get_api_v1_actions").json()
-    _emit(ctx, data["items"], columns=["id", "type", "enabled"])
+    _emit(ctx, data, columns=["id", "type", "enabled"])
 
 
 @actions_app.command("create")
@@ -669,9 +670,7 @@ def _pid_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import subprocess
 
-        out = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True
-        ).stdout
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
         return f',"{pid}",' in out.replace(" ", "")
     import os as _os
 

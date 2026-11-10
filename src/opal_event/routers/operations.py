@@ -61,7 +61,7 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
 def get_info():
     return ServiceInfo(
         name="opal-event-svc",
-        version="1.6.0",
+        version="1.7.1",
         api_version="v1",
         description="OPAL Event: event bus, rule engine and action execution service.",
     )
@@ -81,7 +81,7 @@ def health_live(service: Annotated[EventService, Depends(get_service)]):
 @router.get("/api/v1/health/ready", response_model=OpalHealthProbe)
 def health_ready(service: Annotated[EventService, Depends(get_service)], response: Response):
     # One authoritative readiness check shared with REST publication — a 503 here means
-    # POST /api/v1/event/ would also be refused, and vice versa. Per openapi/opal_event_v1.6.0.yaml the
+    # POST /api/v1/event/ would also be refused, and vice versa. Per openapi/opal_event_v1.7.1.yaml the
     # 503 body is the OpalHealthProbe itself (status "unavailable", ready false), not an error.
     if not service.is_ready():
         response.status_code = 503

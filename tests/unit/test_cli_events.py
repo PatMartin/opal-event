@@ -3,7 +3,6 @@ stored-event catalog commands; legacy top-level event verbs keep working."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 
 import httpx

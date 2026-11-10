@@ -27,7 +27,7 @@ export default function ActionsPage() {
     try {
       setError(null);
       const data = await api.listActions();
-      setItems(data.items);
+      setItems(data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }

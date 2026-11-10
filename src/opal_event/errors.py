@@ -1,6 +1,6 @@
 """Structured error responses and the exception types that carry them.
 
-As of opal_event_v1.6.0.yaml every error response uses the nested ``OpalError`` envelope
+As of opal_event_v1.7.1.yaml every error response uses the nested ``OpalError`` envelope
 (``{"error": {code, message, details, request_id, transaction_id, session_id?, causation_id?}}``):
 application errors (400/401/403/404/409/413/429/500/503) via :func:`problem_exception_handler`,
 request-validation 422s via the handlers in :mod:`opal_event.app`, and strong-ETag precondition

@@ -21,23 +21,18 @@ class TestDatabaseEvents:
         db = Database(tmp_path / "t.db")
         assert db.get_event("missing") is None
 
-    def test_list_events_pagination(self, tmp_path):
+    def test_list_events_limit(self, tmp_path):
         db = Database(tmp_path / "t.db")
         for i in range(5):
             db.insert_event(make_event(f"e{i}"))
-        page1, cursor1 = db.list_events(limit=2)
-        assert len(page1) == 2
-        assert cursor1 is not None
-        page2, cursor2 = db.list_events(cursor=cursor1, limit=2)
-        assert len(page2) == 2
-        ids = {e["id"] for e in page1} | {e["id"] for e in page2}
-        assert len(ids) == 4
+        assert len(db.list_events(limit=2)) == 2
+        assert len(db.list_events(limit=4)) == 4
 
     def test_list_events_filters_by_topic(self, tmp_path):
         db = Database(tmp_path / "t.db")
         db.insert_event(make_event("e1", topic="vision.object.detected"))
         db.insert_event(make_event("e2", topic="intent.recognized"))
-        items, _ = db.list_events(topic="intent.recognized")
+        items = db.list_events(topic="intent.recognized")
         assert [e["id"] for e in items] == ["e2"]
 
     def test_list_topics_distinct(self, tmp_path):
@@ -52,12 +47,12 @@ class TestDatabaseEvents:
         db.insert_event(make_event("e1", topic="a.b"))
         db.insert_event(make_event("e2", topic="c.d"))
         assert len(db.list_topics()) == 2
-        events, _ = db.list_events()
+        events = db.list_events()
         assert len(events) == 2
 
         db.clear_events()
 
-        events_after, _ = db.list_events()
+        events_after = db.list_events()
         assert len(events_after) == 0
         assert db.list_topics() == []
 
@@ -87,7 +82,7 @@ class TestDatabaseExecutions:
         db = Database(tmp_path / "t.db")
         db.insert_execution({"id": "x1", "action_id": "a1", "status": "succeeded", "trigger": "manual", "created_at": "t"})
         db.insert_execution({"id": "x2", "action_id": "a1", "status": "failed", "trigger": "manual", "created_at": "t"})
-        items, _ = db.list_executions(status="failed")
+        items = db.list_executions(status="failed")
         assert [e["id"] for e in items] == ["x2"]
 
     def test_cleanup_retention_removes_old_rows(self, tmp_path):
@@ -353,42 +348,42 @@ class TestTimeFilters:
 
     def test_equivalent_instants_with_different_offsets(self, tmp_path):
         db = self._db(tmp_path)
-        items, _ = db.list_events(time_from="2026-01-10T12:00:00Z", time_to="2026-01-10T12:00:00Z")
+        items = db.list_events(time_from="2026-01-10T12:00:00Z", time_to="2026-01-10T12:00:00Z")
         assert {e["id"] for e in items} == {"eq-z", "eq-off"}  # same instant, different formats
 
     def test_offset_param_matches_z_stored(self, tmp_path):
         db = self._db(tmp_path)
-        items, _ = db.list_events(time_from="2026-01-10T14:00:00+02:00")
+        items = db.list_events(time_from="2026-01-10T14:00:00+02:00")
         assert {e["id"] for e in items} >= {"eq-z", "eq-off"}
 
     def test_microsecond_boundary(self, tmp_path):
         db = self._db(tmp_path)
-        items, _ = db.list_events(time_to="2026-01-10T12:00:00.000000Z")
+        items = db.list_events(time_to="2026-01-10T12:00:00.000000Z")
         assert {e["id"] for e in items} == {"eq-z", "eq-off"}  # frac (1us later) excluded
-        items, _ = db.list_events(time_from="2026-01-10T12:00:00.000001Z")
+        items = db.list_events(time_from="2026-01-10T12:00:00.000001Z")
         ids = {e["id"] for e in items}
         assert "frac" in ids and "eq-z" not in ids
 
     def test_utc_date_transition(self, tmp_path):
         db = self._db(tmp_path)
-        items, _ = db.list_events(time_from="2026-01-11T00:00:00Z")
+        items = db.list_events(time_from="2026-01-11T00:00:00Z")
         assert {e["id"] for e in items} == {"day"}  # stored raw date Jan 10, UTC date Jan 11
 
     def test_combined_filters(self, tmp_path):
         db = self._db(tmp_path)
         db.insert_event({"id": "other", "topic": "x.y", "source": "t", "timestamp": "2026-01-10T12:00:00Z", "data": {}})
-        items, _ = db.list_events(topic="a.b", time_from="2026-01-10T12:00:00Z", time_to="2026-01-10T12:00:00Z")
+        items = db.list_events(topic="a.b", time_from="2026-01-10T12:00:00Z", time_to="2026-01-10T12:00:00Z")
         assert {e["id"] for e in items} == {"eq-z", "eq-off"}  # 'other' filtered out by topic
 
-    def test_cursor_pagination_with_time_filters(self, tmp_path):
+    def test_list_events_limit_with_time_filters(self, tmp_path):
         db = Database(tmp_path / "t.db")
         for i in range(3):
             db.insert_event({"id": f"p{i}", "topic": "a.b", "source": "t", "timestamp": f"2026-01-10T12:00:0{i}Z", "data": {}})
         db.insert_event({"id": "out", "topic": "a.b", "source": "t", "timestamp": "2026-01-01T00:00:00Z", "data": {}})
-        items, cursor = db.list_events(limit=1, time_from="2026-01-10T00:00:00Z")
-        assert items[0]["id"] == "p2" and cursor is not None
-        items2, _ = db.list_events(cursor=cursor, limit=10, time_from="2026-01-10T00:00:00Z")
-        assert {e["id"] for e in items2} == {"p0", "p1"}  # 'out' never appears
+        items = db.list_events(limit=1, time_from="2026-01-10T00:00:00Z")
+        assert items[0]["id"] == "p2"  # newest first
+        items2 = db.list_events(limit=10, time_from="2026-01-10T00:00:00Z")
+        assert {e["id"] for e in items2} == {"p0", "p1", "p2"}  # 'out' never appears
 
 
 class TestCanonicalMicroseconds:
@@ -415,9 +410,9 @@ class TestCanonicalMicroseconds:
         db.insert_event({"id": "pre", "topic": "a.b", "source": "s", "timestamp": "1969-12-31T23:59:59.999999Z", "data": {}})
         us = db._conn.execute("SELECT ts_us FROM events WHERE id='pre'").fetchone()[0]
         assert us == -1
-        items, _ = db.list_events(time_to="1970-01-01T00:00:00Z")
+        items = db.list_events(time_to="1970-01-01T00:00:00Z")
         assert [e["id"] for e in items] == ["pre"]
-        items, _ = db.list_events(time_from="1970-01-01T00:00:00Z")
+        items = db.list_events(time_from="1970-01-01T00:00:00Z")
         assert items == []
 
     def test_ts_us_index_used(self, tmp_path):

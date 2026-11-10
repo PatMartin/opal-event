@@ -35,6 +35,11 @@ class TestExecuteScopeAllowed:
             assert c.get("/api/v1/action/", headers=_EXEC).status_code == 200
             assert c.get("/api/v1/action/echo_action", headers=_EXEC).status_code == 200
 
+    def test_list_topics(self, scoped_client) -> None:
+        # actions:read — "Discover registered actions and topics." (v1.7.1 x-opal-authorization)
+        with scoped_client as c:
+            assert c.get("/api/v1/topic/", headers=_EXEC).status_code == 200
+
     def test_execute_action(self, scoped_client) -> None:
         with scoped_client as c:
             resp = c.post(
@@ -75,7 +80,6 @@ class TestExecuteScopeDenied:
             ("get", "/api/v1/event/"),
             ("delete", "/api/v1/event/"),
             ("get", "/api/v1/stats/"),
-            ("get", "/api/v1/topic/"),
         ],
     )
     def test_admin_operations_forbidden(self, scoped_client, method, path) -> None:

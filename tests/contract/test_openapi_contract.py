@@ -11,13 +11,36 @@ import yaml
 
 from opal_event.cli.client import OPERATIONS as CLI_OPERATIONS
 
-CONTRACT_PATH = Path(__file__).resolve().parents[2] / "openapi" / "opal_event_v1.6.0.yaml"
+CONTRACT_PATH = Path(__file__).resolve().parents[2] / "openapi" / "opal_event_v1.7.1.yaml"
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
+
+# Contract operations declared in v1.7.1 but not yet wired into the REST app. The v1.7.1
+# migration lands surface-by-surface; each step removes the ops it implements, and the set
+# must be empty (and this scaffolding removed) when the migration completes. CLI and SPA
+# surfaces always carry the full operation map, so the allowance is app-side only.
+PENDING_OPS: frozenset[str] = frozenset(
+    {
+        "opal_profile_list",
+        "opal_profile_create",
+        "opal_profile_get",
+        "opal_profile_patch",
+        "opal_profile_delete",
+        "opal_profile_activate",
+        "opal_backup_list",
+        "opal_backup_create",
+        "opal_backup_download",
+        "opal_backup_restore",
+        "opal_backup_delete",
+        "opal_service_start",
+        "opal_service_stop",
+        "opal_service_log",
+    }
+)
 
 
 @functools.lru_cache(maxsize=1)
 def load_contract_operations() -> dict[str, tuple[str, str]]:
-    """operationId -> (method, path) for the whole contract. opal_event_v1.6.0.yaml declares
+    """operationId -> (method, path) for the whole contract. opal_event_v1.7.1.yaml declares
     shared endpoints as path-level ``$ref`` into ``shared/opal_kernel.yaml``'s
     ``components/pathItems`` — resolve those references so shared ops get the same parity
     checks as service-local ones."""
@@ -62,7 +85,6 @@ class TestContractCoverage:
         assert stats_schema["properties"]["rejected_publications"]["type"] == "integer"
         assert "rejected_publications" in stats_schema["required"]
 
-
     def test_cli_and_contract_operations_match_in_both_directions(self):
         operations = load_contract_operations()
         missing_in_cli = set(operations) - set(CLI_OPERATIONS)
@@ -90,11 +112,15 @@ class TestContractCoverage:
             if method in ("get", "post", "put", "patch", "delete")
         }
 
-        missing_in_app = contract_paths - app_paths
+        pending_paths = {operations[op] for op in PENDING_OPS}
+        missing_in_app = contract_paths - app_paths - pending_paths
         assert not missing_in_app, f"Contract operations missing in app: {missing_in_app}"
 
         missing_in_contract = app_paths - contract_paths
         assert not missing_in_contract, f"App public operations missing in contract: {missing_in_contract}"
+
+        # No pending op may be silently implemented without removing it from the allowance.
+        assert not pending_paths & app_paths, f"Implemented ops still listed in PENDING_OPS: {pending_paths & app_paths}"
 
     def test_spa_and_contract_operations_match_in_both_directions(self):
         operations = load_contract_operations()
@@ -136,7 +162,7 @@ class TestContractCoverage:
 
 
 class TestSelfDescribingActions:
-    """v1.4.1's optional self-description fields carried forward into v1.6.0: every action
+    """v1.4.1's optional self-description fields carried forward into v1.7.1: every action
     type declares description/input_schema/keywords/suggested_prompts as optional."""
 
     def _spec(self) -> dict:
@@ -155,7 +181,8 @@ class TestSelfDescribingActions:
             assert props["suggested_prompts"]["maxItems"] == 8
 
     def test_v160_singular_paths_and_new_resources(self) -> None:
-        """v1.6.0 breaking rename: collections are singular; persona/info endpoints exist."""
+        """v1.6.0 breaking rename: collections are singular; persona/info endpoints exist.
+        v1.7.1 adds kernel-mounted profile, managed-backup, and service-lifecycle paths."""
         spec = self._spec()
         for path in (
             "/api/v1/event/",
@@ -169,8 +196,25 @@ class TestSelfDescribingActions:
             "/api/v1/persona/",
             "/api/v1/persona/{persona_id}",
             "/api/v1/persona/{persona_id}/validate",
+            "/api/v1/profile/",
+            "/api/v1/profile/{profile_id}",
+            "/api/v1/profile/{profile_id}/activate",
+            "/api/v1/backup/list",
+            "/api/v1/backup/create",
+            "/api/v1/backup/download/{filename}",
+            "/api/v1/backup/restore/{filename}",
+            "/api/v1/backup/{filename}",
+            "/api/v1/service/start",
+            "/api/v1/service/stop",
+            "/api/v1/service/log",
         ):
             assert path in spec["paths"], f"missing path {path}"
-        for legacy in ("/api/v1/events/", "/api/v1/topics/", "/api/v1/rules/", "/api/v1/actions/",
-                       "/api/v1/executions/", "/api/v1/settings/"):
+        for legacy in (
+            "/api/v1/events/",
+            "/api/v1/topics/",
+            "/api/v1/rules/",
+            "/api/v1/actions/",
+            "/api/v1/executions/",
+            "/api/v1/settings/",
+        ):
             assert legacy not in spec["paths"], f"legacy plural path still present: {legacy}"

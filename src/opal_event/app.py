@@ -31,7 +31,7 @@ def _is_loopback(host: str) -> bool:
 
 
 def _opal_error(request: Request, status: int, code: str, message: str, details: object) -> JSONResponse:
-    """Every error response uses the nested OpalError envelope per openapi/opal_event_v1.6.0.yaml."""
+    """Every error response uses the nested OpalError envelope per openapi/opal_event_v1.7.1.yaml."""
     ctx = get_opal_context(request)
     return JSONResponse(
         status_code=status,
@@ -111,7 +111,7 @@ def create_app(config_path: str) -> FastAPI:
 
     app = FastAPI(
         title="Opal Event API",
-        version="1.6.0",
+        version="1.7.1",
         lifespan=lifespan,
     )
     app.add_middleware(OpalContextMiddleware)

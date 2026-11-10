@@ -7,7 +7,6 @@ Retention cleanup deletes rows older than ``persistence.retention_days`` for bot
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import sqlite3

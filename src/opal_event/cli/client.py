@@ -10,7 +10,7 @@ import httpx
 
 DEFAULT_API_URL = "http://127.0.0.1:8080"
 
-# operationId -> (method, path template). Must match opal_event.yaml (verified by contract tests).
+# operationId -> (method, path template). Must match opal_event_v1.7.1.yaml (verified by contract tests).
 OPERATIONS: dict[str, tuple[str, str]] = {
     "post_api_v1_events": ("POST", "/api/v1/event/"),
     "get_api_v1_events": ("GET", "/api/v1/event/"),
@@ -52,6 +52,20 @@ OPERATIONS: dict[str, tuple[str, str]] = {
     "opal_persona_get": ("GET", "/api/v1/persona/{persona_id}"),
     "opal_persona_patch": ("PATCH", "/api/v1/persona/{persona_id}"),
     "opal_persona_delete": ("DELETE", "/api/v1/persona/{persona_id}"),
+    "opal_profile_list": ("GET", "/api/v1/profile/"),
+    "opal_profile_create": ("POST", "/api/v1/profile/"),
+    "opal_profile_get": ("GET", "/api/v1/profile/{profile_id}"),
+    "opal_profile_patch": ("PATCH", "/api/v1/profile/{profile_id}"),
+    "opal_profile_delete": ("DELETE", "/api/v1/profile/{profile_id}"),
+    "opal_profile_activate": ("POST", "/api/v1/profile/{profile_id}/activate"),
+    "opal_backup_list": ("GET", "/api/v1/backup/list"),
+    "opal_backup_create": ("POST", "/api/v1/backup/create"),
+    "opal_backup_download": ("GET", "/api/v1/backup/download/{filename}"),
+    "opal_backup_restore": ("POST", "/api/v1/backup/restore/{filename}"),
+    "opal_backup_delete": ("DELETE", "/api/v1/backup/{filename}"),
+    "opal_service_start": ("POST", "/api/v1/service/start"),
+    "opal_service_stop": ("POST", "/api/v1/service/stop"),
+    "opal_service_log": ("GET", "/api/v1/service/log"),
 }
 
 

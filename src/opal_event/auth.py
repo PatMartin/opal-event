@@ -16,12 +16,14 @@ from opal_event.config import ConfigStore
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
-# Operations an execute-scoped token may perform — THINK's minimal surface.
+# Operations an execute-scoped token may perform — THINK's minimal surface: the contract's
+# ``actions:read`` + ``actions:execute`` + ``executions:read`` scopes (x-opal-authorization).
 # Fail-closed: anything not listed is denied for the execute scope.
 _EXECUTE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("GET", "/api/v1/action/"),
         ("GET", "/api/v1/action/{action_id}"),
+        ("GET", "/api/v1/topic/"),  # actions:read — "Discover registered actions and topics."
         ("POST", "/api/v1/action/{action_id}/execute"),
         ("GET", "/api/v1/execution/"),
         ("GET", "/api/v1/execution/{execution_id}"),

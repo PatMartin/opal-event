@@ -10,71 +10,40 @@ export default function ExecutionsPage() {
   const [items, setItems] = useState<Execution[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [cursors, setCursors] = useState<(string | null)[]>([null]); // cursors[i] is the cursor used to fetch page i
-  const [page, setPage] = useState(0);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const pageRef = useRef(page);
-  pageRef.current = page;
-  // One gate for ALL list loads: the newest load (refresh, pagination, or filter) always wins;
+  // One gate for ALL list loads: the newest load (refresh or filter) always wins;
   // any response that resolves after a newer load was issued is discarded as stale.
   const listGate = useRef(createRequestGate()).current;
 
-  async function load(cursor: string | null, statusFilter: string) {
+  // v1.7.1: execution history is a bounded array (newest first); `limit` caps the count,
+  // there is no cursor pagination.
+  async function load(statusFilter: string) {
     try {
       setError(null);
       const data = await fetchGuarded(listGate, () =>
         api.listExecutions({
           status: statusFilter || undefined,
           limit: PAGE_SIZE,
-          cursor: cursor ?? undefined,
         }),
       );
       if (data === null) return; // stale response — a newer load already superseded this one
-      setItems(data.items);
-      setNextCursor(data.next_cursor);
-      setHasMore(data.has_more);
+      setItems(data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }
 
   useEffect(() => {
-    // Filters changed: outstanding loads are invalidated, pagination resets, refresh restarts.
+    // Filters changed: outstanding loads are invalidated, refresh restarts.
     listGate.invalidate();
-    setPage(0);
-    setCursors([null]);
     setSelectedId(null);
-    void load(null, status);
-    const interval = setInterval(() => {
-      // Refresh only the first page; browsing older history must not be yanked back to page 1.
-      if (pageRef.current === 0) void load(null, status);
-    }, 4000);
+    void load(status);
+    const interval = setInterval(() => void load(status), 4000);
     return () => {
       clearInterval(interval);
       listGate.invalidate(); // unmount / filter change: in-flight loads can no longer apply
     };
   }, [status]);
-
-  async function goNext() {
-    if (!nextCursor) return;
-    const target = page + 1;
-    setCursors((prev) => {
-      const c = prev.slice(0, target);
-      c[target] = nextCursor;
-      return c;
-    });
-    setPage(target);
-    await load(nextCursor, status);
-  }
-
-  async function goPrev() {
-    if (page === 0) return;
-    const target = page - 1;
-    setPage(target);
-    await load(cursors[target], status);
-  }
 
   return (
     <div>
@@ -92,7 +61,7 @@ export default function ExecutionsPage() {
             ))}
           </select>
         </label>
-        <button className="secondary" onClick={() => void load(cursors[page], status)}>
+        <button className="secondary" onClick={() => void load(status)}>
           Refresh
         </button>
       </div>
@@ -124,15 +93,6 @@ export default function ExecutionsPage() {
           ))}
         </tbody>
       </table>
-      <div className="pagination-bar">
-        <button className="secondary" disabled={page === 0} onClick={() => void goPrev()}>
-          &larr; Previous
-        </button>
-        <span className="muted">Page {page + 1}</span>
-        <button className="secondary" disabled={!hasMore || !nextCursor} onClick={() => void goNext()}>
-          Next &rarr;
-        </button>
-      </div>
       {selectedId && <ExecutionDetail id={selectedId} onClose={() => setSelectedId(null)} />}
     </div>
   );

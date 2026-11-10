@@ -19,10 +19,10 @@ from opal_event.deps import get_config, get_service
 from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
 from opal_event.models import (
     Action,
+    ActionList,
     Execution,
     ExecutionRequest,
     HttpActionPatch,
-    ActionList,
     PythonActionPatch,
     ShellActionPatch,
 )

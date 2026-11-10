@@ -1,4 +1,4 @@
-"""Pydantic models mirroring the schemas in ``openapi/opal_event_v1.6.0.yaml``.
+"""Pydantic models mirroring the schemas in ``openapi/opal_event_v1.7.1.yaml``.
 
 Field names, types, constraints, and ``additionalProperties: false`` semantics are kept in lock-step with the
 OpenAPI contract. The contract is authoritative; do not add fields here that are not present there.
@@ -400,6 +400,10 @@ class PersonaRead(Strict):
     description: str | None = None
     voice_id: str | None = None
     enabled: bool
+    # Kernel ``OpalPersonaRead`` provenance: ``local`` (authored here) or ``owner`` (synced from
+    # OPAL Think's authoritative registry). opal-event runs standalone — no owner_url — so every
+    # record is ``local``; the field is additive and defaults applied on read.
+    origin: Literal["local", "owner"] = "local"
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 
@@ -559,18 +563,6 @@ class PersistenceSettings(Strict):
     execution_history_enabled: Literal[True] = True
 
 
-class Settings(Strict):
-    version: Literal[1] = 1
-    server: ServerSettings = Field(default_factory=ServerSettings)
-    zeromq: ZeroMqSettings = Field(default_factory=ZeroMqSettings)
-    security: SecuritySettings = Field(default_factory=SecuritySettings)
-    execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
-    persistence: PersistenceSettings
-    actions: list[Action] = Field(default_factory=list)
-    rules: list[Rule] = Field(default_factory=list)
-    personas: list[PersonaRead] = Field(default_factory=list)
-
-
 class PortablePersistenceSettings(Strict):
     event_mode: Literal["all", "matched", "none"] = "all"
     retention_days: Annotated[int, Field(ge=1, le=3650)] = 7
@@ -596,16 +588,77 @@ class PortableSettingsPatch(Strict):
 
 
 # --------------------------------------------------------------------------------------
+# Profiles (v1.7.1): named presets of portable operating defaults, one active at a time
+# --------------------------------------------------------------------------------------
+
+
+class ProfileCreate(Strict):
+    """Kernel ``OpalProfileCreate``: ``name`` is the only required field; ``is_active: true``
+    activates the new profile and deactivates all others. ``settings`` is the opal-event
+    service-defined preset — a portable-settings patch applied to live config on activation."""
+
+    id: Annotated[int, Field(ge=1)] | None = None
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    is_active: bool = False
+    settings: PortableSettingsPatch | None = None
+
+
+class ProfilePatch(Strict):
+    """Kernel ``OpalProfilePatch``: partial update; ``is_active: true`` activates (and applies
+    the stored preset like ``/activate``), ``is_active: false`` deactivates without reverting."""
+
+    name: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    is_active: bool | None = None
+    settings: PortableSettingsPatch | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> ProfilePatch:
+        if not self.model_fields_set:
+            raise ValueError("at least one property is required")
+        return self
+
+
+class Profile(Strict):
+    """Kernel ``OpalProfile``: ``id``, ``name`` and ``is_active`` are suite-standard; ``settings``
+    holds the opal-event preset. ids are positive integers allocated at create (next free id)."""
+
+    id: Annotated[int, Field(ge=1)]
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    description: Annotated[str, Field(max_length=1000)] | None = None
+    is_active: bool
+    settings: PortableSettingsPatch | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class Settings(Strict):
+    version: Literal[1] = 1
+    server: ServerSettings = Field(default_factory=ServerSettings)
+    zeromq: ZeroMqSettings = Field(default_factory=ZeroMqSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
+    execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
+    persistence: PersistenceSettings
+    actions: list[Action] = Field(default_factory=list)
+    rules: list[Rule] = Field(default_factory=list)
+    personas: list[PersonaRead] = Field(default_factory=list)
+    profiles: list[Profile] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------------------
 # Backup
 # --------------------------------------------------------------------------------------
 
 
 class ConfigBackup(Strict):
     format_version: Literal[1]
+    exported_at: str | None = None
     settings: PortableSettings
     actions: list[Action]
     rules: list[Rule]
     personas: list[PersonaRead] = Field(default_factory=list)
+    profiles: list[Profile] = Field(default_factory=list)
 
 
 class ValidationReport(Strict):
@@ -621,3 +674,53 @@ class BackupImportRequest(Strict):
 class BackupImportResult(Strict):
     revision: str
     pending_restart: bool
+
+
+# --------------------------------------------------------------------------------------
+# Managed backup archives (v1.7.1): service-managed .tar.gz config bundles
+# --------------------------------------------------------------------------------------
+
+
+class BackupInfo(Strict):
+    """Kernel ``OpalBackupInfo``: metadata for one stored archive."""
+
+    filename: str
+    size_bytes: int
+    created_at: str
+
+
+class BackupCreateResponse(Strict):
+    """Kernel ``OpalBackupCreateResponse``."""
+
+    filename: str
+    message: str | None = None
+
+
+# --------------------------------------------------------------------------------------
+# Service process lifecycle (v1.7.1 kernel ``service`` tag)
+# --------------------------------------------------------------------------------------
+
+
+class ServiceStartOptions(BaseModel):
+    """Kernel ``OpalServiceStartOptions`` — ``additionalProperties: true``, so unknown fields are
+    accepted and ignored rather than rejected."""
+
+    model_config = ConfigDict(extra="allow")
+
+    append: bool = False
+
+
+class ServiceStatus(Strict):
+    """Kernel ``OpalServiceStatus``: only ``state`` is required; the rest report the operation."""
+
+    state: Literal["running", "stopped"]
+    pid: int | None = None
+    previous_pid: int | None = None
+    log_file: str | None = None
+
+
+class ServiceLogTail(Strict):
+    """Kernel ``OpalServiceLogTail``: trailing log lines, oldest first."""
+
+    log_file: str
+    lines: list[str]

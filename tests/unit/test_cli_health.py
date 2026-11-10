@@ -87,7 +87,7 @@ class TestCommandTree:
         out = result.output
         assert out.startswith("opal event")
         # commands and groups are present
-        for line in ("|-- publish", "|-- rules", "`-- personas"):
+        for line in ("|-- publish", "|-- rules", "|-- personas", "`-- service"):
             assert line in out
         # positionals render as <name>, required options bare, optional bracketed
         assert "|-- <topic>" in out

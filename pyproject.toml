@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opal-event"
-version = "1.6.0"
+version = "1.7.1"
 description = "OPAL Event: event bus, rule engine and action execution service (opal-event-svc), CLI and SPA"
 readme = "README.md"
 requires-python = ">=3.11"

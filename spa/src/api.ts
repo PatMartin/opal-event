@@ -112,7 +112,7 @@ function opPath(op: OpId, params?: Record<string, string>): string {
 
 /** Thin wrapper exposing one typed call per contract operationId, mirroring the CLI's client.
  * Methods/paths come from api.operations.json — the same manifest the contract tests verify
- * against openapi/opal_event_v1.6.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
+ * against openapi/opal_event_v1.7.1.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
 export const api = {
   publishEvent: (body: { topic: string; data: unknown; id?: string; source?: string; timestamp?: string }) =>
     request<{ id: string; status: string; published_at: string }>(
@@ -229,8 +229,10 @@ export const api = {
   exportBackup: () => request<import("./types").ConfigBackup>(opMethod("opal_backup_export"), opPath("opal_backup_export")),
   validateBackup: (backup: unknown) =>
     request<import("./types").ValidationReport>(opMethod("opal_backup_validate_post"), opPath("opal_backup_validate_post"), backup),
+  // v1.7.1: the import body IS the ConfigBackup bundle (no {"backup": ...} wrapper);
+  // missing If-Match is 428 and stale is 412.
   importBackup: (backup: unknown, ifMatch: string) =>
-    request<import("./types").BackupImportResult>(opMethod("opal_backup_import"), opPath("opal_backup_import"), { backup }, {
+    request<import("./types").BackupImportResult>(opMethod("opal_backup_import"), opPath("opal_backup_import"), backup, {
       "If-Match": ifMatch,
     }),
 
@@ -274,6 +276,83 @@ export const api = {
     request<import("./types").ValidationReport>(
       opMethod("opal_persona_validate"),
       opPath("opal_persona_validate", { persona_id: personaId }),
+    ),
+
+  // Profiles (v1.7.1): bounded catalog, strong ETag on GET, mandatory If-Match on mutations —
+  // the same fetch-then-mutate convention as rules/actions/personas.
+  listProfiles: () => request<import("./types").Profile[]>(opMethod("opal_profile_list"), opPath("opal_profile_list")),
+  createProfile: async (body: import("./types").ProfileCreate) => {
+    const { etag } = await fetchWithEtag<import("./types").Profile[]>(opPath("opal_profile_list"));
+    return request<import("./types").Profile>(opMethod("opal_profile_create"), opPath("opal_profile_create"), body, {
+      "If-Match": etag,
+    });
+  },
+  getProfile: (profileId: number | string) =>
+    fetchWithEtag<import("./types").Profile>(opPath("opal_profile_get", { profile_id: String(profileId) })),
+  patchProfile: async (profileId: number | string, patch: import("./types").ProfilePatch, ifMatch?: string) => {
+    const etag = ifMatch ?? (await api.getProfile(profileId)).etag;
+    return request<import("./types").Profile>(
+      opMethod("opal_profile_patch"),
+      opPath("opal_profile_patch", { profile_id: String(profileId) }),
+      patch,
+      { "If-Match": etag },
+    );
+  },
+  deleteProfile: async (profileId: number | string, ifMatch?: string): Promise<void> => {
+    const etag = ifMatch ?? (await api.getProfile(profileId)).etag;
+    await request<void>(
+      opMethod("opal_profile_delete"),
+      opPath("opal_profile_delete", { profile_id: String(profileId) }),
+      undefined,
+      { "If-Match": etag },
+    );
+  },
+  activateProfile: async (profileId: number | string, ifMatch?: string) => {
+    const etag = ifMatch ?? (await api.getProfile(profileId)).etag;
+    return request<import("./types").Profile>(
+      opMethod("opal_profile_activate"),
+      opPath("opal_profile_activate", { profile_id: String(profileId) }),
+      undefined,
+      { "If-Match": etag },
+    );
+  },
+
+  // Managed backup archives (v1.7.1): server-side .tar.gz bundles under var/backups/.
+  listBackups: () => request<import("./types").BackupInfo[]>(opMethod("opal_backup_list"), opPath("opal_backup_list")),
+  createBackup: () =>
+    request<import("./types").BackupCreateResponse>(opMethod("opal_backup_create"), opPath("opal_backup_create")),
+  downloadBackup: async (filename: string): Promise<Blob> => {
+    const resp = await fetch(opPath("opal_backup_download", { filename }), {
+      headers: { ...contextHeaders(), ...authHeaders() },
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => null);
+      throw new ApiError(resp.status, data ?? null);
+    }
+    return resp.blob();
+  },
+  restoreBackup: async (filename: string, ifMatch?: string) => {
+    const etag = ifMatch ?? (await api.getSettings()).etag;
+    return request<import("./types").BackupImportResult>(
+      opMethod("opal_backup_restore"),
+      opPath("opal_backup_restore", { filename }),
+      undefined,
+      { "If-Match": etag },
+    );
+  },
+  deleteBackup: (filename: string) =>
+    request<void>(opMethod("opal_backup_delete"), opPath("opal_backup_delete", { filename })),
+
+  // Managed server process lifecycle (v1.7.1 kernel `service` tag).
+  serviceStart: (append?: boolean) =>
+    request<import("./types").ServiceStatus>(opMethod("opal_service_start"), opPath("opal_service_start"), {
+      append: append ?? false,
+    }),
+  serviceStop: () => request<import("./types").ServiceStatus>(opMethod("opal_service_stop"), opPath("opal_service_stop")),
+  serviceLog: (lines?: number) =>
+    request<import("./types").ServiceLogTail>(
+      opMethod("opal_service_log"),
+      withQuery(opPath("opal_service_log"), { lines }),
     ),
 } satisfies Record<ClientKey, unknown>;
 

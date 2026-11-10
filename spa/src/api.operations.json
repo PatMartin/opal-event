@@ -198,5 +198,75 @@
     "method": "DELETE",
     "path": "/api/v1/persona/{persona_id}",
     "client": "deletePersona"
+  },
+  "opal_profile_list": {
+    "method": "GET",
+    "path": "/api/v1/profile/",
+    "client": "listProfiles"
+  },
+  "opal_profile_create": {
+    "method": "POST",
+    "path": "/api/v1/profile/",
+    "client": "createProfile"
+  },
+  "opal_profile_get": {
+    "method": "GET",
+    "path": "/api/v1/profile/{profile_id}",
+    "client": "getProfile"
+  },
+  "opal_profile_patch": {
+    "method": "PATCH",
+    "path": "/api/v1/profile/{profile_id}",
+    "client": "patchProfile"
+  },
+  "opal_profile_delete": {
+    "method": "DELETE",
+    "path": "/api/v1/profile/{profile_id}",
+    "client": "deleteProfile"
+  },
+  "opal_profile_activate": {
+    "method": "POST",
+    "path": "/api/v1/profile/{profile_id}/activate",
+    "client": "activateProfile"
+  },
+  "opal_backup_list": {
+    "method": "GET",
+    "path": "/api/v1/backup/list",
+    "client": "listBackups"
+  },
+  "opal_backup_create": {
+    "method": "POST",
+    "path": "/api/v1/backup/create",
+    "client": "createBackup"
+  },
+  "opal_backup_download": {
+    "method": "GET",
+    "path": "/api/v1/backup/download/{filename}",
+    "client": "downloadBackup"
+  },
+  "opal_backup_restore": {
+    "method": "POST",
+    "path": "/api/v1/backup/restore/{filename}",
+    "client": "restoreBackup"
+  },
+  "opal_backup_delete": {
+    "method": "DELETE",
+    "path": "/api/v1/backup/{filename}",
+    "client": "deleteBackup"
+  },
+  "opal_service_start": {
+    "method": "POST",
+    "path": "/api/v1/service/start",
+    "client": "serviceStart"
+  },
+  "opal_service_stop": {
+    "method": "POST",
+    "path": "/api/v1/service/stop",
+    "client": "serviceStop"
+  },
+  "opal_service_log": {
+    "method": "GET",
+    "path": "/api/v1/service/log",
+    "client": "serviceLog"
   }
 }

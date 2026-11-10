@@ -112,7 +112,7 @@ class EventService:
                     try:
                         jsonschema.validate(event.get("data"), action.input_schema)
                     except jsonschema.ValidationError as exc:
-                        # Contract (v1.6.0): invalid input for the matched action -> a dropped
+                        # Contract (v1.7.1): invalid input for the matched action -> a dropped
                         # execution record with error_code=input_validation_failed, no retry.
                         self._drop_input_schema(event, rule, action, exc)
                         continue
@@ -135,7 +135,7 @@ class EventService:
 
     def _drop_input_schema(self, event: dict, rule, action, exc) -> None:
         """Persist a dropped execution for a rule-dispatched action whose input_schema rejected
-        the event data (contract v1.6.0 ``input_validation_failed``)."""
+        the event data (contract v1.7.1 ``input_validation_failed``)."""
         import uuid
         from hashlib import sha256
 

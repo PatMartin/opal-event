@@ -7,33 +7,28 @@ export default function EventsPage() {
   const [items, setItems] = useState<EventItem[]>([]);
   const [topic, setTopic] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [currentCursor, setCurrentCursor] = useState<string | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
   const [publishTopic, setPublishTopic] = useState("intent.recognized");
   const [publishData, setPublishData] = useState('{\n  "key": "value"\n}');
   const [publishDataValid, setPublishDataValid] = useState(true);
   const [publishResult, setPublishResult] = useState<string | null>(null);
 
-  async function loadPage(cursorToLoad: string | null = null, newHistory: string[] = []) {
+  // v1.7.1: event history is a bounded array (newest first); `limit` caps the count,
+  // there is no cursor pagination.
+  async function loadPage() {
     try {
       setError(null);
       const data = await api.listEvents({
         topic: topic || undefined,
-        cursor: cursorToLoad || undefined,
         limit: 50,
       });
-      setItems(data.items);
-      setCurrentCursor(cursorToLoad);
-      setNextCursor(data.next_cursor);
-      setCursorHistory(newHistory);
+      setItems(data);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }
 
   useEffect(() => {
-    loadPage(null, []);
+    loadPage();
   }, []);
 
   async function publish(e: React.FormEvent) {
@@ -43,7 +38,7 @@ export default function EventsPage() {
       const data = JSON.parse(publishData || "{}");
       const receipt = await api.publishEvent({ topic: publishTopic, data });
       setPublishResult(`Accepted: ${receipt.id} at ${receipt.published_at}`);
-      setTimeout(() => loadPage(currentCursor, cursorHistory), 400);
+      setTimeout(() => loadPage(), 400);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
@@ -56,7 +51,7 @@ export default function EventsPage() {
     try {
       setError(null);
       await api.clearEvents();
-      await loadPage(null, []);
+      await loadPage();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
@@ -69,22 +64,10 @@ export default function EventsPage() {
     try {
       setError(null);
       await api.deleteEvent(eventId);
-      await loadPage(currentCursor, cursorHistory);
+      await loadPage();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
-  }
-
-  function handleNext() {
-    if (!nextCursor) return;
-    loadPage(nextCursor, [...cursorHistory, currentCursor ?? ""]);
-  }
-
-  function handlePrevious() {
-    if (cursorHistory.length === 0) return;
-    const prevCursor = cursorHistory[cursorHistory.length - 1] || null;
-    const newHistory = cursorHistory.slice(0, -1);
-    loadPage(prevCursor, newHistory);
   }
 
   return (
@@ -109,7 +92,7 @@ export default function EventsPage() {
         className="panel"
         onSubmit={(e) => {
           e.preventDefault();
-          loadPage(null, []);
+          loadPage();
         }}
       >
         <label>
@@ -155,28 +138,6 @@ export default function EventsPage() {
         </tbody>
       </table>
       {items.length === 0 && <p className="muted">No events stored (or persistence.event_mode excludes them).</p>}
-
-      <div style={{ display: "flex", gap: "8px", marginTop: "12px", alignItems: "center" }}>
-        <button
-          type="button"
-          className="secondary"
-          disabled={cursorHistory.length === 0}
-          onClick={handlePrevious}
-        >
-          Previous
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          disabled={!nextCursor}
-          onClick={handleNext}
-        >
-          Next
-        </button>
-        {cursorHistory.length > 0 && (
-          <span className="muted">Page {cursorHistory.length + 1}</span>
-        )}
-      </div>
     </div>
   );
 }

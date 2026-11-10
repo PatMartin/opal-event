@@ -220,29 +220,25 @@ def t_events_list():
     r = CLIENT.get("/api/v1/event/", params={"topic": f"{TOPIC_BASE}.one"})
     check(r.status_code == 200, f"list -> {r.status_code}")
     body = r.json()
-    check("items" in body and "next_cursor" in body, f"missing list keys: {body}")
-    check(any(i["id"] == _state["event_id"] for i in body["items"]), "published event not in list")
+    check(isinstance(body, list), f"events list must be a bare array (v1.7.1): {type(body)}")
+    check(any(i["id"] == _state["event_id"] for i in body), "published event not in list")
 
 
-def t_second_publish_for_cursor():
+def t_second_publish():
     r = CLIENT.post("/api/v1/event/", json={"topic": f"{TOPIC_BASE}.two", "data": {"n": 2}})
     check(r.status_code == 202, f"publish2 -> {r.status_code}")
     _state["event_id_2"] = r.json()["id"]
     poll_until(lambda: CLIENT.get(f"/api/v1/event/{_state['event_id_2']}").status_code == 200, "second event persisted")
 
 
-def t_cursor_scoping():
+def t_limit_bounded():
+    # v1.7.1: history collections are bounded arrays — `limit` caps the count, no cursors.
     r = CLIENT.get("/api/v1/event/", params={"limit": 1})
-    check(r.status_code == 200, f"page1 -> {r.status_code}")
-    cursor = r.json().get("next_cursor")
-    if not cursor:
-        raise SkipTest("fewer than 2 events in store; cannot exercise cursor")
-    r2 = CLIENT.get("/api/v1/event/", params={"limit": 1, "cursor": cursor})
-    check(r2.status_code == 200, f"page2 same filters -> {r2.status_code}")
-    r3 = CLIENT.get("/api/v1/event/", params={"limit": 1, "cursor": cursor, "topic": "different.filter"})
-    check(r3.status_code == 422, f"cursor reused across filters -> {r3.status_code} (want 422)")
-    r4 = CLIENT.get("/api/v1/event/", params={"limit": 1, "cursor": "!!!garbage!!!"})
-    check(r4.status_code == 422, f"garbage cursor -> {r4.status_code} (want 422)")
+    check(r.status_code == 200, f"limited list -> {r.status_code}")
+    body = r.json()
+    check(isinstance(body, list) and len(body) <= 1, f"limit not honored: {len(body)}")
+    r2 = CLIENT.get("/api/v1/event/", params={"limit": 100})
+    check(isinstance(r2.json(), list), "bounded list must stay a bare array")
 
 
 def t_topics_list():
@@ -250,7 +246,7 @@ def t_topics_list():
         r = CLIENT.get("/api/v1/topic/")
         if r.status_code != 200:
             return None
-        return r if f"{TOPIC_BASE}.one" in r.json()["items"] else None
+        return r if f"{TOPIC_BASE}.one" in r.json() else None  # bare string array
 
     r = poll_until(found, "topic visible in /topics/")
     check(r.headers.get("etag"), "topics list missing ETag")
@@ -260,8 +256,7 @@ def t_rules_catalog():
     r = CLIENT.get("/api/v1/rule/")
     check(r.status_code == 200, f"rules list -> {r.status_code}")
     body = r.json()
-    check("items" in body and isinstance(body["items"], list), "rules items missing")
-    check(body.get("next_cursor") is None, "rules must be a full catalog (next_cursor null)")
+    check(isinstance(body, list), "rules catalog must be a bare array (v1.7.1)")
     check(r.headers.get("etag"), "rules list missing ETag")
     _state["rules_etag"] = r.headers["etag"]
 
@@ -378,9 +373,9 @@ def t_executions_list():
     r = CLIENT.get("/api/v1/execution/", params={"event_id": "does-not-exist"})
     check(r.status_code == 200, f"executions list -> {r.status_code}")
     body = r.json()
-    check("items" in body and "has_more" in body and isinstance(body["has_more"], bool), f"list shape: {body}")
+    check(isinstance(body, list), f"executions list must be a bare array (v1.7.1): {type(body)}")
     r2 = CLIENT.get("/api/v1/execution/", params={"action_id": ACTION_ID})
-    check(any(i["id"] == _state["exec_id"] for i in r2.json()["items"]), "execution not filterable by action_id")
+    check(any(i["id"] == _state["exec_id"] for i in r2.json()), "execution not filterable by action_id")
 
 
 def t_action_delete():
@@ -483,9 +478,9 @@ def t_e2e_pipeline():
 
     def done():
         lr = CLIENT.get("/api/v1/execution/", params={"event_id": eid})
-        if lr.status_code != 200 or not lr.json()["items"]:
+        if lr.status_code != 200 or not lr.json():
             return None
-        ex = lr.json()["items"][0]
+        ex = lr.json()[0]
         return ex if ex["status"] in ("succeeded", "failed", "timed_out", "dropped") else None
 
     ex = poll_until(done, "rule->action execution terminal")
@@ -503,7 +498,7 @@ def t_e2e_pipeline():
     else:
         time.sleep(2)  # no persistence signal for unmatched events; best-effort wait
     lr = CLIENT.get("/api/v1/execution/", params={"event_id": eid2})
-    check(lr.json()["items"] == [], f"non-matching event spawned executions: {lr.json()['items']}")
+    check(lr.json() == [], f"non-matching event spawned executions: {lr.json()}")
 
     for kind, rid in (("rule", E2E_RULE_ID), ("action", E2E_ACTION_ID)):  # rule first: it references the action
         etag = CLIENT.get(f"/api/v1/{kind}/{rid}").headers["etag"]
@@ -545,7 +540,7 @@ def t_zmq_publish():
 
     def found():
         r = CLIENT.get("/api/v1/event/", params={"topic": topic, "limit": 1})  # topic is indexed; source isn't
-        return r.json()["items"] if r.status_code == 200 else None
+        return r.json() if r.status_code == 200 else None  # bare array
 
     items = poll_until(found, "raw ZMQ publish observed + stored")
     check(items[0]["source"] == marker and items[0]["data"] == {"via": "raw-pub"}, f"stored event mismatch: {items[0]}")
@@ -582,8 +577,8 @@ TESTS = [
     ("event stored + roundtrip", t_event_stored),
     ("event 404 Problem shape", t_event_not_found_shape),
     ("events list", t_events_list),
-    ("publish second event", t_second_publish_for_cursor),
-    ("cursor scoping/422", t_cursor_scoping),
+    ("publish second event", t_second_publish),
+    ("bounded limit semantics", t_limit_bounded),
     ("topics list + ETag", t_topics_list),
     ("rules catalog + ETag", t_rules_catalog),
     ("rule create/409", t_rule_create_and_conflict),

@@ -114,6 +114,4 @@ class TestCommandTree:
             assert "zz_marker" in tree_after.splitlines()[-2] + tree_after.splitlines()[-1]
             assert tree_before != tree_after
         finally:
-            cli_main.event_app.registered_groups = [
-                g for g in cli_main.event_app.registered_groups if g.name != "zz_marker"
-            ]
+            cli_main.event_app.registered_groups = [g for g in cli_main.event_app.registered_groups if g.name != "zz_marker"]

@@ -87,9 +87,7 @@ def list_events(
     to: str | None = None,
 ):
     _check_time_filters(from_, to)
-    items = service.db.list_events(
-        limit=limit, topic=topic, source=source, time_from=from_, time_to=to
-    )
+    items = service.db.list_events(limit=limit, topic=topic, source=source, time_from=from_, time_to=to)
     return [Event.model_validate(item) for item in items]
 
 

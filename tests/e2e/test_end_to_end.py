@@ -181,14 +181,13 @@ class TestEndToEndPipeline:
         assert resp.status_code == 200
         assert resp.json()["valid"] is True
 
-    def test_backup_import_stale_if_match_is_409_not_412(self, app_client):
-        # Unlike settings/rules/actions, opal_event.1.2.0.yaml does not add 412/428 responses to
-        # backup/import; a stale revision intentionally still yields the original 409 Conflict.
+    def test_backup_import_stale_if_match_is_412(self, app_client):
+        # v1.7.1: import takes the bare bundle with mandatory If-Match; stale -> 412.
         exported = app_client.get("/api/v1/backup/export").json()
-        resp = app_client.post("/api/v1/backup/import", json={"backup": exported}, headers={"If-Match": "definitely-stale"})
-        assert resp.status_code == 409
+        resp = app_client.post("/api/v1/backup/import", json=exported, headers={"If-Match": "definitely-stale"})
+        assert resp.status_code == 412
 
-    def test_backup_import_missing_if_match_is_422_not_428(self, app_client):
+    def test_backup_import_missing_if_match_is_428(self, app_client):
         exported = app_client.get("/api/v1/backup/export").json()
-        resp = app_client.post("/api/v1/backup/import", json={"backup": exported})
-        assert resp.status_code == 422  # FastAPI's standard required-header validation, unchanged from v1.1
+        resp = app_client.post("/api/v1/backup/import", json=exported)
+        assert resp.status_code == 428

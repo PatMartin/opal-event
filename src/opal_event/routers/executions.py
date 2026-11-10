@@ -24,9 +24,7 @@ def list_executions(
     action_id: str | None = None,
     event_id: str | None = None,
 ):
-    items = service.db.list_executions(
-        limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id
-    )
+    items = service.db.list_executions(limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id)
     return [Execution.model_validate(item) for item in items]
 
 

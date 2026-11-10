@@ -72,8 +72,6 @@ def _ts_to_us(value: str) -> int | None:
     return int(dt.timestamp() * 1_000_000)
 
 
-
-
 class Database:
     """Thread-safe SQLite access. Uses one connection guarded by a lock (SQLite is fine for this
     write volume; a bounded worker pool and a single REST process are the only writers)."""

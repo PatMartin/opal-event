@@ -33,7 +33,13 @@ settings_app = typer.Typer(help="Portable, live-adjustable service settings.", n
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
 service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
+profiles_app = typer.Typer(help="Manage named presets of portable operating defaults.", no_args_is_help=True)
 history_app = typer.Typer(help="Stored-event history: list, inspect, and remove retained events.", no_args_is_help=True)
+# Canonical x-opal-cli bindings: `config setting <verb>` plus the declared flat `setting` aliases.
+config_app = typer.Typer(help="Configuration resources.", no_args_is_help=True)
+config_setting_app = typer.Typer(help="Service-wide portable settings.", no_args_is_help=True)
+setting_app = typer.Typer(help="Portable settings (aliases for `config setting ...`).", no_args_is_help=True)
+config_app.add_typer(config_setting_app, name="setting")
 for _sub, _name in (
     (rules_app, "rules"),
     (actions_app, "actions"),
@@ -41,6 +47,9 @@ for _sub, _name in (
     (history_app, "history"),
     (info_app, "info"),
     (settings_app, "settings"),
+    (config_app, "config"),
+    (setting_app, "setting"),
+    (profiles_app, "profiles"),
     (backup_app, "backup"),
     (personas_app, "personas"),
     (service_app, "service"),
@@ -787,6 +796,194 @@ def service_log(
 def command_tree() -> None:
     """Print this CLI's command/argument tree, generated from the live Typer app."""
     typer.echo(_render_command_tree())
+
+
+# -- `opal event config setting` + `setting` aliases (x-opal-cli canonical bindings) --------------
+# Contract-declared spellings: `config setting list|show|set|update|remove`, with
+# `config setting patch` (alias of `update`) and flat `setting get|get-key|set-key|reset-key`.
+
+
+def _settings_show_all(ctx: typer.Context) -> None:
+    _emit(ctx, _call(ctx, "opal_setting_list").json())
+
+
+def _settings_show_key(ctx: typer.Context, key: str) -> None:
+    _emit(ctx, _call(ctx, "opal_setting_get", path_params={"key": key}).json())
+
+
+def _settings_set_key(ctx: typer.Context, key: str, value: str, if_match: str | None) -> None:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = value
+    revision = if_match or _current_revision(ctx)
+    _emit(
+        ctx,
+        _call(ctx, "opal_setting_put", path_params={"key": key}, json={"value": parsed}, headers={"If-Match": revision}).json(),
+    )
+
+
+def _settings_remove_key(ctx: typer.Context, key: str, if_match: str | None) -> None:
+    revision = if_match or _current_revision(ctx)
+    _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision})
+    typer.echo(f"reset setting '{key}' to default")
+
+
+def _settings_update_map(ctx: typer.Context, json_str: str | None, file: str | None, if_match: str | None) -> None:
+    body = _read_payload(json_str, file)
+    revision = if_match or _current_revision(ctx)
+    _emit(ctx, _call(ctx, "opal_setting_patch", json=body, headers={"If-Match": revision}).json())
+
+
+_KEY = typer.Argument(..., help="Dotted portable setting key")
+_VALUE = typer.Option(..., "--value", help="JSON value to set")
+_IFM = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)")
+
+
+@config_setting_app.command("list")
+def config_setting_list(ctx: typer.Context) -> None:
+    """List the portable settings map."""
+    _settings_show_all(ctx)
+
+
+@config_setting_app.command("show")
+def config_setting_show(ctx: typer.Context, key: str = _KEY) -> None:
+    """Show one setting."""
+    _settings_show_key(ctx, key)
+
+
+@config_setting_app.command("set")
+def config_setting_set(ctx: typer.Context, key: str = _KEY, value: str = _VALUE, if_match: str = _IFM) -> None:
+    """Create or replace one setting value."""
+    _settings_set_key(ctx, key, value, if_match)
+
+
+@config_setting_app.command("remove")
+def config_setting_remove(ctx: typer.Context, key: str = _KEY, if_match: str = _IFM) -> None:
+    """Reset one setting to its schema default."""
+    _settings_remove_key(ctx, key, if_match)
+
+
+@config_setting_app.command("update")
+def config_setting_update(
+    ctx: typer.Context,
+    json_str: str = typer.Option(None, "--json", help="Partial settings-map JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the patch body"),
+    if_match: str = _IFM,
+) -> None:
+    """Atomically merge-patch the portable settings map."""
+    _settings_update_map(ctx, json_str, file, if_match)
+
+
+@config_setting_app.command("patch", hidden=True)
+def config_setting_patch_alias(
+    ctx: typer.Context,
+    json_str: str = typer.Option(None, "--json"),
+    file: str = typer.Option(None, "--file"),
+    if_match: str = _IFM,
+) -> None:
+    """Alias of `config setting update` (contract-declared)."""
+    _settings_update_map(ctx, json_str, file, if_match)
+
+
+@setting_app.command("get")
+def setting_get(ctx: typer.Context) -> None:
+    """Alias of `config setting list`."""
+    _settings_show_all(ctx)
+
+
+@setting_app.command("get-key")
+def setting_get_key(ctx: typer.Context, key: str = _KEY) -> None:
+    """Alias of `config setting show`."""
+    _settings_show_key(ctx, key)
+
+
+@setting_app.command("set-key")
+def setting_set_key(ctx: typer.Context, key: str = _KEY, value: str = _VALUE, if_match: str = _IFM) -> None:
+    """Alias of `config setting set`."""
+    _settings_set_key(ctx, key, value, if_match)
+
+
+@setting_app.command("reset-key")
+def setting_reset_key(ctx: typer.Context, key: str = _KEY, if_match: str = _IFM) -> None:
+    """Alias of `config setting remove`."""
+    _settings_remove_key(ctx, key, if_match)
+
+
+# -- `opal event profiles` ---------------------------------------------------------------------
+
+
+def _profile_etag(ctx: typer.Context, profile_id: int) -> str:
+    resp = _call(ctx, "opal_profile_get", path_params={"profile_id": profile_id})
+    return resp.headers["etag"]
+
+
+@profiles_app.command("list")
+def profiles_list(ctx: typer.Context) -> None:
+    """List profiles (complete bounded catalog; no pagination)."""
+    _emit(ctx, _call(ctx, "opal_profile_list").json(), columns=["id", "name", "is_active"])
+
+
+@profiles_app.command("create")
+def profiles_create(
+    ctx: typer.Context,
+    name: str = typer.Argument(...),
+    description: str = typer.Option(None, "--description"),
+    active: bool = typer.Option(False, "--active", help="Activate this profile on create"),
+    json_str: str = typer.Option(None, "--json", help="Full ProfileCreate JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the ProfileCreate body"),
+    if_match: str = _IFM,
+) -> None:
+    """Create a profile. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
+    body: dict[str, Any] = {"name": name}
+    if description is not None:
+        body["description"] = description
+    if active:
+        body["is_active"] = True
+    if json_str is not None or file is not None:
+        body = _read_payload(json_str, file)
+    revision = if_match or _current_revision(ctx)
+    _emit(ctx, _call(ctx, "opal_profile_create", json=body, headers={"If-Match": revision}).json())
+
+
+@profiles_app.command("get")
+def profiles_get(ctx: typer.Context, profile_id: int = typer.Argument(...)) -> None:
+    """Show one profile."""
+    _emit(ctx, _call(ctx, "opal_profile_get", path_params={"profile_id": profile_id}).json())
+
+
+@profiles_app.command("update")
+def profiles_update(
+    ctx: typer.Context,
+    profile_id: int = typer.Argument(...),
+    json_str: str = typer.Option(None, "--json", help="Partial ProfilePatch JSON body"),
+    file: str = typer.Option(None, "--file", help="Path to a file containing the patch body"),
+    if_match: str = _IFM,
+) -> None:
+    """Partially update a profile (is_active: true activates and applies the preset)."""
+    body = _read_payload(json_str, file)
+    revision = if_match or _profile_etag(ctx, profile_id)
+    _emit(
+        ctx,
+        _call(
+            ctx, "opal_profile_patch", path_params={"profile_id": profile_id}, json=body, headers={"If-Match": revision}
+        ).json(),
+    )
+
+
+@profiles_app.command("delete")
+def profiles_delete(ctx: typer.Context, profile_id: int = typer.Argument(...), if_match: str = _IFM) -> None:
+    """Delete a profile. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
+    revision = if_match or _profile_etag(ctx, profile_id)
+    _call(ctx, "opal_profile_delete", path_params={"profile_id": profile_id}, headers={"If-Match": revision})
+    typer.echo(f"deleted profile {profile_id}")
+
+
+@profiles_app.command("activate")
+def profiles_activate(ctx: typer.Context, profile_id: int = typer.Argument(...), if_match: str = _IFM) -> None:
+    """Activate a profile: apply its stored preset to live config and deactivate others."""
+    revision = if_match or _profile_etag(ctx, profile_id)
+    _emit(ctx, _call(ctx, "opal_profile_activate", path_params={"profile_id": profile_id}, headers={"If-Match": revision}).json())
 
 
 # -- `opal` root -----------------------------------------------------------------------------

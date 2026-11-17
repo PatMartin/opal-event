@@ -48,6 +48,48 @@ def _get_path(data: dict, path: tuple[str, ...]):
     return current
 
 
+def _apply_environment(settings: Settings) -> Settings:
+    """Process-level env/.env overrides for restart-owned config fields."""
+    if "OPAL_EVENT_HOST" in os.environ:
+        settings.server.host = os.environ["OPAL_EVENT_HOST"]
+    if "OPAL_EVENT_PORT" in os.environ:
+        settings.server.port = int(os.environ["OPAL_EVENT_PORT"])
+    if "OPAL_EVENT_ZMQ_PUBLISHERS" in os.environ:
+        settings.zeromq.publishers = os.environ["OPAL_EVENT_ZMQ_PUBLISHERS"]
+    if "OPAL_EVENT_ZMQ_SUBSCRIBERS" in os.environ:
+        settings.zeromq.subscribers = os.environ["OPAL_EVENT_ZMQ_SUBSCRIBERS"]
+    if "OPAL_EVENT_DATABASE" in os.environ:
+        settings.persistence.database = os.environ["OPAL_EVENT_DATABASE"]
+    return settings
+
+
+def dotenv_baseline(path: str | Path | None) -> dict[str, object]:
+    config_path = Path(path or "config/opal_event.yaml")
+    values: dict[str, object] = {
+        "OPAL_EVENT_CONFIG": str(config_path),
+        "OPAL_EVENT_HOST": "127.0.0.1",
+        "OPAL_EVENT_PORT": 8080,
+        "OPAL_EVENT_ZMQ_PUBLISHERS": "tcp://127.0.0.1:5555",
+        "OPAL_EVENT_ZMQ_SUBSCRIBERS": "tcp://127.0.0.1:5556",
+        "OPAL_EVENT_DATABASE": "var/opal_event.db",
+        "OPAL_EVENT_API_TOKEN": "<set-a-token>",
+    }
+    try:
+        settings = Settings.model_validate(yaml.safe_load(config_path.read_text(encoding="utf-8")) or {})
+    except (OSError, ValueError):
+        return values
+    values.update(
+        {
+            "OPAL_EVENT_HOST": settings.server.host,
+            "OPAL_EVENT_PORT": settings.server.port,
+            "OPAL_EVENT_ZMQ_PUBLISHERS": settings.zeromq.publishers,
+            "OPAL_EVENT_ZMQ_SUBSCRIBERS": settings.zeromq.subscribers,
+            "OPAL_EVENT_DATABASE": settings.persistence.database,
+        }
+    )
+    return values
+
+
 def _restart_only_snapshot(settings: Settings) -> dict:
     """Restart-only values extracted from a *validated* settings dict (defaults normalized)."""
     raw = settings.model_dump(mode="json")
@@ -83,7 +125,7 @@ class ConfigStore:
             raise ConfigError(f"configuration file not found: {self.path}")
         text = self.path.read_text(encoding="utf-8")
         raw = yaml.safe_load(text) or {}
-        settings = Settings.model_validate(raw)
+        settings = _apply_environment(Settings.model_validate(raw))
         self._settings = settings
         self._raw_at_load = raw
         self._revision = _revision_of(text)
@@ -134,7 +176,7 @@ class ConfigStore:
                     self._reload_failed = False  # file reverted to the active config
                     return False
                 raw = yaml.safe_load(text) or {}
-                new_settings = Settings.model_validate(raw)
+                new_settings = _apply_environment(Settings.model_validate(raw))
             except Exception:
                 logger.exception("rejected invalid configuration reload from %s; keeping last-good config", self.path)
                 self._reload_failed = True
@@ -177,7 +219,7 @@ class ConfigStore:
                 raise ConcurrentUpdateError(self._revision)
             new_raw = mutate(dict(self._raw_at_load))
             try:
-                new_settings = Settings.model_validate(new_raw)
+                new_settings = _apply_environment(Settings.model_validate(new_raw))
             except Exception:
                 self._reload_failed = True
                 raise

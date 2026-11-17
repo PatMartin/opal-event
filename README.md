@@ -694,3 +694,7 @@ opal-event/
 **OPAL Event doesn't need to be the smartest service in the room.** It just needs to reliably connect the services that notice things with the ones that can do something useful about them—while making every rule, action, and failure easy to understand.
 
 **Explore the rest of OPAL:** [OPAL](https://github.com/PatMartin/opal) · [OPAL Look](https://github.com/PatMartin/opal-look) · [OPAL Listen](https://github.com/PatMartin/opal-listen) · [OPAL Talk](https://github.com/PatMartin/opal-talk) · [OPAL Think](https://github.com/PatMartin/opal-think)
+
+## Dotenv configuration
+
+See [docs/DOTENV.md](docs/DOTENV.md) for `.env` loading, initialization, precedence, and `--env-file` / `--no-env-file` behavior.

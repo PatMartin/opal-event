@@ -10,15 +10,22 @@ import sys
 import uvicorn
 
 from opal_event.app import create_app
-
-DEFAULT_CONFIG_PATH = os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
+from opal_event.config import dotenv_baseline
+from opal_event.dotenv import DotenvError, prepare
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="opal-event-svc", description="Run the Opal Event REST/ZeroMQ service")
-    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="path to the YAML configuration file")
+    parser.add_argument("--config", help="path to the YAML configuration file")
+    parser.add_argument("--env-file", help="dotenv file (default: ./.env)")
+    parser.add_argument("--no-env-file", action="store_true", help="disable dotenv loading and .env initialization")
     parser.add_argument("--log-level", default="info", choices=["critical", "error", "warning", "info", "debug"])
     args = parser.parse_args(argv)
+    try:
+        prepare(env_file=args.env_file, no_env_file=args.no_env_file, baseline=dotenv_baseline(args.config))
+    except DotenvError as exc:
+        parser.error(str(exc))
+    config_path = args.config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
 
     logging.basicConfig(level=args.log_level.upper())
 
@@ -31,11 +38,11 @@ def main(argv: list[str] | None = None) -> int:
 
         wait_for_pids([p for p in wait_pids.split(",") if p.strip()])
 
-    app = create_app(args.config)
+    app = create_app(config_path)
 
     from opal_event.config import ConfigStore
 
-    cfg = ConfigStore(args.config)
+    cfg = ConfigStore(config_path)
 
     # Record the real server pid for `service stop` — the spawning CLI's Popen pid can
     # differ (venv python.exe is a shim that re-execs the interpreter). The managed

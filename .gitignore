@@ -19,3 +19,4 @@ uv.lock
 spa/test-results/
 spa/playwright-report/
 logs/
+!.env.example

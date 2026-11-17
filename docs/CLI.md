@@ -295,14 +295,16 @@ as `--name <type>`, optional options as `[ --name <type> =default ]`.
 ```text
 opal
 └── event (alias: opal-event)
-    │   [Global Options & Flags]
+    │   [Global Options & Flags — place after "event", before the subcommand]
     │   ├── --api-url <url>                     REST API base URL [env: OPAL_EVENT_API_URL]
     │   ├── --token <token>                     Bearer token [env: OPAL_EVENT_API_TOKEN]
     │   ├── --json                              Output raw JSON (flag)
     │   ├── --timeout <seconds>                 HTTP timeout [default: 30.0]
     │   ├── --opal-session-id <id>              X-Opal-Session-Id header [env: OPAL_SESSION_ID]
     │   ├── --opal-transaction-id <id>          X-Opal-Transaction-Id header [env: OPAL_TRANSACTION_ID]
-    │   └── --opal-causation-id <id>            X-Opal-Causation-Id header [env: OPAL_CAUSATION_ID]
+    │   ├── --opal-causation-id <id>            X-Opal-Causation-Id header [env: OPAL_CAUSATION_ID]
+    │   ├── --env-file <path>                   Load this dotenv file instead of ./.env
+    │   └── --no-env-file                       Disable dotenv loading and .env initialization
     │
     ├── publish <topic>                         Publish event to the bus
     │   ├── --data-json <json>                  (required) Event data JSON
@@ -310,22 +312,35 @@ opal
     │   ├── [--source <src>]                    Event source [default: opal-event-rest]
     │   └── [--timestamp <rfc3339>]             Timestamp [default: now]
     │
-    ├── list                                    List stored events
-    │   ├── [--cursor <token>]                  Pagination cursor
-    │   ├── [--limit <int>]                     Max items [default: 50]
+    ├── list                                    List stored events (alias of `history list`)
+    │   ├── [--limit <int>]                     Max items, 1–200 [default: 50]
     │   ├── [--topic <topic>]                   Topic exact filter
     │   ├── [--source <src>]                    Source filter
     │   ├── [--from <rfc3339>]                  Created >= timestamp
     │   └── [--to <rfc3339>]                    Created <= timestamp
     │
-    ├── get <event_id>                          Get stored event by ID
-    ├── delete <event_id>                       Delete stored event by ID
-    ├── clear                                   Clear all stored events from all topics
-    ├── topics                                  List observed topics
-    ├── info
+    ├── get <event_id>                          Get stored event by ID (alias of `history show`)
+    ├── delete <event_id>                       Delete stored event by ID (alias of `history remove`)
+    ├── clear                                   Clear all stored events (alias of `history clear`)
+    ├── topics                                  List observed topics (alias of `history topics`)
+    │
+    ├── log                                     Tail the managed service log
+    │   ├── [--lines <n>]                       Last N lines [default: 20]
+    │   └── [--follow/--no-follow]              Keep tailing (Ctrl+C to exit)
+    ├── tree                                    Print this command tree, generated live
+    │   └── [--ascii]                           Plain ASCII instead of rich output
+    │
+    ├── history                                 Stored-event history
+    │   ├── list                                (same options as `list`)
+    │   ├── show <event_id>
+    │   ├── remove <event_id>
+    │   ├── clear
+    │   └── topics
+    │
+    ├── info                                    Service identity, health, and metrics
     │   ├── get                                 Service identity (name, version, API version)
     │   ├── ping                                Liveness ping (no auth)
-    │   ├── health [--live | --ready]           Health summary, or liveness/readiness probe (no auth)
+    │   ├── health [--live | --ready]           Health summary, or liveness/readiness probe
     │   └── stats                               Runtime metrics and counters
     │
     ├── rules
@@ -360,20 +375,40 @@ opal
     │
     ├── executions
     │   ├── list                                List action executions
-    │   │   ├── [--cursor <token>]              Pagination cursor
-    │   │   ├── [--limit <int>]                 Max items [default: 100]
+    │   │   ├── [--limit <int>]                 Max items, 1–500 [default: 100]
     │   │   ├── [--status <status>]             Filter by execution status
     │   │   ├── [--rule-id <rule_id>]           Filter by rule ID
     │   │   ├── [--action-id <action_id>]       Filter by action ID
     │   │   └── [--event-id <event_id>]         Filter by triggering event ID
     │   └── get <execution_id>                  Get execution details by ID
     │
-    ├── settings
+    ├── settings                                Portable, live-adjustable service settings
     │   ├── get                                 Get portable service settings
-    │   └── update                              Update portable settings
-    │       ├── [--json <json>]                 Partial settings JSON body
-    │       ├── [--file <path>]                 File path containing JSON
-    │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │   ├── update                              Update portable settings
+    │   │   ├── [--json <json>]                 Partial settings JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │   ├── get-key <key>                       Read a single dotted-key setting
+    │   ├── set-key <key> --value <value>       Set a single dotted-key setting
+    │   │   └── [--if-match <etag>]
+    │   └── reset-key <key>                     Reset a key to its configured value
+    │       └── [--if-match <etag>]
+    │
+    ├── profiles                                Named presets of portable operating defaults
+    │   ├── list                                List profiles
+    │   ├── create <name>                       Create a profile
+    │   │   ├── [--description <str>]
+    │   │   ├── [--active]                      Activate immediately
+    │   │   ├── [--json <json> | --file <path>] Preset settings patch
+    │   │   └── [--if-match <etag>]
+    │   ├── get <profile_id>                    Get profile by ID
+    │   ├── update <profile_id>                 Update profile
+    │   │   ├── [--json <json> | --file <path>]
+    │   │   └── [--if-match <etag>]
+    │   ├── delete <profile_id>                 Delete profile
+    │   │   └── [--if-match <etag>]
+    │   └── activate <profile_id>               Make it the active profile (one at a time)
+    │       └── [--if-match <etag>]
     │
     ├── backup
     │   ├── export                              Export configuration bundle
@@ -386,37 +421,53 @@ opal
     │       ├── [--file <path>]                 File path containing JSON
     │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
     │
-    └── personas
-        ├── list                                List personas (bounded catalog)
-        │   └── [--enabled | --disabled]        Filter by enabled state
-        ├── get <persona_id>                    Get persona by ID
-        ├── create                              Register a persona
-        │   ├── [--json <json>]                 PersonaCreate JSON body
-        │   ├── [--file <path>]                 File path containing JSON
-        │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
-        ├── update <persona_id>                 Partially update persona
-        │   ├── [--json <json>]                 PersonaUpdate JSON body
-        │   ├── [--file <path>]                 File path containing JSON
-        │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
-        ├── delete <persona_id>                 Delete persona by ID
-        │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
-        └── validate <persona_id>               Check registration, enabled state, bindings
+    ├── personas                                Named automation identities
+    │   ├── list                                List personas (bounded catalog)
+    │   │   └── [--enabled | --disabled]        Filter by enabled state
+    │   ├── get <persona_id>                    Get persona by ID
+    │   ├── create                              Register a persona
+    │   │   ├── [--json <json>]                 PersonaCreate JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │   ├── update <persona_id>                 Partially update persona
+    │   │   ├── [--json <json>]                 PersonaUpdate JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   ├── delete <persona_id>                 Delete persona by ID
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   └── validate <persona_id>               Check registration, enabled state, bindings
     │
-    ├── log                                   Tail the background service log
-    │   ├── [--lines <n>]                     Last N lines before following [default: 20]
-    │   └── [--follow/--no-follow]            Keep tailing (Ctrl+C to exit)
+    ├── config                                  Configuration resources
+    │   └── setting                             Service-wide portable settings
+    │       ├── list                            List portable settings
+    │       ├── show <key>                      Show one setting
+    │       ├── set <key> --value <value>       Set one setting
+    │       │   └── [--if-match <etag>]
+    │       ├── remove <key>                    Remove a setting override
+    │       │   └── [--if-match <etag>]
+    │       └── update                          Bulk-update settings
+    │           ├── [--json <json> | --file <path>]
+    │           └── [--if-match <etag>]
     │
-    └── service
-        ├── start                               Start opal-event-svc in background (returns immediately)
+    ├── setting                                 Aliases for `config setting` reads/writes
+    │   ├── get · get-key <key>
+    │   ├── set-key <key> --value <value>
+    │   └── reset-key <key>
+    │
+    └── service                                 Manage the local opal-event-svc process
+        ├── start                               Start-as-restart the managed server
         │   ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
-        │   └── [--log-level <level>]           Uvicorn log level [default: info]
-        └── stop                                Stop the background service (SIGTERM via pid file)
-            └── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
+        │   └── [--append]                      Append to log instead of truncating
+        ├── stop                                Stop the managed server (not an error if stopped)
+        ├── log                                 Tail the service log
+        │   └── [--lines <n>]                   Last N lines [default: 10]
+        └── view                                Print the last 100 log lines
 ```
 
-`service start` spawns a detached `opal-event-svc` process, records its pid in
-`logs/opal_event.pid`, appends stdout/stderr to `logs/opal_events.log`, and returns immediately.
-`service stop` sends SIGTERM to the recorded pid; `opal event log` tails `logs/opal_events.log`.
+All `service` commands go through the running service's `POST /api/v1/service/*` endpoints
+(pidfile-tracked: `logs/opal_event.pid`, log: `logs/opal_event.log`). `service start` is a
+*start-as-restart*: it manages a running service but cannot currently cold-start a stopped
+one—launch `opal-event-svc` directly for the first start.
 
 ---
 
@@ -482,8 +533,7 @@ opal event list [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--cursor TEXT` | `None` | Pagination cursor from a previous page's `next_cursor` |
-| `--limit INT` | `50` | Maximum items to return (1–100) |
+| `--limit INT` | `50` | Maximum items to return (1–200) |
 | `--topic TEXT` | `None` | Filter by exact topic |
 | `--source TEXT` | `None` | Filter by source identifier |
 | `--from TEXT` | `None` | Filter events created at or after this RFC 3339 timestamp |
@@ -499,7 +549,7 @@ opal event list --topic vision.object.detected --limit 10
 # Filter by time range
 opal event list --from "2026-10-12T00:00:00Z" --to "2026-10-12T12:00:00Z"
 
-# Get raw JSON with cursor pagination
+# Get raw JSON output
 opal event --json list --limit 2
 ```
 
@@ -1012,8 +1062,7 @@ opal event executions list [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--cursor TEXT` | `None` | Pagination cursor from a previous page's `next_cursor` |
-| `--limit INT` | `100` | Maximum items to return (1–500, default: 100) |
+| `--limit INT` | `100` | Maximum items to return (1–500) |
 | `--status TEXT` | `None` | Filter by status (`queued`, `running`, `succeeded`, `failed`, `timed_out`, `dropped`) |
 | `--rule-id TEXT` | `None` | Filter by rule ID |
 | `--action-id TEXT` | `None` | Filter by action ID |

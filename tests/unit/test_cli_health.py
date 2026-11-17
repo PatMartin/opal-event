@@ -100,10 +100,10 @@ class TestCommandTree:
         # commands and groups are present
         for line in ("|-- publish", "|-- rules", "|-- personas", "`-- service"):
             assert line in out
-        # positionals render as <name>, required options bare, optional bracketed
-        assert "|-- <topic>" in out
-        assert "|-- --data-json <str>" in out
-        assert "|-- [ --timeout <float> =30.0 ]" in out
+        # usage labels are inline on each command line: required bare, optional bracketed
+        assert "|-- publish topic --data-json" in out
+        assert "[--timestamp]" in out
+        assert "[--timeout]" in out
         # --help and typer's completion boilerplate are skipped
         assert "--help" not in out
         assert "--install-completion" not in out

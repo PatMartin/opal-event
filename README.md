@@ -5,7 +5,7 @@
 
 A camera spots a person. A microphone hears an intent. A sensor crosses a threshold. Something in your software says, **"Hey, this just happened."**
 
-**OPAL Event** takes it from there: it moves events between services, checks simple rules, and kicks off useful actions. Think of it as the nervous system of [OPAL](https://github.com/PatMartin/opal)—a small, fast, understandable bridge between **noticing** and **doing**.
+**OPAL Event** takes it from there: it moves events between services, checks simple rules, and kicks off useful actions. Think of it as the nervous system of [OPAL](https://github.com/PatMartin/opal)—a project building computing and intelligence that can perceive, respond, and help through natural interaction. Event is a small, fast, understandable bridge between **noticing** and **doing**: valuable on its own for any event-driven automation, and the piece that lets the other OPAL modules react to each other.
 
 ~~~text
 opal-look notices a person ───┐
@@ -27,6 +27,23 @@ OPAL Event is deliberately practical:
 
 > **Design promise:** It is a *best-effort* event bus, not a durable job queue. A `202 Accepted` publish receipt does **not** mean every subscriber received the event or an action finished. Use execution history to check what actually ran.
 
+## Development status
+
+> **Work in progress.** I'm actively building OPAL and will break things often. Expect breaking changes to commands, configuration, and interfaces. No stability or backward-compatibility guarantees are made.
+
+Two things worth knowing today:
+
+- **No configuration file ships in this repository.** `config/opal_event.yaml` is gitignored and required at startup—[installation step 2](#2-create-your-configuration-file) provides a ready-to-use starter.
+- **`opal event service start` cannot cold-start a stopped service.** It stops, restarts, and tails the log of a running `opal-event-svc`; use `opal-event-svc` to launch it (see [Troubleshooting](#troubleshooting)).
+
+**Contents:** [Installation](#installation) · [Command tree](#the-complete-typer-command-tree) · [CLI guide](#cli-guide-from-first-event-to-useful-automations) · [How it works](#how-it-works-under-the-hood) · [Configuration](#configuration-safety-and-operations) · [Troubleshooting](#troubleshooting) · [Develop & test](#develop-test-and-measure) · [Documentation](#further-documentation) · [Contributing & license](#contributing-and-license)
+
+**What you can do with it:**
+
+- **Turn any event into a local action**—publish a topic, match it with a rule, run a script. [Try the hello →](#use-case-1-give-your-event-bus-a-voice-a-harmless-hello)
+- **Turn a sensor reading into an outbound webhook**—threshold rules plus allowlisted HTTP actions. [Heat alert →](#use-case-3-a-garage-sensor-raises-an-alert-above-a-threshold) [Webhook →](#use-case-5-call-an-http-webhook-when-a-rule-matches)
+- **Wire OPAL modules together**—with OPAL Look and OPAL Listen running, camera detections and voice intents drive real automations. [Front door →](#use-case-2-your-camera-sees-someone-at-the-front-door) [Voice intent →](#use-case-4-route-an-opal-listen-intent-into-an-automation)
+
 ## Installation
 
 Requires **Python 3.11+**. The optional web UI also needs **Node.js and npm**. Examples below use Linux/macOS; Windows PowerShell instructions follow.
@@ -41,8 +58,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-cp config/opal_event.example.yaml config/opal_event.yaml
-mkdir -p var
+mkdir -p config var
 ~~~
 
 For Windows PowerShell, substitute:
@@ -55,8 +71,7 @@ py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-Copy-Item config\opal_event.example.yaml config\opal_event.yaml
-New-Item -ItemType Directory -Force -Path var
+New-Item -ItemType Directory -Force -Path config,var
 ~~~
 
 The install gives you **three commands**:
@@ -67,17 +82,104 @@ The install gives you **three commands**:
 | `opal event ...` | Unified OPAL Typer command group |
 | `opal-event ...` | Shorter alias for the same Event CLI |
 
-The Python distribution currently declares version **1.2.0**; the repository also carries the newer **1.4.0 OpenAPI contract**. These are different version identifiers, not interchangeable names.
+The Python package and the OpenAPI contract are both at **1.7.1** (two different version identifiers that happen to match: `pyproject.toml` for the distribution, `openapi/opal_event_v1.7.1.yaml` for the REST contract).
 
 `openapi/opal_event_v1.7.1.yaml` is the authoritative contract, with `openapi/shared/opal_kernel.yaml` as the shared OPAL suite kernel. v1.7.1 adds kernel-mounted `/api/v1/profile/` (named presets of portable settings; activation applies a profile to live config atomically, one active at a time), managed backup archives (`/api/v1/backup/list|create|download|restore|delete` as `.tar.gz` bundles), and service process lifecycle (`/api/v1/service/start|stop|log`, pidfile-tracked with start-as-restart). `POST /api/v1/backup/import` now takes the bare config bundle with mandatory `If-Match` (428/412), and personas read back an `origin` field (`local`|`owner`).
 
-### 2. Start the service
+### 2. Create your configuration file
+
+The service refuses to start without a YAML config, and none ships in the repo—`config/opal_event.yaml` is deliberately gitignored so your local settings stay yours. Save this starter as `config/opal_event.yaml`:
+
+~~~yaml
+version: 1
+
+server:
+  host: 127.0.0.1
+  port: 8080
+
+zeromq:
+  publishers: tcp://127.0.0.1:5555   # producers (PUB) connect here
+  subscribers: tcp://127.0.0.1:5556  # consumers (SUB) connect here
+  max_event_bytes: 1048576
+  curve:
+    enabled: false
+    server_public_key_file: null
+    server_secret_key_file: null
+    authorized_client_keys_file: null
+
+security:
+  rest_auth:
+    enabled: false
+    token_env: OPAL_EVENT_API_TOKEN
+  http_action_allowlist:
+    - host: 127.0.0.1
+      ports: [9000]
+      schemes: [http]
+
+execution:
+  max_workers: 4
+  queue_size: 100
+  default_timeout_seconds: 30
+  overflow: drop_and_log
+  retry_enabled: false
+  max_output_bytes: 65536
+
+persistence:
+  database: var/opal_event.db        # the only strictly required field
+  event_mode: all
+  retention_days: 7
+  execution_history_enabled: true
+
+actions:
+  - id: announce_person
+    type: shell
+    enabled: true
+    mode: exec
+    executable: /bin/echo            # Windows: use "powershell" with args ["-c","echo ..."]
+    args: ["person detected at {{data.camera}}"]
+    stdin: none
+    timeout_seconds: 10
+
+  - id: send_notification
+    type: http
+    enabled: true
+    method: POST
+    url: http://127.0.0.1:9000/notify
+    body_mode: template
+    body:
+      camera: "{{data.camera}}"
+      event: "{{event}}"
+    timeout_seconds: 15
+
+  - id: process_detection
+    type: python
+    enabled: true
+    module: opal_event.plugins.example
+    function: handle_event
+    timeout_seconds: 10
+
+rules:
+  - id: front_door_alert
+    enabled: true
+    topic: vision.*
+    conditions:
+      - path: data.object
+        operator: eq
+        value: person
+    actions:
+      - announce_person
+      - send_notification
+~~~
+
+Only `persistence.database` is strictly required—everything else falls back to the defaults shown in [Configuration](#configuration-safety-and-operations). The starter's `front_door_alert` rule and three actions are what the examples below build on. Network bindings, REST auth, CURVE credentials, and the database path need a restart to take effect; execution, persistence modes, rules, and actions hot-reload.
+
+### 3. Start the service
 
 ~~~bash
 opal-event-svc --config config/opal_event.yaml --log-level info
 ~~~
 
-Keep that terminal open. In a **second terminal**, activate the virtual environment from the repository directory:
+Keep that terminal open. In a **second terminal**, activate the virtual environment from the repository directory and check readiness (ready means the broker *and* database are up):
 
 ~~~bash
 source .venv/bin/activate
@@ -95,9 +197,11 @@ Default local endpoints:
 | ZeroMQ producer connection (PUB → XSUB) | `tcp://127.0.0.1:5555` |
 | ZeroMQ consumer connection (SUB ← XPUB) | `tcp://127.0.0.1:5556` |
 
-Those ZeroMQ addresses are **not HTTP URLs**. You can change them in the [sample YAML configuration](config/opal_event.example.yaml).
+Those ZeroMQ addresses are **not HTTP URLs**. You can change them in your [configuration](#2-create-your-configuration-file).
 
-### 3. Publish your first event
+Once a service is running you can manage it from the CLI: `opal event service stop`, `opal event service log`, `opal event log --follow`, and `opal event service start` (which acts as a *restart*). Cold-starting via `service start` is not currently supported.
+
+### 4. Publish your first event
 
 ~~~bash
 opal event publish workshop.hello \
@@ -108,11 +212,11 @@ opal event list --topic workshop.hello
 opal event info stats
 ~~~
 
-The sample configuration stores observed events (`persistence.event_mode: all`). Event delivery and observation are asynchronous, so history may not appear instantly.
+The starter configuration stores observed events (`persistence.event_mode: all`). Event delivery and observation are asynchronous, so history may not appear instantly.
 
-> **Heads-up:** The example YAML already registers a `front_door_alert` rule and three example actions. Explore them with `opal event rules list` and `opal event actions list`; do not recreate those IDs unless you first remove the existing definitions.
+> **Heads-up:** The starter YAML already registers a `front_door_alert` rule and three example actions. Explore them with `opal event rules list` and `opal event actions list`; do not recreate those IDs unless you first remove the existing definitions.
 
-### 4. Optional: run the web console
+### 5. Optional: run the web console
 
 ~~~bash
 cd spa
@@ -138,18 +242,33 @@ opal
     ├── --opal-session-id ID                    correlation header
     ├── --opal-transaction-id ID                correlation header
     ├── --opal-causation-id ID                  correlation header
+    ├── --env-file PATH                         load this dotenv file instead of ./.env
+    ├── --no-env-file                           disable dotenv loading
     │
     ├── publish TOPIC --data-json JSON          [--id UUID] [--source TEXT]
     │                                          [--timestamp RFC3339]
-    ├── list                                    [--cursor TOKEN] [--limit N]
-    │                                          [--topic TOPIC] [--source TEXT]
-    │                                          [--from RFC3339] [--to RFC3339]
+    ├── list                                    [--limit 50] [--topic TOPIC]
+    │                                          [--source TEXT] [--from RFC3339]
+    │                                          [--to RFC3339]
     ├── get EVENT_ID
     ├── delete EVENT_ID
     ├── clear                                   delete ALL stored events
     ├── topics
-    ├── health                                  [--live | --ready]
-    ├── stats
+    ├── log                                     [--lines 20] [--follow]
+    ├── tree                                    [--ascii]  print this tree, live
+    │
+    ├── history                                 stored-event history
+    │   ├── list                                (same options as `list`)
+    │   ├── show EVENT_ID
+    │   ├── remove EVENT_ID
+    │   ├── clear
+    │   └── topics
+    │
+    ├── info                                    service identity and health
+    │   ├── get
+    │   ├── ping
+    │   ├── health                              [--live | --ready]
+    │   └── stats
     │
     ├── rules
     │   ├── list
@@ -170,22 +289,54 @@ opal
     │   └── execute ACTION_ID --event-json JSON
     │
     ├── executions
-    │   ├── list                                [--cursor TOKEN] [--limit N]
-    │   │                                      [--status STATUS] [--rule-id ID]
-    │   │                                      [--action-id ID] [--event-id ID]
+    │   ├── list                                [--limit 100] [--status STATUS]
+    │   │                                      [--rule-id ID] [--action-id ID]
+    │   │                                      [--event-id ID]
     │   └── get EXECUTION_ID
     │
-    ├── settings
+    ├── settings                                portable, live-adjustable settings
     │   ├── get
-    │   └── update                              [--json JSON | --file PATH | stdin]
+    │   ├── update                              [--json JSON | --file PATH | stdin]
+    │   │                                      [--if-match ETAG]
+    │   ├── get-key KEY
+    │   ├── set-key KEY --value VALUE           [--if-match ETAG]
+    │   └── reset-key KEY                       [--if-match ETAG]
+    │
+    ├── profiles                                named presets of portable settings
+    │   ├── list · get PROFILE_ID · delete PROFILE_ID
+    │   ├── create NAME                         [--description TEXT] [--active]
+    │   ├── update PROFILE_ID                   [--json JSON | --file PATH | stdin]
+    │   └── activate PROFILE_ID                 [--if-match ETAG]
+    │
+    ├── backup                                  portable configuration snapshots
+    │   ├── export                              [--output PATH]
+    │   ├── validate                            [--json JSON | --file PATH | stdin]
+    │   └── import                              [--json JSON | --file PATH | stdin]
     │                                          [--if-match ETAG]
     │
-    └── backup
-        ├── export                              [--output PATH]
-        ├── validate                            [--json JSON | --file PATH | stdin]
-        └── import                              [--json JSON | --file PATH | stdin]
-                                               [--if-match ETAG]
+    ├── personas                                named automation identities
+    │   ├── list                                [--enabled | --disabled]
+    │   ├── get PERSONA_ID · validate PERSONA_ID
+    │   ├── create · update PERSONA_ID          [--json JSON | --file PATH | stdin]
+    │   └── delete PERSONA_ID                   [--if-match ETAG]
+    │
+    ├── service                                 manage the local opal-event-svc
+    │   ├── start                               restart/start the managed server
+    │   │                                       [--config PATH] [--append]
+    │   ├── stop
+    │   ├── log                                 [--lines 10]
+    │   └── view
+    │
+    ├── config
+    │   └── setting                             list · show · set · remove · update
+    │
+    └── setting                                 aliases for `config setting`
+        ├── get · get-key KEY
+        ├── set-key KEY --value VALUE
+        └── reset-key KEY
 ~~~
+
+`opal event tree` prints this same tree generated live from the installed Typer app—it is the definitive reference for your version.
 
 Every level supports `--help`:
 
@@ -223,7 +374,7 @@ export OPAL_EVENT_API_URL=http://127.0.0.1:8080
 opal event info health
 
 # Or override the endpoint for one call:
-opal event --api-url http://127.0.0.1:8080 --timeout 10 stats
+opal event --api-url http://127.0.0.1:8080 --timeout 10 info stats
 
 # Use raw JSON output when scripting:
 opal event --json rules list
@@ -302,7 +453,7 @@ Delete the rule first because it references the action. These cleanup commands l
 
 ### Use case 2: Your camera sees someone at the front door
 
-The sample configuration comes with an illustrative OPAL Look → OPAL Event path: `front_door_alert` matches `vision.*` events when `data.object` is `person`.
+The starter configuration comes with an illustrative OPAL Look → OPAL Event path: `front_door_alert` matches `vision.*` events when `data.object` is `person`.
 
 ~~~bash
 # Inspect the preconfigured pieces.
@@ -441,7 +592,7 @@ opal event actions execute demo_notify_webhook --event-json '{
 }'
 ~~~
 
-The example configuration **allows HTTP actions only to** `http://127.0.0.1:9000`. You must supply a server handling `POST /notify` for success. To route this action automatically, add its ID to a matching rule's `actions` list, e.g. the garage rule from Use case 3, and re-enable that rule.
+The starter configuration **allows HTTP actions only to** `http://127.0.0.1:9000`. You must supply a server handling `POST /notify` for success. To route this action automatically, add its ID to a matching rule's `actions` list, e.g. the garage rule from Use case 3, and re-enable that rule.
 
 > Template values like `{{data.celsius}}` preserve their JSON number type when they occupy the entire string. Text such as `"Alert: {{data.celsius}}"` is rendered as a string. Missing fields cause a template error rather than silently inventing a value.
 
@@ -486,8 +637,8 @@ opal event settings get
 
 Useful details:
 
-- Event history supports `--cursor`, `--limit` (up to 200), `--topic`, `--source`, `--from`, and `--to`. Timestamps use RFC3339.
-- Execution history supports `--cursor`, `--limit` (up to 500), `--status`, `--rule-id`, `--action-id`, and `--event-id`.
+- Event history supports `--limit` (1–200, default 50), `--topic`, `--source`, `--from`, and `--to`. Timestamps use RFC3339.
+- Execution history supports `--limit` (1–500, default 100), `--status`, `--rule-id`, `--action-id`, and `--event-id`.
 - Rules and actions are **bounded catalogs**, not cursor-paginated lists.
 - `opal event --json executions list` and the other formatted collection commands print JSON arrays, making them convenient for `jq` pipelines.
 - `opal event clear` deletes **all stored event history**. It does not disable rules; use it cautiously.
@@ -613,7 +764,7 @@ Messages are limited to 1 MiB total across both frames. There are no subscriber 
 
 ## Configuration, safety, and operations
 
-The example YAML has the main knobs in one place:
+The [starter YAML](#2-create-your-configuration-file) has the main knobs in one place:
 
 ~~~yaml
 server:
@@ -632,6 +783,22 @@ persistence:
   execution_history_enabled: true
 ~~~
 
+### Environment and `.env` overrides
+
+Both `opal-event-svc` and `opal event` load `./.env` at startup (override with `--env-file PATH`, opt out with `--no-env-file`). If `./.env` doesn't exist, startup creates one pre-filled with a snapshot of the effective settings. Real environment variables always win over `.env` values—including empty strings. See [.env.example](.env.example) for the annotated template.
+
+| Variable | What it controls |
+| --- | --- |
+| `OPAL_EVENT_CONFIG` | Path to the YAML file (default `config/opal_event.yaml`) |
+| `OPAL_EVENT_HOST` / `OPAL_EVENT_PORT` | `server.host` / `server.port` |
+| `OPAL_EVENT_ZMQ_PUBLISHERS` / `OPAL_EVENT_ZMQ_SUBSCRIBERS` | `zeromq.publishers` / `zeromq.subscribers` |
+| `OPAL_EVENT_DATABASE` | `persistence.database` |
+| `OPAL_EVENT_API_TOKEN` | Bearer credential—checked by the server when REST auth is enabled, sent by the CLI as `--token` |
+| `OPAL_EVENT_API_URL` | CLI's REST base URL (default `http://127.0.0.1:8080`) |
+| `OPAL_SESSION_ID`, `OPAL_TRANSACTION_ID`, `OPAL_CAUSATION_ID` | CLI correlation headers |
+
+**Precedence:** CLI flag → real environment variable → `.env` file → YAML config → built-in defaults. The `OPAL_EVENT_*` overrides apply only to the restart-owned fields above; portable settings change via YAML hot-reload or `opal event settings update`.
+
 - **Keep external access deliberate.** Default bindings are loopback-only. Exposing the service beyond localhost requires REST bearer authentication; secure external ZeroMQ access with CURVE and trusted client keys.
 - **Shell actions use argv, not an interpolated shell command.** The `exec` mode uses a registered executable; interpreter modes use a registered script path. Event text must not become executable code.
 - **HTTP actions use destination allowlists.** A URL must pass scheme/host/port and address checks. An arbitrary event cannot select an arbitrary internet destination.
@@ -641,6 +808,19 @@ persistence:
 - **Reload behavior matters.** Rule/action and portable changes can take effect live. Transport bindings, CURVE settings, REST auth, and database path changes require a restart.
 
 For deployments and troubleshooting, see [the full user guide](docs/USER_GUIDE.md), [CLI reference](docs/CLI.md), and [ZeroMQ specification](specs/zeromq_protocol.md).
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
+| --- | --- | --- |
+| `Error: cannot reach Opal Event API` (exit 2) | The service isn't running, or the CLI points at the wrong URL | Start it: `opal-event-svc --config config/opal_event.yaml`. `opal event service start` only manages an already-running service—it cannot cold-start one. Check `--api-url` / `OPAL_EVENT_API_URL`. |
+| `ConfigError: configuration file not found` | `config/opal_event.yaml` doesn't exist | Create it per [installation step 2](#2-create-your-configuration-file), or pass `--config PATH` / set `OPAL_EVENT_CONFIG`. |
+| Published event never appears in `opal event list` | `persistence.event_mode` isn't `all`, or the write just hasn't landed yet | Check `opal event settings get`; set `event_mode` to `all`. `202 Accepted` means handed to the bus—not stored or delivered. |
+| Rule matches in `rules test` but nothing runs | Referenced action is disabled/missing, or the bounded queue dropped it | `opal event executions list --status dropped` and `--status failed`; verify the action is enabled. |
+| HTTP action fails immediately | Destination isn't in `security.http_action_allowlist` | Add the host/port/scheme to the allowlist in your YAML; inspect the exact error with `opal event executions get EXECUTION_ID`. |
+| `HTTP 401` on every call | `security.rest_auth.enabled: true` and no token sent | Export `OPAL_EVENT_API_TOKEN` or pass `--token`. |
+
+Deeper diagnostics live in the [user guide](docs/USER_GUIDE.md) and [CLI reference](docs/CLI.md#16-troubleshooting).
 
 ## Develop, test, and measure
 
@@ -669,11 +849,14 @@ The test suite has unit, integration, contract, security, and end-to-end coverag
 opal-event/
 ├── opal-event.png                 project artwork
 ├── README.md                      this guide
+├── LICENSE                        Apache-2.0
 ├── pyproject.toml                 package + CLI entry points
-├── openapi/opal_event_v1.7.1.yaml  OpenAPI contract
-├── config/opal_event.example.yaml
+├── openapi/opal_event_v1.7.1.yaml  OpenAPI contract (+ shared/opal_kernel.yaml)
+├── .env.example                   annotated dotenv template
+├── config/opal_event.yaml         your config (gitignored—see installation step 2)
 ├── examples/                      sample JSON payloads
 ├── docs/CLI.md                    detailed command reference
+├── docs/COOKBOOK.md               standalone + suite recipes
 ├── docs/USER_GUIDE.md             extended operator guide
 ├── specs/zeromq_protocol.md       wire protocol and delivery semantics
 ├── src/opal_event/
@@ -689,12 +872,23 @@ opal-event/
 └── tests/                         unit, integration, contract, security, E2E
 ~~~
 
+## Further documentation
+
+- [CLI reference](docs/CLI.md)—every command, option, and payload in detail
+- [Cookbook](docs/COOKBOOK.md)—standalone one-liners plus OPAL suite integration recipes
+- [User guide](docs/USER_GUIDE.md)—deployment, security, REST usage, and operations
+- [OpenAPI contract](openapi/opal_event_v1.7.1.yaml)—the authoritative REST interface (shared kernel: `openapi/shared/opal_kernel.yaml`)
+- [ZeroMQ wire protocol](specs/zeromq_protocol.md)—framing, delivery semantics, raw PUB/SUB examples
+- [Interactive API docs](http://127.0.0.1:8080/docs)—Swagger UI, while the service is running
+
+## Contributing and license
+
+Issues and pull requests are welcome on [GitHub](https://github.com/PatMartin/opal-event). Before submitting, run `pytest` and `ruff check src tests` (see [Develop, test, and measure](#develop-test-and-measure)).
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
 ---
 
 **OPAL Event doesn't need to be the smartest service in the room.** It just needs to reliably connect the services that notice things with the ones that can do something useful about them—while making every rule, action, and failure easy to understand.
 
 **Explore the rest of OPAL:** [OPAL](https://github.com/PatMartin/opal) · [OPAL Look](https://github.com/PatMartin/opal-look) · [OPAL Listen](https://github.com/PatMartin/opal-listen) · [OPAL Talk](https://github.com/PatMartin/opal-talk) · [OPAL Think](https://github.com/PatMartin/opal-think)
-
-## Dotenv configuration
-
-See [docs/DOTENV.md](docs/DOTENV.md) for `.env` loading, initialization, precedence, and `--env-file` / `--no-env-file` behavior.

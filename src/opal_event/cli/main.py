@@ -1023,85 +1023,90 @@ except Exception:  # noqa: BLE001
     pass
 
 
-def _param_label(param) -> str | None:
-    """Render one click param. Positionals as ``<name>``; required options ``--name <type>``;
-    optional options ``[ --name <type> =default ]``. Hidden and --help params are skipped."""
+def _param_label(param) -> tuple[str, str] | None:
+    """A param's ``(text, style)`` — yellow when required, dim when bracketed — or None to skip it.
 
-    if getattr(param, "hidden", False):
+    Matches opal-listen's tree renderer: ``name``/``[name]`` for arguments,
+    ``--flag``/``[--flag]`` for options; hidden, ``expose_value=False`` (shell-completion
+    plumbing), and ``--help`` params are skipped."""
+    if getattr(param, "hidden", False) or getattr(param, "expose_value", True) is False:
         return None
-    opts = getattr(param, "opts", [])
-    if not any(o.startswith("-") for o in opts):  # positional argument (TyperArgument)
-        return f"<{param.name}>" if param.required else f"[ <{param.name}> ]"
-    opts = [o for o in opts if o.startswith("--")] or list(opts)
-    if "--help" in opts or "--install-completion" in opts or "--show-completion" in opts:
+    kind = getattr(param, "param_type_name", "")
+    required = getattr(param, "required", False)
+    style = "yellow" if required else "dim"
+    if kind == "argument":
+        return (param.name if required else f"[{param.name}]", style)
+    if kind != "option":
         return None
-    name = max(opts, key=len)
-    if param.secondary_opts:
-        name += "/" + param.secondary_opts[0]
-    is_flag = getattr(param, "is_flag", False)
-    core = name if is_flag else f"{name} <{param.metavar or param.type.name}>"
-    if param.required:
-        return core
-    default = param.default
-    suffix = "" if is_flag or default in (None, ()) or callable(default) else f" ={default}"
-    return f"[ {core}{suffix} ]"
+    opts = [*getattr(param, "opts", ()), *getattr(param, "secondary_opts", ())]
+    flag = next((o for o in opts if o.startswith("--")), opts[0] if opts else param.name)
+    if flag == "--help":
+        return None
+    return (flag if required else f"[{flag}]", style)
 
 
-def _command_children(cmd) -> list[tuple[str, Any]]:
-    """One node's children for the command tree: visible params first (as ``(label, None)``),
-    then visible subcommands (as ``(name, command)``)."""
-    children: list[tuple[str, Any]] = []
-    for param in getattr(cmd, "params", []):
-        label = _param_label(param)
-        if label is not None:
-            children.append((label, None))
-    subcommands = getattr(cmd, "commands", None)
-    if subcommands:
-        for sub in subcommands.values():
-            if not getattr(sub, "hidden", False):
-                children.append((sub.name, sub))
-    return children
+def _usage_labels(cmd) -> list[tuple[str, str]]:
+    return [label for p in getattr(cmd, "params", ()) if (label := _param_label(p))]
+
+
+def _visible_commands(group) -> list[tuple[str, Any]]:
+    return [(n, c) for n, c in getattr(group, "commands", {}).items() if not getattr(c, "hidden", False)]
+
+
+def _is_group(cmd) -> bool:
+    return bool(getattr(cmd, "commands", None))
+
+
+def _styled_label(name, cmd, name_style):
+    from rich.text import Text
+
+    text = Text(name, style=name_style)
+    for label, style in _usage_labels(cmd):
+        text.append(f" {label}", style=style)
+    return text
+
+
+def _plain_label(name, cmd) -> str:
+    return " ".join([name, *(label for label, _ in _usage_labels(cmd))])
+
+
+def _add_commands(node, group) -> None:
+    for name, cmd in _visible_commands(group):
+        child = node.add(_styled_label(name, cmd, "bold cyan" if _is_group(cmd) else "cyan"), guide_style="blue")
+        if _is_group(cmd):
+            _add_commands(child, cmd)
+
+
+def _ascii_lines(group, prefix) -> list[str]:
+    visible = _visible_commands(group)
+    lines: list[str] = []
+    for i, (name, cmd) in enumerate(visible):
+        last = i == len(visible) - 1
+        lines.append(f"{prefix}{'`-- ' if last else '|-- '}{_plain_label(name, cmd)}")
+        if _is_group(cmd):
+            lines.extend(_ascii_lines(cmd, prefix + ("    " if last else "|   ")))
+    return lines
 
 
 def _render_command_tree() -> str:
-    """Walk the click tree under ``event_app``: each node's children are its params first,
-    then its subcommands, drawn with single-line ASCII guides."""
+    """ASCII tree of ``event_app``, opal-listen style: params are usage labels appended to
+    each command's line (``name``/``[name]``, ``--flag``/``[--flag]``), ``|--`` guides."""
     from typer.main import get_command
 
-    lines = ["opal event"]
-
-    def walk(cmd, prefix: str) -> None:
-        children = _command_children(cmd)
-        for index, (label, sub) in enumerate(children):
-            last = index == len(children) - 1
-            lines.append(f"{prefix}{'`-- ' if last else '|-- '}{label}")
-            if sub is not None:
-                walk(sub, prefix + ("    " if last else "|   "))
-
-    walk(get_command(event_app), "")
-    return "\n".join(lines)
+    root = get_command(event_app)
+    return "\n".join([_plain_label("opal event", root), *_ascii_lines(root, "")])
 
 
 def _render_rich_command_tree():
-    """Same walk as :func:`_render_command_tree` but as a color-coded ``rich`` tree:
-    groups are bold cyan, commands green, params yellow, guides dimmed."""
-    import click
-    from rich.text import Text
+    """Color-coded ``rich`` tree of ``event_app``: bold green root, blue guides, bold cyan
+    command groups, cyan leaf commands, yellow required params, dim optional params."""
     from rich.tree import Tree
     from typer.main import get_command
 
-    root = Tree(Text("opal event", style="bold blue"), guide_style="bright_black")
-
-    def walk(cmd, node: Tree) -> None:
-        for label, sub in _command_children(cmd):
-            if sub is None:
-                node.add(Text(label, style="yellow"))
-                continue
-            style = "bold cyan" if isinstance(sub, click.Group) else "green"
-            walk(sub, node.add(Text(label, style=style)))
-
-    walk(get_command(event_app), root)
-    return root
+    root = get_command(event_app)
+    tree = Tree(_styled_label("opal event", root, "bold green"), guide_style="blue")
+    _add_commands(tree, root)
+    return tree
 
 
 if __name__ == "__main__":

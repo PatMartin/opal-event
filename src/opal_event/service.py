@@ -5,8 +5,11 @@ into one cohesive runtime object (``EventService``), owned by the FastAPI app's 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
+import uuid
+from hashlib import sha256
 from typing import Any
 
 import jsonschema
@@ -22,6 +25,12 @@ from opal_event.zeromq_broker import Broker
 logger = logging.getLogger("opal_event.service")
 
 RETENTION_INTERVAL_SECONDS = 3600
+
+
+def _admission_fingerprint(action_id: str, event: dict[str, Any]) -> str:
+    """Stable hash of (action, normalized event payload) for idempotency records."""
+    canonical = json.dumps({"action_id": action_id, "event": event}, sort_keys=True, separators=(",", ":"), default=str)
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class EventService:
@@ -108,13 +117,34 @@ class EventService:
                 if action is None or not action.enabled:
                     logger.warning("rule %s references missing/disabled action %s", rule.id, action_id)
                     continue
+                # Stable admission identity: redelivery of the same event id through the bus
+                # (ZMQ at-least-once) must not re-run the same rule/action pair. The durable
+                # idempotency record makes the dedup concurrency-safe and restart-proof.
+                execution_id = str(uuid.uuid4())
+                fingerprint = _admission_fingerprint(action.id, event)
+                decision, existing = self.db.admit_idempotency(
+                    f"rule:{rule.id}:{action.id}:{event.get('id')}", fingerprint, execution_id
+                )
+                if decision == "duplicate":
+                    self.metrics.incr("executions_deduplicated")
+                    continue
+                if decision == "conflict":
+                    logger.warning(
+                        "idempotency conflict on redelivery for event %s rule %s action %s (kept %s)",
+                        event.get("id"),
+                        rule.id,
+                        action.id,
+                        existing,
+                    )
+                    self.metrics.incr("executions_idempotency_conflicts")
+                    continue
                 if action.input_schema:
                     try:
                         jsonschema.validate(event.get("data"), action.input_schema)
                     except jsonschema.ValidationError as exc:
                         # Contract (v1.7.1): invalid input for the matched action -> a dropped
                         # execution record with error_code=input_validation_failed, no retry.
-                        self._drop_input_schema(event, rule, action, exc)
+                        self._drop_input_schema(event, rule, action, exc, execution_id)
                         continue
                 self.executor.submit(
                     action,
@@ -124,6 +154,7 @@ class EventService:
                     trigger="rule",
                     execution_settings=settings.execution,
                     security_settings=settings.security,
+                    execution_id=execution_id,
                 )
 
         if matched_any:
@@ -133,15 +164,13 @@ class EventService:
         if mode == "all" or (mode == "matched" and matched_any):
             self.db.insert_event(event)
 
-    def _drop_input_schema(self, event: dict, rule, action, exc) -> None:
+    def _drop_input_schema(self, event: dict, rule, action, exc, execution_id: str) -> None:
         """Persist a dropped execution for a rule-dispatched action whose input_schema rejected
         the event data (contract v1.7.1 ``input_validation_failed``)."""
-        import uuid
         from hashlib import sha256
 
         from opal_event.executor import ExecutionRecord, _now, _record_to_dict
 
-        execution_id = str(uuid.uuid4())
         record = ExecutionRecord(
             id=execution_id,
             event_id=event.get("id"),

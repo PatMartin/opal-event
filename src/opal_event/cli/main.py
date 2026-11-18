@@ -472,11 +472,20 @@ def actions_update(
 
 @actions_app.command("execute")
 def actions_execute(
-    ctx: typer.Context, action_id: str = typer.Argument(...), event_json: str = typer.Option(..., "--event-json")
+    ctx: typer.Context,
+    action_id: str = typer.Argument(...),
+    event_json: str = typer.Option(..., "--event-json"),
+    idempotency_key: str = typer.Option(
+        None, "--idempotency-key", help="Deduplicate retries: same key+payload returns the original receipt"
+    ),
 ) -> None:
     """Manually execute a registered, enabled action."""
     body = {"event": _event_input(event_json)}
-    _emit(ctx, _call(ctx, "post_api_v1_actions_id_execute", path_params={"action_id": action_id}, json=body).json())
+    headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+    _emit(
+        ctx,
+        _call(ctx, "post_api_v1_actions_id_execute", path_params={"action_id": action_id}, json=body, headers=headers).json(),
+    )
 
 
 # -- `opal event executions` ---------------------------------------------------------------------

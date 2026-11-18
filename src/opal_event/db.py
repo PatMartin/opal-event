@@ -56,6 +56,14 @@ CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
 CREATE INDEX IF NOT EXISTS idx_executions_rule ON executions(rule_id);
 CREATE INDEX IF NOT EXISTS idx_executions_action ON executions(action_id);
 CREATE INDEX IF NOT EXISTS idx_executions_event ON executions(event_id);
+
+CREATE TABLE IF NOT EXISTS idempotency (
+    key TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    execution_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_us INTEGER
+);
 """
 
 
@@ -328,6 +336,68 @@ class Database:
             ).rowcount
             return queued + running
 
+    # Claims whose execution row still hasn't appeared after this long are presumed
+    # abandoned (crash between claim and submit) and may be re-claimed by a retry.
+    _STALE_CLAIM_US = 300 * 1_000_000
+
+    # -- idempotency -------------------------------------------------------------------
+    # Admission deduplication records. ``key`` is the caller-scoped idempotency identity
+    # (rule path: event/rule/action triple; manual path: caller/action/client key), and
+    # ``fingerprint`` is a hash of the request payload so a reused key carrying different
+    # work is a conflict, not a replay. Records are durable (SQLite), so dedup survives
+    # restarts; they expire with ``cleanup_retention`` alongside executions.
+
+    def admit_idempotency(self, key: str, fingerprint: str, execution_id: str) -> tuple[str, str | None]:
+        """Atomically claims an idempotency key or resolves it as duplicate/conflict.
+
+        Returns ``("claimed", None)`` when the caller owns the admission and must submit
+        ``execution_id`` itself; ``("duplicate", execution_id)`` when the same key+fingerprint
+        was already admitted (return the stored receipt, do not re-run); or
+        ``("conflict", execution_id)`` when the key was reused with a different fingerprint.
+        A claim whose execution row was never written (crash between claim and submit) is
+        treated as stale and re-claimed, so the key self-heals instead of wedging forever.
+        """
+        now = datetime.now(UTC)
+        created_at = now.isoformat().replace("+00:00", "Z")
+        created_us = int(now.timestamp() * 1_000_000)
+        with self._lock:
+            try:
+                with self._conn:
+                    self._conn.execute(
+                        "INSERT INTO idempotency (key, fingerprint, execution_id, created_at, created_us) VALUES (?, ?, ?, ?, ?)",
+                        (key, fingerprint, execution_id, created_at, created_us),
+                    )
+                return "claimed", None
+            except sqlite3.IntegrityError:
+                pass  # key exists — resolve below
+            row = self._conn.execute(
+                "SELECT fingerprint, execution_id, created_us FROM idempotency WHERE key = ?", (key,)
+            ).fetchone()
+            row_us = row["created_us"] if row else None
+            if row is None:  # raced with a retention delete — retry the insert once
+                with self._conn:
+                    self._conn.execute(
+                        "INSERT INTO idempotency (key, fingerprint, execution_id, created_at, created_us) VALUES (?, ?, ?, ?, ?)",
+                        (key, fingerprint, execution_id, created_at, created_us),
+                    )
+                return "claimed", None
+            if row["fingerprint"] != fingerprint:
+                return "conflict", row["execution_id"]
+            if self.get_execution(row["execution_id"]) is not None:
+                return "duplicate", row["execution_id"]
+            # Claim exists but its execution row does not: either the winner is mid-submit
+            # (microsecond window — report as duplicate) or it crashed between claim and
+            # submit. Age out the latter so the key self-heals instead of wedging.
+            age_us = created_us - (row_us or 0)
+            if age_us < self._STALE_CLAIM_US:
+                return "duplicate", row["execution_id"]
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE idempotency SET fingerprint = ?, execution_id = ?, created_at = ?, created_us = ? WHERE key = ?",
+                    (fingerprint, execution_id, created_at, created_us, key),
+                )
+            return "claimed", None
+
     # -- retention --------------------------------------------------------------------
 
     def cleanup_retention(self, retention_days: int) -> int:
@@ -342,4 +412,5 @@ class Database:
         with self._lock, self._conn:
             events = self._conn.execute("DELETE FROM events WHERE ts_us < ?", (cutoff_us,)).rowcount
             executions = self._conn.execute("DELETE FROM executions WHERE created_us < ?", (cutoff_us,)).rowcount
-            return events + executions
+            idempotency = self._conn.execute("DELETE FROM idempotency WHERE created_us < ?", (cutoff_us,)).rowcount
+            return events + executions + idempotency

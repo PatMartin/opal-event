@@ -224,8 +224,9 @@ class Executor:
         trigger: str,
         execution_settings: ExecutionSettings,
         security_settings: SecuritySettings,
+        execution_id: str | None = None,
     ) -> ExecutionRecord:
-        execution_id = str(uuid.uuid4())
+        execution_id = execution_id or str(uuid.uuid4())
         created_at = _now()
         action_revision = sha256(action.model_dump_json().encode("utf-8")).hexdigest()[:16]
         record = ExecutionRecord(

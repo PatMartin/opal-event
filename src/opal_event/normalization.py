@@ -36,6 +36,25 @@ def is_rfc3339_datetime(value: Any) -> bool:
     return True
 
 
+def parse_chain_depth(value: Any) -> int | None:
+    """Parses optional ``opal_chain_depth``/``X-Opal-Chain-Depth`` metadata.
+
+    ``None`` -> absent (treated as a fresh chain root). Otherwise must be an integer
+    ``>= 0``; anything else raises ``ValueError`` (REST maps to 422, the observer drops
+    the event as invalid)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("chain depth must be a non-negative integer")
+    try:
+        depth = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("chain depth must be a non-negative integer") from None
+    if depth < 0:
+        raise ValueError("chain depth must be a non-negative integer")
+    return depth
+
+
 def utc_now_iso() -> str:
     """Returns the current UTC time as an ISO-8601 string ending in 'Z'."""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -74,4 +93,7 @@ def normalize_event(
     }
     if isinstance(event, Mapping):
         res.update(extract_event_metadata(event))
+        if "opal_chain_depth" in event:
+            # Producer-declared suite hop count (advisory); validated/enforced downstream.
+            res["opal_chain_depth"] = event["opal_chain_depth"]
     return res

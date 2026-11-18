@@ -19,7 +19,14 @@ from fastapi.responses import JSONResponse
 from opal_event.auth import discovery_projection, is_execute_scope, require_auth
 from opal_event.config import ConcurrentUpdateError
 from opal_event.deps import get_config, get_service
-from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
+from opal_event.errors import (
+    ChainDepthExceededError,
+    ConflictError,
+    NotFoundError,
+    OpalContextualError,
+    PreconditionFailedError,
+    PreconditionRequiredError,
+)
 from opal_event.models import (
     Action,
     ActionList,
@@ -29,7 +36,7 @@ from opal_event.models import (
     PythonActionPatch,
     ShellActionPatch,
 )
-from opal_event.normalization import normalize_event
+from opal_event.normalization import normalize_event, parse_chain_depth
 from opal_event.opal_context import is_valid_opal_id
 from opal_event.service import EventService
 from opal_event.validation import ValidationProblem, validate_model, validate_type
@@ -177,6 +184,19 @@ def execute_action(
         raise ValidationProblem.from_message(
             ["header", "Idempotency-Key"], "idempotency key must be 1-128 printable ASCII characters", "value_error"
         )
+
+    # Suite hop limit: a derived action must declare depth via X-Opal-Chain-Depth and stay
+    # under the configured bound — same rule as derived publications.
+    raw_depth = request.headers.get("X-Opal-Chain-Depth")
+    if raw_depth is not None:
+        try:
+            depth = parse_chain_depth(raw_depth)
+        except ValueError as exc:
+            raise OpalContextualError(422, "invalid_header", f"X-Opal-Chain-Depth: {exc}") from exc
+        if depth is not None and depth >= config.settings.security.max_chain_depth:
+            raise ChainDepthExceededError(
+                f"declared chain depth {depth} reaches the limit of {config.settings.security.max_chain_depth}"
+            )
 
     event = normalize_event(body.event)
     if action.input_schema:

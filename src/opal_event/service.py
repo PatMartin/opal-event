@@ -19,6 +19,7 @@ from opal_event.db import Database
 from opal_event.executor import Executor
 from opal_event.metrics import Metrics
 from opal_event.models import Action, Settings
+from opal_event.normalization import parse_chain_depth
 from opal_event.rules import evaluate_rule
 from opal_event.zeromq_broker import Broker
 
@@ -103,9 +104,28 @@ class EventService:
         settings = self.config.settings
         self.metrics.incr("observed_events")
 
+        # Suite hop limit: an observed envelope may declare ``opal_chain_depth`` (advisory,
+        # producer-asserted). Invalid metadata drops the event as malformed; depth at/over
+        # the configured bound stops rule dispatch (derived actions refused) while the
+        # event itself is still persisted below for audit, per event_mode.
+        chain_blocked = False
+        try:
+            depth = parse_chain_depth(event.get("opal_chain_depth"))
+        except ValueError as exc:
+            self.metrics.incr("invalid_events")
+            logger.warning("event dropped by observer: invalid opal_chain_depth (%s)", exc)
+            return
+        if depth is not None and depth >= settings.security.max_chain_depth:
+            chain_blocked = True
+            self.metrics.incr("chain_depth_rejections")
+            logger.warning(
+                "event %s reached chain depth %d (>=%d); rule dispatch refused",
+                event.get("id"), depth, settings.security.max_chain_depth,
+            )
+
         actions_by_id: dict[str, Action] = {a.id: a for a in settings.actions}
         matched_any = False
-        for rule in settings.rules:
+        for rule in settings.rules if not chain_blocked else ():
             if not rule.enabled:
                 continue
             matched, _checks = evaluate_rule(rule, event)

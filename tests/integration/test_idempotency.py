@@ -144,7 +144,9 @@ class TestManualIdempotency:
         assert r1.json()["id"] != r2.json()["id"]
         _wait_terminal(client, r1.json()["id"])
         _wait_terminal(client, r2.json()["id"])
-        assert _count(client.count_file) == 2
+        # Execution rows are authoritative; the count file can lose a line to Windows
+        # `>>` append sharing between concurrent shell spawns.
+        assert len(_wait_executions(client, "count_action", 2)) == 2
 
     def test_concurrent_same_key_single_run(self, client):
         results, ids = [], []

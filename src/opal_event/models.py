@@ -488,6 +488,7 @@ class Stats(Strict):
     queue_depth: Annotated[int, Field(ge=0)]
     active_workers: Annotated[int, Field(ge=0)]
     rejected_publications: Annotated[int, Field(ge=0)] = 0
+    chain_depth_rejections: Annotated[int, Field(ge=0)] = 0
 
 
 class HTTPValidationErrorItem(Strict):
@@ -545,6 +546,9 @@ class AllowedHttpDestination(Strict):
 class SecuritySettings(Strict):
     rest_auth: RestAuthSettings = Field(default_factory=RestAuthSettings)
     http_action_allowlist: list[AllowedHttpDestination] = Field(default_factory=list)
+    # Suite chain bound: a derived event/action declaring opal_chain_depth >= this limit is
+    # refused admission (422 REST, skipped dispatch on the observer path). 16 = suite max.
+    max_chain_depth: Annotated[int, Field(ge=0, le=1024)] = 16
 
 
 class ExecutionSettings(Strict):

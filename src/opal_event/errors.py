@@ -109,6 +109,13 @@ class PreconditionFailedError(OpalContextualError):
         super().__init__(412, "precondition_failed", message)
 
 
+class ChainDepthExceededError(OpalContextualError):
+    """422: a derived publication or action exceeded the configured suite hop limit."""
+
+    def __init__(self, message: str = "Derived event chain depth limit reached"):
+        super().__init__(422, "chain_depth_exceeded", message)
+
+
 async def opal_contextual_error_handler(request: Request, exc: OpalContextualError) -> JSONResponse:
     context = get_opal_context(request)
     body = {

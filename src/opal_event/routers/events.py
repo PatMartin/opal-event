@@ -11,14 +11,38 @@ from fastapi.exceptions import RequestValidationError
 from opal_event.auth import require_auth
 from opal_event.db import _ts_to_us
 from opal_event.deps import get_config, get_service
-from opal_event.errors import NotFoundError, PayloadTooLargeError, ServiceUnavailableError
+from opal_event.errors import (
+    ChainDepthExceededError,
+    NotFoundError,
+    OpalContextualError,
+    PayloadTooLargeError,
+    ServiceUnavailableError,
+)
 from opal_event.models import Event, EventInput, EventList, PublishReceipt, TopicList
-from opal_event.normalization import is_rfc3339_datetime, normalize_event
+from opal_event.normalization import is_rfc3339_datetime, normalize_event, parse_chain_depth
 from opal_event.opal_context import get_opal_context
 from opal_event.service import EventService
 from opal_event.zeromq_broker import PublisherQueueFullError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+CHAIN_DEPTH_HEADER = "X-Opal-Chain-Depth"
+
+
+def _enforce_chain_depth(request: Request, max_depth: int) -> int | None:
+    """Suite hop limit: trusted producers declare derived-chain depth via X-Opal-Chain-Depth
+    (chain root = transaction_id, parent = causation_id). Depth >= the configured limit
+    rejects the admission; malformed values are 422 rather than silently treated as root."""
+    raw = request.headers.get(CHAIN_DEPTH_HEADER)
+    if raw is None:
+        return None
+    try:
+        depth = parse_chain_depth(raw)
+    except ValueError as exc:
+        raise OpalContextualError(422, "invalid_header", f"{CHAIN_DEPTH_HEADER}: {exc}") from exc
+    if depth is not None and depth >= max_depth:
+        raise ChainDepthExceededError(f"declared chain depth {depth} reaches the limit of {max_depth}")
+    return depth
 
 
 def _check_time_filters(from_: str | None, to: str | None) -> None:
@@ -45,6 +69,7 @@ def publish_event(
 ):
     if not service.is_ready():
         raise ServiceUnavailableError("ZeroMQ broker is not running")
+    chain_depth = _enforce_chain_depth(request, config.settings.security.max_chain_depth)
     envelope = normalize_event(event_input)
     wire_size = len(envelope["topic"].encode("utf-8")) + len(json.dumps(envelope).encode("utf-8"))
     if wire_size > config.settings.zeromq.max_event_bytes:
@@ -63,6 +88,8 @@ def publish_event(
         "opal_transaction_id": context.transaction_id,
         "opal_causation_id": context.causation_id,
     }
+    if chain_depth is not None:
+        enrichment["opal_chain_depth"] = chain_depth
     enrichment = {k: v for k, v in enrichment.items() if v is not None}
     if enrichment:
         enriched_envelope = {**envelope, **enrichment}

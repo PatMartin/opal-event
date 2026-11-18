@@ -123,13 +123,20 @@ paths:
       - Events
       operationId: post_api_v1_events
       summary: Publish event
-      description: Normalizes missing metadata, checks 1 MiB serialized wire payload, enqueues publication.
-        Rule-triggered dispatch validates event.data against each matched action's optional input_schema;
-        on failure the action is not run and no retry occurs; an Execution record is persisted with
-        status=dropped, trigger=rule, error_code=input_validation_failed, and error_message describing
-        the rejection — observable via GET /api/v1/executions/, never returned to the already-completed
-        publisher. Does not guarantee observer storage or action execution. Returns 503 if the publisher
-        queue is full.
+      description: Normalizes missing metadata, checks 1 MiB serialized wire payload, then routes matching
+        rules through the bounded admission path and persists the event with its match disposition
+        (events.matched) before a best-effort ZeroMQ fan-out. The envelope is marked opal_rest_routed so
+        the broker echo cannot dispatch the same rules again; a saturated publisher queue only loses the
+        fan-out copy (stats.fanout_dropped), never the admission. Rule-triggered dispatch validates
+        event.data against each matched action's optional input_schema; on failure the action is not run
+        and no retry occurs; an Execution record is persisted with status=dropped, trigger=rule,
+        error_code=input_validation_failed — observable via GET /api/v1/executions/, never returned to
+        the already-completed publisher. 202 therefore means admitted and routed; per-admission
+        disposition is traceable via GET /api/v1/event/{id} and GET /api/v1/execution/?event_id=.
+        Optional X-Opal-Chain-Depth declares the derived-chain hop count (chain root is
+        X-Opal-Transaction-Id, parent hop X-Opal-Causation-Id); a depth at or over the configured
+        security.max_chain_depth is refused with 422 chain_depth_exceeded, and malformed values with
+        422 invalid_header.
       responses:
         '202':
           description: Accepted, not guaranteed delivered/executed
@@ -168,6 +175,16 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/EventInput'
+      parameters:
+      - name: X-Opal-Chain-Depth
+        in: header
+        required: false
+        description: Derived-chain hop count (non-negative integer; chain root is
+          X-Opal-Transaction-Id, parent hop X-Opal-Causation-Id). Depth at or over
+          security.max_chain_depth returns 422 chain_depth_exceeded; malformed values 422 invalid_header.
+        schema:
+          type: integer
+          minimum: 0
     get:
       tags:
       - Events
@@ -986,7 +1003,11 @@ paths:
         HTTP 202, never an automatic retry. Registered and enabled action only. When the action declares
         input_schema, event.data is validated synchronously before any execution record is created; invalid
         input returns the standard OpalError 422 response and no execution occurs, unlike the asynchronous
-        queue-full path which records status=dropped.
+        queue-full path which records status=dropped. An optional Idempotency-Key header makes admission
+        retry-safe — the key is scoped to (caller, action), a retry with an identical request body returns
+        the original execution receipt without re-running, and reuse of the key with a different body or
+        action returns 409 conflict. Optional X-Opal-Chain-Depth declares the derived-chain hop count;
+        depth at or over security.max_chain_depth returns 422 chain_depth_exceeded.
       responses:
         '202':
           description: Accepted, not guaranteed delivered/executed
@@ -1011,6 +1032,8 @@ paths:
           $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
         '404':
           $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
+        '409':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Conflict'
         '422':
           $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
         '429':
@@ -1030,6 +1053,23 @@ paths:
         schema:
           type: string
           minLength: 1
+      - name: Idempotency-Key
+        in: header
+        required: false
+        description: Caller-scoped retry key (1-128 printable ASCII). Same caller + key + identical
+          body returns the original receipt; same key + different work returns 409.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: X-Opal-Chain-Depth
+        in: header
+        required: false
+        description: Derived-chain hop count (non-negative integer). Depth at or over the configured
+          limit is refused with 422 chain_depth_exceeded; malformed values with 422 invalid_header.
+        schema:
+          type: integer
+          minimum: 0
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
@@ -1599,6 +1639,12 @@ components:
         source: *id009
         timestamp: *id010
         data: *id011
+        matched:
+          type:
+          - boolean
+          - 'null'
+          description: Rule-dispatch disposition at admission — false means zero matching
+            rules; null for rows persisted before this field existed.
       additionalProperties: false
       required:
       - id
@@ -2086,6 +2132,12 @@ components:
             which field or schema constraint failed.
         action_revision:
           type: string
+        owner:
+          type:
+          - string
+          - 'null'
+          description: Named scoped-principal that admitted this execution; null for admin,
+            rule-triggered, or unscoped admissions.
       additionalProperties: false
       required:
       - id
@@ -2194,6 +2246,14 @@ components:
         rejected_publications:
           type: integer
           description: Publications rejected because the publisher queue was full.
+          minimum: 0
+        chain_depth_rejections:
+          type: integer
+          description: Observed events whose declared chain depth reached the configured limit and were refused rule dispatch.
+          minimum: 0
+        fanout_dropped:
+          type: integer
+          description: REST admissions whose best-effort ZeroMQ fan-out was lost to publisher-queue saturation (admission itself succeeded).
           minimum: 0
       additionalProperties: false
       required:

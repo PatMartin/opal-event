@@ -4,6 +4,7 @@ every call), redirects disabled. Only path/query/body/headers may be templated."
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import httpx
@@ -44,6 +45,11 @@ def run_http_action(
     except TemplateError as exc:
         return ExecutionOutcome(status="failed", error_code="template_error", error_message=str(exc))
 
+    # Elapsed-time deadline (monotonic): the ``timeout`` argument bounds the whole call —
+    # connect, response headers, AND the streamed body. httpx's per-operation timeout only
+    # caps each socket recv, so a slowly-progressing body could otherwise run forever.
+    deadline = time.monotonic() + timeout
+    expired = False
     try:
         with httpx.Client(follow_redirects=False, timeout=timeout, trust_env=False) as client:
             request = client.build_request(
@@ -58,6 +64,9 @@ def run_http_action(
                 total_bytes = 0
                 truncated = False
                 for chunk in response.iter_bytes():
+                    if time.monotonic() > deadline:
+                        expired = True
+                        break
                     needed = max_output_bytes - total_bytes
                     if len(chunk) > needed:
                         chunks.append(chunk[:needed])
@@ -72,6 +81,9 @@ def run_http_action(
         return ExecutionOutcome(status="timed_out", error_code="timeout", error_message=f"exceeded {timeout}s timeout")
     except httpx.HTTPError as exc:
         return ExecutionOutcome(status="failed", error_code="http_error", error_message=str(exc))
+
+    if expired:
+        return ExecutionOutcome(status="timed_out", error_code="timeout", error_message=f"exceeded {timeout}s timeout")
 
     raw_bytes = b"".join(chunks)
     text = raw_bytes.decode("utf-8", errors="replace")

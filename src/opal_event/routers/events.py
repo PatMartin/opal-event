@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -26,6 +27,8 @@ from opal_event.service import EventService
 from opal_event.zeromq_broker import PublisherQueueFullError
 
 router = APIRouter(dependencies=[Depends(require_auth)])
+
+logger = logging.getLogger(__name__)
 
 CHAIN_DEPTH_HEADER = "X-Opal-Chain-Depth"
 
@@ -104,10 +107,18 @@ def publish_event(
         if enriched_size <= config.settings.zeromq.max_event_bytes:
             envelope = enriched_envelope
 
+    # Bounded admission: route matching rules now (single entry point shared with the
+    # observer) and persist with the match disposition; the marker makes the broker echo
+    # inert so the event cannot run its own rules again.
+    service.admit_rest_event(envelope)
+    # ZeroMQ fan-out stays best effort: external subscribers lose a saturated publish,
+    # but the admission contract (rules routed, event persisted, receipt traceable via
+    # /api/v1/event/{id} and /api/v1/execution/?event_id=) is already fulfilled.
     try:
         service.publish(envelope)
-    except PublisherQueueFullError as exc:
-        raise ServiceUnavailableError("Publisher queue is full") from exc
+    except PublisherQueueFullError:
+        service.metrics.incr("fanout_dropped")
+        logger.warning("publisher queue saturated; event %s routed but not fanned out", envelope["id"])
     return PublishReceipt(id=envelope["id"], status="accepted", published_at=envelope["timestamp"])
 
 

@@ -55,6 +55,7 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
         active_workers=snapshot["active_workers"],
         rejected_publications=snapshot.get("rejected_publications", 0),
         chain_depth_rejections=snapshot.get("chain_depth_rejections", 0),
+        fanout_dropped=snapshot.get("fanout_dropped", 0),
     )
 
 

@@ -96,4 +96,8 @@ def normalize_event(
         if "opal_chain_depth" in event:
             # Producer-declared suite hop count (advisory); validated/enforced downstream.
             res["opal_chain_depth"] = event["opal_chain_depth"]
+        if event.get("opal_rest_routed"):
+            # Admission marker: rules were already routed at REST admission — the broker
+            # echo must not dispatch them a second time.
+            res["opal_rest_routed"] = True
     return res

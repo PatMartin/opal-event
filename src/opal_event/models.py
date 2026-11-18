@@ -69,6 +69,9 @@ class Event(Strict):
     source: Annotated[str, Field(min_length=1, max_length=128)]
     timestamp: str
     data: Any = None
+    # Rule-dispatch disposition at admission: True/False once routed, None for rows
+    # persisted before this field existed.
+    matched: bool | None = None
 
 
 class PublishReceipt(Strict):
@@ -491,6 +494,7 @@ class Stats(Strict):
     active_workers: Annotated[int, Field(ge=0)]
     rejected_publications: Annotated[int, Field(ge=0)] = 0
     chain_depth_rejections: Annotated[int, Field(ge=0)] = 0
+    fanout_dropped: Annotated[int, Field(ge=0)] = 0
 
 
 class HTTPValidationErrorItem(Strict):

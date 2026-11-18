@@ -19,6 +19,7 @@ class Metrics:
             "active_workers": 0,
             "rejected_publications": 0,
             "chain_depth_rejections": 0,
+            "fanout_dropped": 0,
         }
 
     def incr(self, name: str, amount: int = 1) -> None:

@@ -104,6 +104,12 @@ class EventService:
         settings = self.config.settings
         self.metrics.incr("observed_events")
 
+        # REST-admitted events were already validated, persisted, and rule-routed through
+        # the bounded admission path — the broker echo is transport only and must not
+        # dispatch (or persist) them a second time.
+        if event.get("opal_rest_routed"):
+            return
+
         # Suite hop limit: an observed envelope may declare ``opal_chain_depth`` (advisory,
         # producer-asserted). Invalid metadata drops the event as malformed; depth at/over
         # the configured bound stops rule dispatch (derived actions refused) while the
@@ -123,9 +129,20 @@ class EventService:
                 event.get("id"), depth, settings.security.max_chain_depth,
             )
 
+        matched_any = self._route_event(event, settings) if not chain_blocked else False
+
+        mode = settings.persistence.event_mode
+        if mode == "all" or (mode == "matched" and matched_any):
+            self.db.insert_event(event, matched=matched_any)
+
+    def _route_event(self, event: dict[str, Any], settings: Settings) -> bool:
+        """The single bounded rule-routing entry point: match ``event`` against enabled
+        rules and submit the matched actions to the bounded executor (idempotent per
+        event/rule/action — see ``admit_idempotency``). Returns whether any rule matched.
+        Used by both the ZMQ observer and REST admission."""
         actions_by_id: dict[str, Action] = {a.id: a for a in settings.actions}
         matched_any = False
-        for rule in settings.rules if not chain_blocked else ():
+        for rule in settings.rules:
             if not rule.enabled:
                 continue
             matched, _checks = evaluate_rule(rule, event)
@@ -179,10 +196,18 @@ class EventService:
 
         if matched_any:
             self.metrics.incr("matched_events")
+        return matched_any
 
-        mode = settings.persistence.event_mode
-        if mode == "all" or (mode == "matched" and matched_any):
-            self.db.insert_event(event)
+    def admit_rest_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        """REST admission path: mark, route rules through the bounded entry point, then
+        persist with the match disposition. The marker makes the broker echo inert so a
+        REST event cannot run its own rules again."""
+        event["opal_rest_routed"] = True
+        matched = self._route_event(event, self.config.settings)
+        mode = self.config.settings.persistence.event_mode
+        if mode == "all" or (mode == "matched" and matched):
+            self.db.insert_event(event, matched=matched)
+        return {"matched": matched}
 
     def _drop_input_schema(self, event: dict, rule, action, exc, execution_id: str) -> None:
         """Persist a dropped execution for a rule-dispatched action whose input_schema rejected

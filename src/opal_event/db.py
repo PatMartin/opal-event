@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS events (
     source TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     ts_us INTEGER,
-    data TEXT NOT NULL
+    data TEXT NOT NULL,
+    matched INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_events_topic ON events(topic);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
@@ -120,6 +121,10 @@ class Database:
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(executions)")}
         if "owner" not in cols:
             self._conn.execute("ALTER TABLE executions ADD COLUMN owner TEXT")
+        # Rule-match disposition for admitted events (step 5): 0/1, NULL = pre-migration row.
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(events)")}
+        if "matched" not in cols:
+            self._conn.execute("ALTER TABLE events ADD COLUMN matched INTEGER")
 
     def close(self) -> None:
         with self._lock:
@@ -133,10 +138,11 @@ class Database:
 
     # -- events --------------------------------------------------------------------
 
-    def insert_event(self, event: dict[str, Any]) -> None:
+    def insert_event(self, event: dict[str, Any], matched: bool | None = None) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT OR IGNORE INTO events (id, topic, source, timestamp, ts_us, data) VALUES (?, ?, ?, ?, ?, ?)",
+                """INSERT OR IGNORE INTO events (id, topic, source, timestamp, ts_us, data, matched)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event["id"],
                     event["topic"],
@@ -144,6 +150,7 @@ class Database:
                     event["timestamp"],
                     _ts_to_us(event["timestamp"]),
                     json.dumps(event["data"]),
+                    None if matched is None else int(matched),
                 ),
             )
 
@@ -207,6 +214,7 @@ class Database:
             "source": row["source"],
             "timestamp": row["timestamp"],
             "data": json.loads(row["data"]),
+            "matched": None if row["matched"] is None else bool(row["matched"]),
         }
 
     # -- executions ------------------------------------------------------------------

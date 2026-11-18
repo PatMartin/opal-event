@@ -225,6 +225,7 @@ class Executor:
         execution_settings: ExecutionSettings,
         security_settings: SecuritySettings,
         execution_id: str | None = None,
+        owner: str | None = None,
     ) -> ExecutionRecord:
         execution_id = execution_id or str(uuid.uuid4())
         created_at = _now()
@@ -239,7 +240,7 @@ class Executor:
             created_at=created_at,
             action_revision=action_revision,
         )
-        self.db.insert_execution(_record_to_dict(record))
+        self.db.insert_execution({**_record_to_dict(record), "owner": owner})
 
         job = Job(
             execution_id=execution_id,

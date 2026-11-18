@@ -36,6 +36,23 @@ def _route_path(request: Request) -> str | None:
     return getattr(route, "path", None)
 
 
+# Routes a publish-scoped producer may use: event admission plus the read-only
+# liveness/discovery surface. Everything else (rules, settings, executions, backups)
+# is admin-only — fail-closed like the execute scope.
+_PUBLISH_ALLOWED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/api/v1/event/"),
+        ("GET", "/api/v1/info/"),
+        ("GET", "/api/v1/health/"),
+        ("GET", "/api/v1/health/live"),
+        ("GET", "/api/v1/health/ready"),
+        ("GET", "/api/v1/topic/"),
+    }
+)
+
+_SCOPE_ALLOWED = {"execute": _EXECUTE_ALLOWED, "publish": _PUBLISH_ALLOWED}
+
+
 # Discovery metadata an execute-scoped caller may see — the self-description
 # surface THINK consumes, never operational detail (paths, URLs, headers,
 # modules, args) or secret references.
@@ -61,6 +78,7 @@ def require_auth(request: Request, credentials: HTTPAuthorizationCredentials | N
     if not expected:
         raise HTTPException(status_code=503, detail="REST auth is enabled but token_env is unset")
     scope: str | None = None
+    principal = None
     if credentials is not None:
         if hmac.compare_digest(credentials.credentials, expected):
             scope = "admin"
@@ -68,8 +86,20 @@ def require_auth(request: Request, credentials: HTTPAuthorizationCredentials | N
             execute_token = os.environ.get(execute_env)
             if execute_token and hmac.compare_digest(credentials.credentials, execute_token):
                 scope = "execute"
+        if scope is None:
+            # Named principals: a token whose env var resolves to the presented credential.
+            for p in auth_settings.principals:
+                token = os.environ.get(p.token_env)
+                if token and hmac.compare_digest(credentials.credentials, token):
+                    scope = p.scope
+                    principal = p
+                    break
     if scope is None:
         raise HTTPException(status_code=401, detail="missing/invalid bearer token")
     request.state.scope = scope
-    if scope == "execute" and (request.method, _route_path(request)) not in _EXECUTE_ALLOWED:
-        raise HTTPException(status_code=403, detail="execute-scoped token may not perform this operation")
+    request.state.principal = principal
+    # Loopback gets no implicit privilege: when auth is enabled every caller — local or
+    # remote — must present a credential, and scoped callers stay inside their allowlist.
+    allowed = _SCOPE_ALLOWED.get(scope)
+    if allowed is not None and (request.method, _route_path(request)) not in allowed:
+        raise HTTPException(status_code=403, detail=f"{scope}-scoped token may not perform this operation")

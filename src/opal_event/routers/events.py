@@ -13,6 +13,7 @@ from opal_event.db import _ts_to_us
 from opal_event.deps import get_config, get_service
 from opal_event.errors import (
     ChainDepthExceededError,
+    ForbiddenError,
     NotFoundError,
     OpalContextualError,
     PayloadTooLargeError,
@@ -69,6 +70,12 @@ def publish_event(
 ):
     if not service.is_ready():
         raise ServiceUnavailableError("ZeroMQ broker is not running")
+    # Publish-scoped principals may only admit events under their configured prefixes.
+    p = getattr(request.state, "principal", None)
+    if p is not None and p.scope == "publish" and not any(
+        event_input.topic.startswith(prefix) for prefix in p.topic_prefixes
+    ):
+        raise ForbiddenError(f"publish-scoped principal '{p.name}' may not publish to topic '{event_input.topic}'")
     chain_depth = _enforce_chain_depth(request, config.settings.security.max_chain_depth)
     envelope = normalize_event(event_input)
     wire_size = len(envelope["topic"].encode("utf-8")) + len(json.dumps(envelope).encode("utf-8"))

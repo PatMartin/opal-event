@@ -55,11 +55,23 @@ _PATCH_MODELS = {
 ACTIONS_MAX_COUNT = 10_000
 
 
+def _principal(request: Request):
+    return getattr(request.state, "principal", None)
+
+
+def _action_allowed(request: Request, action_id: str) -> bool:
+    """Execute-scoped principals with a named ``actions`` list may only see/run those."""
+    p = _principal(request)
+    return not (p is not None and p.scope == "execute" and p.actions is not None and action_id not in p.actions)
+
+
 @router.get("/api/v1/action/", response_model=ActionList)
 def list_actions(request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     if is_execute_scope(request):
-        return JSONResponse([discovery_projection(a) for a in config.settings.actions])
+        return JSONResponse(
+            [discovery_projection(a) for a in config.settings.actions if _action_allowed(request, a.id)]
+        )
     return config.settings.actions
 
 
@@ -91,6 +103,8 @@ def get_action(action_id: str, request: Request, response: Response, config=Depe
     response.headers["ETag"] = config.revision
     for action in config.settings.actions:
         if action.id == action_id:
+            if not _action_allowed(request, action_id):
+                break  # exists but not granted to this principal — hide it
             if is_execute_scope(request):
                 return JSONResponse(discovery_projection(action))
             return action
@@ -175,7 +189,7 @@ def execute_action(
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     action = next((a for a in config.settings.actions if a.id == action_id), None)
-    if action is None:
+    if action is None or not _action_allowed(request, action_id):
         raise NotFoundError(f"action '{action_id}' not found")
     if not action.enabled:
         raise ValidationProblem.from_message(["body", "action_id"], f"action '{action_id}' is disabled", "value_error")
@@ -251,6 +265,7 @@ def execute_action(
         execution_settings=settings.execution,
         security_settings=settings.security,
         execution_id=execution_id,
+        owner=(p.name if (p := _principal(request)) else None),
     )
     return Execution(
         id=record.id,

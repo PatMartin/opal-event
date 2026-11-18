@@ -351,6 +351,8 @@ class Execution(Strict):
     error_code: str | None = None
     error_message: str | None = None
     action_revision: str | None = None
+    # Scoped-principal that admitted this execution (None = admin, rule, or unscoped caller).
+    owner: str | None = None
 
 
 class ExecutionRequest(Strict):
@@ -529,12 +531,36 @@ class ZeroMqSettings(Strict):
     publisher_queue_size: Annotated[int, Field(ge=1, le=100000)] = 1000
 
 
+class ScopedPrincipal(Strict):
+    """A named bearer credential with narrowed capabilities. The token itself lives in
+    ``token_env`` (never in config). ``scope`` selects the capability set:
+
+    - ``admin``   — full access (same surface as the main token).
+    - ``publish`` — ``POST /api/v1/event/`` plus read-only info/health/topic routes; the
+      event topic must start with one of ``topic_prefixes`` (empty list = deny all).
+    - ``execute`` — the existing execute allowlist, narrowed further to the action ids
+      in ``actions`` (``None`` = all actions, the legacy behavior). When
+      ``own_receipts_only`` is set, execution reads are limited to receipts this
+      principal admitted (``owner`` recorded at execute time).
+    """
+
+    name: Annotated[str, Field(min_length=1, max_length=128)]
+    token_env: Annotated[str, Field(min_length=1)]
+    scope: Literal["admin", "publish", "execute"] = "execute"
+    topic_prefixes: list[Annotated[str, Field(max_length=256)]] = Field(default_factory=list)
+    actions: list[Annotated[str, Field(max_length=128)]] | None = None
+    own_receipts_only: bool = False
+
+
 class RestAuthSettings(Strict):
     enabled: bool = False
     token_env: str = "OPAL_EVENT_API_TOKEN"
     # Optional second credential: callers holding this token may only list/show
     # actions, execute actions, and read executions — never administration.
     execute_token_env: str | None = None
+    # Named principals with narrowed capabilities (e.g. producers restricted to topic
+    # prefixes, or an executor like Think restricted to named actions + own receipts).
+    principals: list[ScopedPrincipal] = Field(default_factory=list)
 
 
 class AllowedHttpDestination(Strict):

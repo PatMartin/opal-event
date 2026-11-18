@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS executions (
     result TEXT,
     error_code TEXT,
     error_message TEXT,
-    action_revision TEXT
+    action_revision TEXT,
+    owner TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
 CREATE INDEX IF NOT EXISTS idx_executions_rule ON executions(rule_id);
@@ -115,6 +116,10 @@ class Database:
                 self._conn.execute(f"UPDATE {table} SET {col} = ? WHERE seq = ?", (us, row["seq"]))
             if skipped:
                 logger.warning("migration left %d unparseable timestamp(s) NULL in %s", skipped, table)
+        # Receipt ownership for scoped principals (step 4): nullable, NULL = unowned.
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(executions)")}
+        if "owner" not in cols:
+            self._conn.execute("ALTER TABLE executions ADD COLUMN owner TEXT")
 
     def close(self) -> None:
         with self._lock:
@@ -211,8 +216,8 @@ class Database:
             self._conn.execute(
                 """INSERT INTO executions
                 (id, event_id, rule_id, action_id, status, trigger_kind, created_at, created_us, started_at, finished_at,
-                 duration_ms, exit_code, http_status, stdout, stderr, result, error_code, error_message, action_revision)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 duration_ms, exit_code, http_status, stdout, stderr, result, error_code, error_message, action_revision, owner)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     execution["id"],
                     execution.get("event_id"),
@@ -233,6 +238,7 @@ class Database:
                     execution.get("error_code"),
                     execution.get("error_message"),
                     execution.get("action_revision"),
+                    execution.get("owner"),
                 ),
             )
 
@@ -257,6 +263,7 @@ class Database:
         rule_id: str | None = None,
         action_id: str | None = None,
         event_id: str | None = None,
+        owner: str | None = None,
     ) -> list[dict[str, Any]]:
         clauses = []
         params: list[Any] = []
@@ -272,6 +279,9 @@ class Database:
         if event_id:
             clauses.append("event_id = ?")
             params.append(event_id)
+        if owner:
+            clauses.append("owner = ?")
+            params.append(owner)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM executions {where} ORDER BY seq DESC LIMIT ?"
         params.append(limit)
@@ -300,6 +310,7 @@ class Database:
             "error_code": row["error_code"],
             "error_message": row["error_message"],
             "action_revision": row["action_revision"],
+            "owner": row["owner"],
         }
 
     # -- shared helpers --------------------------------------------------------------

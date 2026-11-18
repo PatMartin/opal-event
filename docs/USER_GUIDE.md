@@ -168,8 +168,11 @@ Prepare the working configuration and database directory:
 
 ```bash
 mkdir -p var config
-cp config/opal_event.example.yaml config/opal_event.yaml
 ```
+
+No example configuration ships with the repository — `config/opal_event.yaml` is gitignored
+and must be created by you. The [README](../README.md#2-create-your-configuration-file) provides
+a ready-to-use starter; only `persistence.database` is strictly required.
 
 ### 2.4 Environment variables
 
@@ -188,6 +191,13 @@ Start the core service:
 
 ```bash
 opal-event-svc --config config/opal_event.yaml --log-level info
+```
+
+Alternatively, let the CLI manage it in the background with pidfile/log bookkeeping
+(`logs/opal_event.pid`, `logs/opal_event.log`):
+
+```bash
+opal event service start
 ```
 
 On startup, `opal-event-svc`:
@@ -588,9 +598,8 @@ Response (`202 Accepted`):
 
 #### `GET /api/v1/event/` — List stored events
 
-Returns a cursor-paginated list of stored events. Query parameters:
-- `cursor` (string): Pagination cursor.
-- `limit` (integer, 1–100, default: 50): Number of events to return.
+Returns a bounded list of stored events, newest first. Query parameters:
+- `limit` (integer, 1–200, default: 50): Number of events to return.
 - `topic` (string): Filter by exact topic.
 - `source` (string): Filter by source identifier.
 - `from` (string): RFC3339 timestamp filter (inclusive start).
@@ -600,20 +609,17 @@ Returns a cursor-paginated list of stored events. Query parameters:
 curl -s "http://127.0.0.1:8080/api/v1/event/?limit=2&topic=vision.object.detected"
 ```
 
-Response (`200 OK`):
+Response (`200 OK`) — a plain array of events:
 ```json
-{
-  "items": [
-    {
-      "id": "7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c",
-      "topic": "vision.object.detected",
-      "source": "front_door_cam",
-      "timestamp": "2026-10-12T16:00:00.123456Z",
-      "data": {"object": "person", "camera": "front_door"}
-    }
-  ],
-  "next_cursor": "eyJpZCI6IC...In0="
-}
+[
+  {
+    "id": "7b8d9c2e-4f1a-4e3b-9a8c-1d2e3f4a5b6c",
+    "topic": "vision.object.detected",
+    "source": "front_door_cam",
+    "timestamp": "2026-10-12T16:00:00.123456Z",
+    "data": {"object": "person", "camera": "front_door"}
+  }
+]
 ```
 
 #### `GET /api/v1/event/{event_id}` — Get event by ID
@@ -839,8 +845,7 @@ Response: Returns the full `Execution` record with `trigger: "manual"`.
 
 #### `GET /api/v1/execution/` — List executions history
 
-Cursor-paginated audit trail. Query parameters:
-- `cursor` (string): Pagination cursor.
+Bounded audit trail, newest first. Query parameters:
 - `limit` (integer, 1–500, default: 100).
 - `status` (string): Filter by `queued`, `running`, `succeeded`, `failed`, `timed_out`, or `dropped`.
 - `rule_id` (string): Filter by rule ID.
@@ -851,13 +856,11 @@ Cursor-paginated audit trail. Query parameters:
 curl -s "http://127.0.0.1:8080/api/v1/execution/?status=failed&limit=5"
 ```
 
-Response:
+Response — a plain array of execution records:
 ```json
-{
-  "items": [ ... ],
-  "next_cursor": "eyJpZCI6...",
-  "has_more": false
-}
+[
+  { "id": "…", "status": "failed", "action_id": "…" }
+]
 ```
 
 #### `GET /api/v1/execution/{execution_id}` — Get execution details
@@ -1067,16 +1070,19 @@ for the full parameter reference, walkthroughs, and scripting tips.
 ### 7.1 Command tree
 
 ```text
+
 opal
 └── event (alias: opal-event)
-    │   [Global Options & Flags]
+    │   [Global Options & Flags — place after "event", before the subcommand]
     │   ├── --api-url <url>                     REST API base URL [env: OPAL_EVENT_API_URL]
     │   ├── --token <token>                     Bearer token [env: OPAL_EVENT_API_TOKEN]
     │   ├── --json                              Output raw JSON (flag)
     │   ├── --timeout <seconds>                 HTTP timeout [default: 30.0]
     │   ├── --opal-session-id <id>              X-Opal-Session-Id header [env: OPAL_SESSION_ID]
     │   ├── --opal-transaction-id <id>          X-Opal-Transaction-Id header [env: OPAL_TRANSACTION_ID]
-    │   └── --opal-causation-id <id>            X-Opal-Causation-Id header [env: OPAL_CAUSATION_ID]
+    │   ├── --opal-causation-id <id>            X-Opal-Causation-Id header [env: OPAL_CAUSATION_ID]
+    │   ├── --env-file <path>                   Load this dotenv file instead of ./.env
+    │   └── --no-env-file                       Disable dotenv loading and .env initialization
     │
     ├── publish <topic>                         Publish event to the bus
     │   ├── --data-json <json>                  (required) Event data JSON
@@ -1084,20 +1090,36 @@ opal
     │   ├── [--source <src>]                    Event source [default: opal-event-rest]
     │   └── [--timestamp <rfc3339>]             Timestamp [default: now]
     │
-    ├── list                                    List stored events
-    │   ├── [--cursor <token>]                  Pagination cursor
-    │   ├── [--limit <int>]                     Max items [default: 50]
+    ├── list                                    List stored events (alias of `history list`)
+    │   ├── [--limit <int>]                     Max items, 1–200 [default: 50]
     │   ├── [--topic <topic>]                   Topic exact filter
     │   ├── [--source <src>]                    Source filter
     │   ├── [--from <rfc3339>]                  Created >= timestamp
     │   └── [--to <rfc3339>]                    Created <= timestamp
     │
-    ├── get <event_id>                          Get stored event by ID
-    ├── delete <event_id>                       Delete stored event by ID
-    ├── clear                                   Clear all stored events from all topics
-    ├── topics                                  List observed topics
-    ├── health [--live | --ready]               Health summary, or liveness/readiness probe (no auth)
-    ├── stats                                   Runtime metrics and counters
+    ├── get <event_id>                          Get stored event by ID (alias of `history show`)
+    ├── delete <event_id>                       Delete stored event by ID (alias of `history remove`)
+    ├── clear                                   Clear all stored events (alias of `history clear`)
+    ├── topics                                  List observed topics (alias of `history topics`)
+    │
+    ├── log                                     Tail the managed service log
+    │   ├── [--lines <n>]                       Last N lines [default: 20]
+    │   └── [--follow/--no-follow]              Keep tailing (Ctrl+C to exit)
+    ├── tree                                    Print this command tree, generated live
+    │   └── [--ascii]                           Plain ASCII instead of rich output
+    │
+    ├── history                                 Stored-event history
+    │   ├── list                                (same options as `list`)
+    │   ├── show <event_id>
+    │   ├── remove <event_id>
+    │   ├── clear
+    │   └── topics
+    │
+    ├── info                                    Service identity, health, and metrics
+    │   ├── get                                 Service identity (name, version, API version)
+    │   ├── ping                                Liveness ping (no auth)
+    │   ├── health [--live | --ready]           Health summary, or liveness/readiness probe
+    │   └── stats                               Runtime metrics and counters
     │
     ├── rules
     │   ├── list                                List rules (bounded catalog)
@@ -1131,31 +1153,93 @@ opal
     │
     ├── executions
     │   ├── list                                List action executions
-    │   │   ├── [--cursor <token>]              Pagination cursor
-    │   │   ├── [--limit <int>]                 Max items [default: 100]
+    │   │   ├── [--limit <int>]                 Max items, 1–500 [default: 100]
     │   │   ├── [--status <status>]             Filter by execution status
     │   │   ├── [--rule-id <rule_id>]           Filter by rule ID
     │   │   ├── [--action-id <action_id>]       Filter by action ID
     │   │   └── [--event-id <event_id>]         Filter by triggering event ID
     │   └── get <execution_id>                  Get execution details by ID
     │
-    ├── settings
+    ├── settings                                Portable, live-adjustable service settings
     │   ├── get                                 Get portable service settings
-    │   └── update                              Update portable settings
-    │       ├── [--json <json>]                 Partial settings JSON body
+    │   ├── update                              Update portable settings
+    │   │   ├── [--json <json>]                 Partial settings JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │   ├── get-key <key>                       Read a single dotted-key setting
+    │   ├── set-key <key> --value <value>       Set a single dotted-key setting
+    │   │   └── [--if-match <etag>]
+    │   └── reset-key <key>                     Reset a key to its configured value
+    │       └── [--if-match <etag>]
+    │
+    ├── profiles                                Named presets of portable operating defaults
+    │   ├── list                                List profiles
+    │   ├── create <name>                       Create a profile
+    │   │   ├── [--description <str>]
+    │   │   ├── [--active]                      Activate immediately
+    │   │   ├── [--json <json> | --file <path>] Preset settings patch
+    │   │   └── [--if-match <etag>]
+    │   ├── get <profile_id>                    Get profile by ID
+    │   ├── update <profile_id>                 Update profile
+    │   │   ├── [--json <json> | --file <path>]
+    │   │   └── [--if-match <etag>]
+    │   ├── delete <profile_id>                 Delete profile
+    │   │   └── [--if-match <etag>]
+    │   └── activate <profile_id>               Make it the active profile (one at a time)
+    │       └── [--if-match <etag>]
+    │
+    ├── backup
+    │   ├── export                              Export configuration bundle
+    │   │   └── [--output <path>]               Write to file instead of stdout
+    │   ├── validate                            Validate configuration bundle
+    │   │   ├── [--json <json>]                 Full ConfigBackup JSON body
+    │   │   └── [--file <path>]                 File path containing JSON
+    │   └── import                              Import configuration bundle atomically
+    │       ├── [--json <json>]                 BackupImportRequest JSON body
     │       ├── [--file <path>]                 File path containing JSON
     │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
     │
-    └── backup
-        ├── export                              Export configuration bundle
-        │   └── [--output <path>]               Write to file instead of stdout
-        ├── validate                            Validate configuration bundle
-        │   ├── [--json <json>]                 Full ConfigBackup JSON body
-        │   └── [--file <path>]                 File path containing JSON
-        └── import                              Import configuration bundle atomically
-            ├── [--json <json>]                 BackupImportRequest JSON body
-            ├── [--file <path>]                 File path containing JSON
-            └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    ├── personas                                Named automation identities
+    │   ├── list                                List personas (bounded catalog)
+    │   │   └── [--enabled | --disabled]        Filter by enabled state
+    │   ├── get <persona_id>                    Get persona by ID
+    │   ├── create                              Register a persona
+    │   │   ├── [--json <json>]                 PersonaCreate JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
+    │   ├── update <persona_id>                 Partially update persona
+    │   │   ├── [--json <json>]                 PersonaUpdate JSON body
+    │   │   ├── [--file <path>]                 File path containing JSON
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   ├── delete <persona_id>                 Delete persona by ID
+    │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
+    │   └── validate <persona_id>               Check registration, enabled state, bindings
+    │
+    ├── config                                  Configuration resources
+    │   └── setting                             Service-wide portable settings
+    │       ├── list                            List portable settings
+    │       ├── show <key>                      Show one setting
+    │       ├── set <key> --value <value>       Set one setting
+    │       │   └── [--if-match <etag>]
+    │       ├── remove <key>                    Remove a setting override
+    │       │   └── [--if-match <etag>]
+    │       └── update                          Bulk-update settings
+    │           ├── [--json <json> | --file <path>]
+    │           └── [--if-match <etag>]
+    │
+    ├── setting                                 Aliases for `config setting` reads/writes
+    │   ├── get · get-key <key>
+    │   ├── set-key <key> --value <value>
+    │   └── reset-key <key>
+    │
+    └── service                                 Manage the local opal-event-svc process
+        ├── start                               Start (or restart) the managed server
+        │   ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
+        │   └── [--append]                      Append to log instead of truncating
+        ├── stop                                Stop the managed server (not an error if stopped)
+        ├── log                                 Tail the service log
+        │   └── [--lines <n>]                   Last N lines [default: 10]
+        └── view                                Print the last 100 log lines
 ```
 
 ### 7.2 Quick command overview

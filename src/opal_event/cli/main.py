@@ -99,12 +99,17 @@ def _state(ctx: typer.Context) -> CliState:
     return ctx.find_root().obj if not isinstance(ctx.obj, CliState) else ctx.obj
 
 
-def _call(ctx: typer.Context, op: str, **kwargs: Any) -> httpx.Response:
+def _api(ctx: typer.Context, op: str, **kwargs: Any) -> httpx.Response:
+    """Raw client call: merges context headers but lets ApiCallError/httpx.HTTPError propagate."""
     state = _state(ctx)
     if state.context_headers:
         kwargs["headers"] = {**state.context_headers, **(kwargs.get("headers") or {})}
+    return state.client.call(op, **kwargs)
+
+
+def _call(ctx: typer.Context, op: str, **kwargs: Any) -> httpx.Response:
     try:
-        return state.client.call(op, **kwargs)
+        return _api(ctx, op, **kwargs)
     except ApiCallError as exc:
         typer.echo(f"Error: {exc.describe()}", err=True)
         raise typer.Exit(1) from None
@@ -703,7 +708,7 @@ def service_start(
 
     config_path = config or os.environ.get("OPAL_EVENT_CONFIG", "config/opal_event.yaml")
     try:
-        _emit(ctx, _call(ctx, "opal_service_start", json={"append": append}).json())
+        _emit(ctx, _api(ctx, "opal_service_start", json={"append": append}).json())
         return
     except ApiCallError as exc:
         typer.echo(f"Error: {exc.describe()}", err=True)
@@ -718,7 +723,7 @@ def service_start(
 def service_stop(ctx: typer.Context) -> None:
     """Stop the managed server if it is running (not an error when already stopped)."""
     try:
-        _emit(ctx, _call(ctx, "opal_service_stop").json())
+        _emit(ctx, _api(ctx, "opal_service_stop").json())
         return
     except ApiCallError as exc:
         typer.echo(f"Error: {exc.describe()}", err=True)
@@ -736,7 +741,7 @@ def service_stop(ctx: typer.Context) -> None:
 def service_log_cmd(ctx: typer.Context, lines: int = typer.Option(10, "--lines", "-n", min=1, max=1000)) -> None:
     """Tail the service log file (default: last 10 lines)."""
     try:
-        data = _call(ctx, "opal_service_log", params={"lines": lines}).json()
+        data = _api(ctx, "opal_service_log", params={"lines": lines}).json()
         if _state(ctx).json_output:
             _emit(ctx, data)
         else:
@@ -760,7 +765,7 @@ def service_log_cmd(ctx: typer.Context, lines: int = typer.Option(10, "--lines",
 def service_view(ctx: typer.Context) -> None:
     """Print the last 100 lines of the service log (alias of `service log -n 100`)."""
     try:
-        data = _call(ctx, "opal_service_log", params={"lines": 100}).json()
+        data = _api(ctx, "opal_service_log", params={"lines": 100}).json()
         typer.echo("\n".join(data["lines"]) + ("\n" if data["lines"] else ""), nl=False)
         return
     except (ApiCallError, httpx.HTTPError):

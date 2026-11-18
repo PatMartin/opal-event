@@ -128,7 +128,7 @@ def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenar
     """Replace any prior benchmark rules with exactly ``rule_count`` fresh rules:
     K-1 that always evaluate but never match + 1 that matches -> bench_noop.
     Fails fast if cleanup or creation didn't leave the catalog exactly as intended."""
-    for rid in [r["id"] for r in client.get(f"{base_url}/api/v1/rule/", timeout=10).json()["items"]]:
+    for rid in [r["id"] for r in client.get(f"{base_url}/api/v1/rule/", timeout=10).json()]:
         if rid.startswith("bench_rule_"):
             _delete_rule(client, base_url, rid)
     for i in range(rule_count):
@@ -149,7 +149,7 @@ def configure_rules(client: httpx.Client, base_url: str, rule_count: int, scenar
 
     # Fail fast if the catalog doesn't contain EXACTLY the intended benchmark rules — a leftover
     # from a failed delete or a create that didn't land would silently skew the measurement.
-    catalog = {r["id"] for r in client.get(f"{base_url}/api/v1/rule/", timeout=10).json()["items"]}
+    catalog = {r["id"] for r in client.get(f"{base_url}/api/v1/rule/", timeout=10).json()}
     bench = {rid for rid in catalog if rid.startswith("bench_rule_")}
     expected = {f"bench_rule_{scenario_tag}_{i}" for i in range(rule_count)}
     assert bench == expected, f"catalog has unexpected benchmark rules: {sorted(bench ^ expected)}"

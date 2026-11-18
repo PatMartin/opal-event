@@ -455,7 +455,7 @@ opal
     │   └── reset-key <key>
     │
     └── service                                 Manage the local opal-event-svc process
-        ├── start                               Start-as-restart the managed server
+        ├── start                               Start (or restart) the managed server
         │   ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
         │   └── [--append]                      Append to log instead of truncating
         ├── stop                                Stop the managed server (not an error if stopped)
@@ -465,9 +465,8 @@ opal
 ```
 
 All `service` commands go through the running service's `POST /api/v1/service/*` endpoints
-(pidfile-tracked: `logs/opal_event.pid`, log: `logs/opal_event.log`). `service start` is a
-*start-as-restart*: it manages a running service but cannot currently cold-start a stopped
-one—launch `opal-event-svc` directly for the first start.
+(pidfile-tracked: `logs/opal_event.pid`, log: `logs/opal_event.log`). `service start` works
+as a cold-start when the API is down and as a restart when the managed server is already up.
 
 ---
 
@@ -1343,7 +1342,7 @@ Output:
 - `database_ready`: Indicates SQLite WAL connection is functional.
 - `pending_restart`: `true` if changes were made to restart-only YAML settings on disk.
 
-#### `health --live` (Liveness Probe)
+#### `info health --live` (Liveness Probe)
 
 Fast liveness check intended for Kubernetes or systemd (`GET /api/v1/health/live`). It only confirms
 the process is answering HTTP requests. Requires no authentication.
@@ -1360,7 +1359,7 @@ Output:
 }
 ```
 
-#### `health --ready` (Readiness Probe)
+#### `info health --ready` (Readiness Probe)
 
 Readiness probe intended for load balancers (`GET /api/v1/health/ready`). Checks that the ZeroMQ
 broker is running and the database is reachable. Requires no authentication. When either check
@@ -1547,7 +1546,7 @@ echo "Deploying to production..."
 opal event --api-url http://prod-event.local:8080 backup import --file config/backup.json
 
 echo "Checking health..."
-opal event --api-url http://prod-event.local:8080 health --ready
+opal event --api-url http://prod-event.local:8080 info health --ready
 echo "Deployment successful!"
 ```
 

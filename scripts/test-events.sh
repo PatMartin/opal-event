@@ -15,10 +15,11 @@
 #      - opal-event --help
 #      - Subcommand help: rules, actions, executions, settings, backup
 #   2. Service Health, Readiness & Diagnostics
-#      - opal-event health
-#      - opal-event health --live (unauthenticated liveness probe)
-#      - opal-event health --ready (unauthenticated readiness probe)
-#      - opal-event stats & opal-event --json stats
+#      - opal-event info health
+#      - opal-event info health --live (unauthenticated liveness probe)
+#      - opal-event info health --ready (unauthenticated readiness probe)
+#      - opal-event info get / info ping / info stats
+#      - opal-event tree --ascii
 #   3. Portable Service Settings
 #      - opal-event settings get & opal-event --json settings get
 #      - opal-event settings update --json '<patch>'
@@ -349,12 +350,16 @@ SERVER_PORT="$(cat "${TEST_TMPDIR}/server_port.txt")"
 export OPAL_EVENT_API_URL="http://127.0.0.1:${SERVER_PORT}"
 
 echo "Starting isolated test service on port ${SERVER_PORT}..."
-opal-event-svc --config "$(native_path "${TEST_TMPDIR}/config.yaml")" --log-level error &
+# --no-env-file keeps ./.env from overriding the isolated config (OPAL_EVENT_HOST/
+# PORT/ZMQ_*/DATABASE would otherwise steal the service from the ephemeral ports).
+env -u OPAL_EVENT_CONFIG -u OPAL_EVENT_HOST -u OPAL_EVENT_PORT \
+    -u OPAL_EVENT_ZMQ_PUBLISHERS -u OPAL_EVENT_ZMQ_SUBSCRIBERS -u OPAL_EVENT_DATABASE \
+    opal-event-svc --no-env-file --config "$(native_path "${TEST_TMPDIR}/config.yaml")" --log-level error &
 SERVER_PID=$!
 
 READY=0
 for _ in {1..40}; do
-    if opal-event health --ready >/dev/null 2>&1; then
+    if opal-event info health --ready >/dev/null 2>&1; then
         READY=1
         break
     fi
@@ -382,11 +387,14 @@ assert_contains "Export, validate, and import portable configuration" "Backup su
 
 echo ""
 echo "--- 2. Service Health, Readiness & Diagnostics ---"
-assert_contains "status" "Health summary check" opal-event health
-assert_contains "ok" "Liveness probe (health --live)" opal-event health --live
-assert_contains "ok" "Readiness probe (health --ready)" opal-event health --ready
-assert_contains "observed_events" "Stats summary" opal-event stats
-assert_json "Stats formatted as JSON" opal-event --json stats
+assert_contains "status" "Health summary check" opal-event info health
+assert_contains "ok" "Liveness probe (info health --live)" opal-event info health --live
+assert_contains "ok" "Readiness probe (info health --ready)" opal-event info health --ready
+assert_contains "version" "Service info summary" opal-event info get
+assert_contains "ok" "Ping probe" opal-event info ping
+assert_contains "observed_events" "Stats summary" opal-event info stats
+assert_json "Stats formatted as JSON" opal-event --json info stats
+assert_contains "publish" "Command tree renders (ASCII)" opal-event tree --ascii
 
 echo ""
 echo "--- 3. Portable Settings Management ---"
@@ -489,21 +497,23 @@ assert_exit_code 1 "Reject action deletion when referenced by rule (409 Conflict
 
 echo ""
 echo "--- 7. Event Bus Publishing & Inspection ---"
+CUSTOM_EVENT_ID="123e4567-e89b-42d3-a456-426614174000"
 assert_success "Publish event" opal-event publish cli.test.event --data-json '{"trigger": "now", "msg": "hello from publish"}'
-assert_success "Publish event with custom ID, source, timestamp" opal-event publish cli.custom.event --data-json '{"foo": "bar"}' --id "custom-evt-001" --source "cli-suite" --timestamp "2026-10-24T20:00:00Z"
+assert_success "Publish event with custom ID, source, timestamp" opal-event publish cli.custom.event --data-json '{"foo": "bar"}' --id "${CUSTOM_EVENT_ID}" --source "cli-suite" --timestamp "2026-10-24T20:00:00Z"
+assert_exit_code 1 "Reject publish with non-UUID --id (422)" opal-event publish cli.custom.event --data-json '{"foo": "bar"}' --id "not-a-uuid"
 
 # Wait briefly for persistence
 sleep 0.4
 
-assert_contains "custom-evt-001" "List events" opal-event list
+assert_contains "${CUSTOM_EVENT_ID}" "List events" opal-event list
 assert_json "List events as JSON" opal-event --json list
-assert_contains "custom-evt-001" "List events filtered by topic" opal-event list --topic cli.custom.event
-assert_contains "custom-evt-001" "List events filtered by source" opal-event list --source cli-suite
+assert_contains "${CUSTOM_EVENT_ID}" "List events filtered by topic" opal-event list --topic cli.custom.event
+assert_contains "${CUSTOM_EVENT_ID}" "List events filtered by source" opal-event list --source cli-suite
 assert_success "List events with limit" opal-event list --limit 1
-assert_contains "custom-evt-001" "Get event by ID" opal-event get custom-evt-001
+assert_contains "${CUSTOM_EVENT_ID}" "Get event by ID" opal-event get "${CUSTOM_EVENT_ID}"
 assert_contains "cli." "List observed topics" opal-event topics
-assert_success "Delete event by ID" opal-event delete custom-evt-001
-assert_exit_code 1 "Get deleted event returns 404" opal-event get custom-evt-001
+assert_success "Delete event by ID" opal-event delete "${CUSTOM_EVENT_ID}"
+assert_exit_code 1 "Get deleted event returns 404" opal-event get "${CUSTOM_EVENT_ID}"
 assert_success "Clear all events" opal-event clear
 
 echo ""
@@ -531,16 +541,8 @@ assert_contains '"valid": true' "Validate exported backup file" opal-event backu
 assert_contains '"valid": true' "Validate backup via --json" opal-event backup validate --json '{"format_version": 1, "settings": {"max_event_bytes": 1048576, "execution": {}, "persistence": {}}, "actions": [], "rules": []}'
 assert_exit_code 1 "Reject invalid backup via --json (validation error)" opal-event backup validate --json '{"invalid": true}'
 
-# Wrap backup into BackupImportRequest
-IMPORT_FILE="${TEST_TMPDIR}/backup_import.json"
-${PYTHON} -c "
-import json
-with open('$(native_path "${BACKUP_FILE}")') as f:
-    b = json.load(f)
-with open('$(native_path "${IMPORT_FILE}")', 'w') as f:
-    json.dump({'backup': b}, f)
-"
-assert_success "Import configuration from file" opal-event backup import --file "$(native_path "${IMPORT_FILE}")"
+# `backup import` takes the bare ConfigBackup bundle (If-Match is auto-fetched)
+assert_success "Import configuration from file" opal-event backup import --file "$(native_path "${BACKUP_FILE}")"
 
 echo ""
 echo "--- 10. Rule and Action Cleanup ---"
@@ -549,9 +551,9 @@ assert_success "Delete action after rule removal" opal-event actions delete cli_
 
 echo ""
 echo "--- 11. Global Options & Correlation Context Headers ---"
-assert_json "Global --json flag output" opal-event --json health
-assert_success "Global --timeout option" opal-event --timeout 15.0 health
-assert_success "Global correlation headers (session, transaction, causation)" opal-event --opal-session-id "sess-123" --opal-transaction-id "tx-456" --opal-causation-id "cause-789" health
+assert_json "Global --json flag output" opal-event --json info health
+assert_success "Global --timeout option" opal-event --timeout 15.0 info health
+assert_success "Global correlation headers (session, transaction, causation)" opal-event --opal-session-id "sess-123" --opal-transaction-id "tx-456" --opal-causation-id "cause-789" info health
 
 echo ""
 echo "--- 12. Error Handling & Exit Codes ---"
@@ -561,7 +563,7 @@ assert_exit_code 1 "HTTP 404 for nonexistent action" opal-event actions get none
 assert_exit_code 1 "HTTP 422 for malformed rule payload" opal-event rules create --json '{"id": "bad", "actions": "not-a-list"}'
 assert_exit_code 2 "Exit 2 for invalid CLI option" opal-event --invalid-flag-xyz
 assert_exit_code 2 "Exit 2 for unknown subcommand" opal-event nonexistent-subcommand-xyz
-assert_exit_code 2 "Exit 2 when API service is unreachable" opal-event --api-url "http://127.0.0.1:1" --timeout 0.1 health
+assert_exit_code 2 "Exit 2 when API service is unreachable" opal-event --api-url "http://127.0.0.1:1" --timeout 0.1 info health
 
 # ------------------------------------------------------------------------------
 # 5. Summary and Results

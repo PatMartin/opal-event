@@ -62,7 +62,10 @@ export OPAL_EVENT_API_URL="http://127.0.0.1:${REST_PORT}"
 export OPAL_EVENT_ZMQ_PUBLISHERS="${ZMQ_PUB}"
 unset OPAL_EVENT_API_TOKEN || true
 
-opal-event-svc --config "${TMPDIR_NATIVE}/opal_event.yaml" --log-level error &
+# --no-env-file keeps ./.env from overriding the isolated config (OPAL_EVENT_HOST/
+# PORT/ZMQ_*/DATABASE would otherwise steal the service from the ephemeral ports).
+env -u OPAL_EVENT_CONFIG -u OPAL_EVENT_HOST -u OPAL_EVENT_PORT -u OPAL_EVENT_ZMQ_SUBSCRIBERS -u OPAL_EVENT_DATABASE \
+  opal-event-svc --no-env-file --config "${TMPDIR_NATIVE}/opal_event.yaml" --log-level error &
 SVC_PID=$!
 
 deadline=$((SECONDS + 30))

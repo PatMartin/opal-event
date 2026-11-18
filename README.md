@@ -34,7 +34,6 @@ OPAL Event is deliberately practical:
 Two things worth knowing today:
 
 - **No configuration file ships in this repository.** `config/opal_event.yaml` is gitignored and required at startup—[installation step 2](#2-create-your-configuration-file) provides a ready-to-use starter.
-- **`opal event service start` cannot cold-start a stopped service.** It stops, restarts, and tails the log of a running `opal-event-svc`; use `opal-event-svc` to launch it (see [Troubleshooting](#troubleshooting)).
 
 **Contents:** [Installation](#installation) · [Command tree](#the-complete-typer-command-tree) · [CLI guide](#cli-guide-from-first-event-to-useful-automations) · [How it works](#how-it-works-under-the-hood) · [Configuration](#configuration-safety-and-operations) · [Troubleshooting](#troubleshooting) · [Develop & test](#develop-test-and-measure) · [Documentation](#further-documentation) · [Contributing & license](#contributing-and-license)
 
@@ -199,7 +198,7 @@ Default local endpoints:
 
 Those ZeroMQ addresses are **not HTTP URLs**. You can change them in your [configuration](#2-create-your-configuration-file).
 
-Once a service is running you can manage it from the CLI: `opal event service stop`, `opal event service log`, `opal event log --follow`, and `opal event service start` (which acts as a *restart*). Cold-starting via `service start` is not currently supported.
+You can manage the service from the CLI: `opal event service start` (works cold or as a restart), `opal event service stop`, `opal event service log`, and `opal event log --follow`. It tracks the process via `logs/opal_event.pid` and writes `logs/opal_event.log`.
 
 ### 4. Publish your first event
 
@@ -813,7 +812,7 @@ For deployments and troubleshooting, see [the full user guide](docs/USER_GUIDE.m
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| `Error: cannot reach Opal Event API` (exit 2) | The service isn't running, or the CLI points at the wrong URL | Start it: `opal-event-svc --config config/opal_event.yaml`. `opal event service start` only manages an already-running service—it cannot cold-start one. Check `--api-url` / `OPAL_EVENT_API_URL`. |
+| `Error: cannot reach Opal Event API` (exit 2) | The service isn't running, or the CLI points at the wrong URL | Start it: `opal event service start` (or `opal-event-svc --config config/opal_event.yaml` in the foreground). Check `--api-url` / `OPAL_EVENT_API_URL`. |
 | `ConfigError: configuration file not found` | `config/opal_event.yaml` doesn't exist | Create it per [installation step 2](#2-create-your-configuration-file), or pass `--config PATH` / set `OPAL_EVENT_CONFIG`. |
 | Published event never appears in `opal event list` | `persistence.event_mode` isn't `all`, or the write just hasn't landed yet | Check `opal event settings get`; set `event_mode` to `all`. `202 Accepted` means handed to the bus—not stored or delivered. |
 | Rule matches in `rules test` but nothing runs | Referenced action is disabled/missing, or the bounded queue dropped it | `opal event executions list --status dropped` and `--status failed`; verify the action is enabled. |

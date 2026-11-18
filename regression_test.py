@@ -193,7 +193,8 @@ def t_publish():
 def t_publish_validation_shape():
     r = CLIENT.post("/api/v1/event/", json={"topic": "BAD TOPIC!!", "data": {}})
     check(r.status_code == 422, f"expected 422, got {r.status_code}")
-    check("detail" in r.json(), f"expected HTTPValidationError shape: {r.text[:200]}")
+    err = r.json().get("error", {})
+    check(err.get("code") == "validation_error", f"expected OpalError validation_error envelope: {r.text[:200]}")
 
 
 def t_event_stored():
@@ -212,8 +213,11 @@ def t_event_stored():
 def t_event_not_found_shape():
     r = CLIENT.get(f"/api/v1/event/{uuid.uuid4()}")
     check(r.status_code == 404, f"expected 404, got {r.status_code}")
-    body = r.json()
-    check("code" in body and "message" in body and "request_id" in body, f"expected Problem shape: {body}")
+    err = r.json().get("error", {})
+    check(
+        err.get("code") == "not_found" and "message" in err and "request_id" in err,
+        f"expected OpalError not_found envelope: {r.json()}",
+    )
 
 
 def t_events_list():
@@ -246,7 +250,7 @@ def t_topics_list():
         r = CLIENT.get("/api/v1/topic/")
         if r.status_code != 200:
             return None
-        return r if f"{TOPIC_BASE}.one" in r.json() else None  # bare string array
+        return r if f"{TOPIC_BASE}.one" in r.json().get("items", []) else None
 
     r = poll_until(found, "topic visible in /topics/")
     check(r.headers.get("etag"), "topics list missing ETag")

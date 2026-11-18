@@ -31,6 +31,19 @@ def free_port() -> int:
                 return port
 
 
+@pytest.fixture(autouse=True)
+def _restore_os_environ():
+    """Tests that invoke the Typer CLI run its callback in-process, which load_dotenv()s
+    ./.env into os.environ. Restore the environment after every test so dotenv values
+    (e.g. OPAL_EVENT_PORT) can't leak into later tests and freeze restart-only config
+    fields via _apply_environment."""
+    snapshot = os.environ.copy()
+    yield
+    for key in set(os.environ) - set(snapshot):
+        del os.environ[key]
+    os.environ.update(snapshot)
+
+
 def base_config(tmp_path: Path, **overrides) -> dict:
     cfg = {
         "version": 1,

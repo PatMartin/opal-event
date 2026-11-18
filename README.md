@@ -842,6 +842,13 @@ npm run build
 
 The test suite has unit, integration, contract, security, and end-to-end coverage. The benchmarking script measures publication, observation, matching, execution, and queue pressure; throughput is host-dependent.
 
+### Event → Say smoke test
+
+`tests/integration/test_event_say_smoke.py` proves a synthetic `say.request` event routes through an Event rule to the bundled `opal_event.plugins.say_request` action, which POSTs a `GenerateRequest` to a speech endpoint and writes the returned WAV — then traces the event ID to a succeeded execution receipt and validates the WAV (RIFF header, positive frame count).
+
+- **Self-contained variant** (always runs): a stub endpoint synthesizes a WAV — covers event→rule→action→receipt plumbing, with the speech engine itself faked.
+- **Live variant** (skipped unless `OPAL_SAY_URL` is set): run a real `opal-say` service with Piper or Kokoro installed, a voice + profile configured, and set `OPAL_SAY_URL`/`OPAL_SAY_VOICE`/`OPAL_SAY_ENGINE`, e.g. `OPAL_SAY_URL=http://127.0.0.1:8002 pytest tests/integration/test_event_say_smoke.py`. No ports conflict with Event's defaults (REST 8080, ZMQ 5555/5556).
+
 ## Project map
 
 ~~~text

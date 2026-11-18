@@ -69,6 +69,12 @@ def subprocess_environment(extra: dict[str, str] | None = None) -> dict[str, str
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
     }
+    if os.name == "nt":
+        # Winsock/Win32 init reads these — a bare env makes socket calls fail with
+        # WinError 10106 and cmd resolution unreliable. Still no credentials/user config.
+        for key in ("SystemRoot", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
+            if key in os.environ:
+                base[key] = os.environ[key]
     if extra:
         base.update(extra)
     return base

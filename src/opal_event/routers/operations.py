@@ -1,5 +1,9 @@
-"""``/api/v1/health``, ``/api/v1/health/live``, ``/api/v1/health/ready``, ``/api/v1/stats``,
-``/api/v1/info/``, ``/api/v1/info/ping``."""
+"""``/api/v1/health/``, ``/api/v1/health/live``, ``/api/v1/health/ready``.
+
+v0.1.0 retires ``GET /api/v1/info/``, ``GET /api/v1/info/ping`` and ``GET /api/v1/stats/``:
+identity, liveness, readiness and counters are consolidated into the kernel
+``OpalHealthReport`` returned by ``GET /api/v1/health/``, with the former Stats payload
+served under ``details.stats`` (module ``x-opal-health-details`` declaration)."""
 
 from __future__ import annotations
 
@@ -10,45 +14,25 @@ from fastapi import APIRouter, Depends, Response
 
 from opal_event.auth import require_auth
 from opal_event.deps import get_config, get_service
-from opal_event.models import Health, LivenessRead, OpalHealthProbe, ServiceInfo, Stats
+from opal_event.models import HealthReport, OpalHealthProbe, Stats, _utcnow
 from opal_event.service import EventService
 
 logger = logging.getLogger("opal_event.routers.operations")
 
+SERVICE_NAME = "opal-event-svc"
+SERVICE_VERSION = "1.7.1"
+API_VERSION = "v1"
+
 router = APIRouter()
 
 
-@router.get("/api/v1/health/", response_model=Health, dependencies=[Depends(require_auth)])
-def get_health(service: Annotated[EventService, Depends(get_service)], config=Depends(get_config)):
-    broker_running = service.broker.running
-    database_ready = service.is_database_ready()
-    executor_healthy = service.executor.healthy
-    reload_ok = not config.reload_failed
-    status = "ok" if (broker_running and database_ready and executor_healthy and reload_ok) else "degraded"
-    if status == "degraded":
-        logger.warning(
-            "health degraded: broker_running=%s database_ready=%s executor_healthy=%s config_reload_ok=%s",
-            broker_running,
-            database_ready,
-            executor_healthy,
-            reload_ok,
-        )
-    return Health(
-        status=status,
-        broker_running=broker_running,
-        database_ready=database_ready,
-        pending_restart=config.pending_restart,
-    )
-
-
-@router.get("/api/v1/stats/", response_model=Stats, dependencies=[Depends(require_auth)])
-def get_stats(service: Annotated[EventService, Depends(get_service)]):
+def _stats(service: EventService) -> Stats:
     snapshot = service.metrics.snapshot()
     return Stats(
         observed_events=snapshot["observed_events"],
         invalid_events=snapshot["invalid_events"],
         matched_events=snapshot["matched_events"],
-        executions_succeeded=snapshot["executions_succeeded"],
+        executions_completed=snapshot["executions_completed"],
         executions_failed=snapshot["executions_failed"],
         executions_dropped=snapshot["executions_dropped"],
         queue_depth=service.executor.queue_depth,
@@ -59,20 +43,43 @@ def get_stats(service: Annotated[EventService, Depends(get_service)]):
     )
 
 
-@router.get("/api/v1/info/", response_model=ServiceInfo, dependencies=[Depends(require_auth)])
-def get_info():
-    return ServiceInfo(
-        name="opal-event-svc",
-        version="1.7.1",
-        api_version="v1",
-        description="OPAL Event: event bus, rule engine and action execution service.",
+@router.get("/api/v1/health/", response_model=HealthReport, dependencies=[Depends(require_auth)])
+def get_health(service: Annotated[EventService, Depends(get_service)], config=Depends(get_config)):
+    broker_running = service.broker.running
+    database_ready = service.is_database_ready()
+    executor_healthy = service.executor.healthy
+    reload_ok = not config.reload_failed
+    ready = service.is_ready()
+    status = "ok" if (broker_running and database_ready and executor_healthy and reload_ok) else "degraded"
+    if status == "degraded":
+        logger.warning(
+            "health degraded: broker_running=%s database_ready=%s executor_healthy=%s config_reload_ok=%s",
+            broker_running,
+            database_ready,
+            executor_healthy,
+            reload_ok,
+        )
+    pending_fields = config.pending_restart_fields
+    active = next((p for p in config.settings.profiles if p.is_active), None)
+    return HealthReport(
+        name=SERVICE_NAME,
+        version=SERVICE_VERSION,
+        api_version=API_VERSION,
+        status=status,
+        live=True,
+        ready=ready,
+        details={
+            "broker_running": broker_running,
+            "database_ready": database_ready,
+            "executor_healthy": executor_healthy,
+            "stats": _stats(service).model_dump(mode="json"),
+        },
+        active_profile_id=str(active.id) if active is not None else None,
+        checked_at=_utcnow(),
+        uptime_seconds=service.uptime_seconds,
+        pending_restart=bool(pending_fields),
+        pending_restart_fields=pending_fields,
     )
-
-
-@router.get("/api/v1/info/ping", response_model=LivenessRead)
-def info_ping():
-    """Cheap supervisor liveness probe, unauthenticated like /api/v1/health/live."""
-    return LivenessRead()
 
 
 @router.get("/api/v1/health/live", response_model=OpalHealthProbe)
@@ -83,7 +90,7 @@ def health_live(service: Annotated[EventService, Depends(get_service)]):
 @router.get("/api/v1/health/ready", response_model=OpalHealthProbe)
 def health_ready(service: Annotated[EventService, Depends(get_service)], response: Response):
     # One authoritative readiness check shared with REST publication — a 503 here means
-    # POST /api/v1/event/ would also be refused, and vice versa. Per openapi/opal_event_v1.7.1.yaml the
+    # POST /api/v1/event/ would also be refused, and vice versa. Per openapi/opal_event_v0.1.0.yaml the
     # 503 body is the OpalHealthProbe itself (status "unavailable", ready false), not an error.
     if not service.is_ready():
         response.status_code = 503

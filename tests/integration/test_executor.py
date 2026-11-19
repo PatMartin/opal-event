@@ -42,7 +42,7 @@ class TestExecutor:
             )
             assert record.status == "queued"
             assert wait_until(lambda: db.get_execution(record.id)["status"] == "succeeded")
-            assert metrics.get("executions_succeeded") == 1
+            assert metrics.get("executions_completed") == 1
         finally:
             executor.stop()
 
@@ -200,7 +200,7 @@ class TestExecutor:
             assert executor.queue_depth == 0
             assert metrics.get("active_workers") == 0
             assert metrics.get("executions_failed") == 1
-            assert metrics.get("executions_succeeded") == 1
+            assert metrics.get("executions_completed") == 1
 
             # Verify traceback was logged
             assert any(
@@ -344,7 +344,7 @@ class TestExecutor:
             for r in (r0, r1, r2, r3, r5):
                 assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
 
-            assert metrics.get("executions_succeeded") == 5
+            assert metrics.get("executions_completed") == 5
             assert metrics.get("executions_dropped") == 1
         finally:
             unblock_worker.set()
@@ -482,7 +482,7 @@ class TestExecutor:
             for r in (r0, r1, r2, r4, r5):
                 assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
 
-            assert metrics.get("executions_succeeded") == 5
+            assert metrics.get("executions_completed") == 5
             assert metrics.get("executions_dropped") == 2
         finally:
             unblock_worker.set()
@@ -566,7 +566,7 @@ class TestExecutor:
             assert wait_until(lambda: metrics.get("active_workers") == 0, timeout=3)
             assert wait_until(lambda: db.get_execution(r0.id)["status"] == "succeeded", timeout=3)
             assert wait_until(lambda: db.get_execution(r1.id)["status"] == "succeeded", timeout=3)
-            assert metrics.get("executions_succeeded") == 2
+            assert metrics.get("executions_completed") == 2
         finally:
             unblock_job0.set()
             unblock_job1.set()
@@ -676,7 +676,7 @@ class TestExecutor:
                 assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
 
             assert wait_until(lambda: metrics.get("active_workers") == 0, timeout=3)
-            assert metrics.get("executions_succeeded") == 5
+            assert metrics.get("executions_completed") == 5
             assert executor.queue_depth == 0
         finally:
             unblock_jobs.set()

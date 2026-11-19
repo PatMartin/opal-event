@@ -116,94 +116,94 @@ function opPath(op: OpId, params?: Record<string, string>): string {
 export const api = {
   publishEvent: (body: { topic: string; data: unknown; id?: string; source?: string; timestamp?: string }) =>
     request<{ id: string; status: string; published_at: string }>(
-      opMethod("post_api_v1_events"),
-      opPath("post_api_v1_events"),
+      opMethod("publish_event"),
+      opPath("publish_event"),
       body,
     ),
   listEvents: (query: Record<string, string | number | undefined>) =>
-    request<import("./types").ListEvents>(opMethod("get_api_v1_events"), withQuery(opPath("get_api_v1_events"), query)),
+    request<import("./types").ListEvents>(opMethod("list_events"), withQuery(opPath("list_events"), query)),
   deleteEvent: (eventId: string) =>
-    request<void>(opMethod("delete_api_v1_events_id"), opPath("delete_api_v1_events_id", { event_id: eventId })),
-  clearEvents: () => request<void>(opMethod("delete_api_v1_events"), opPath("delete_api_v1_events")),
+    request<void>(opMethod("remove_event"), opPath("remove_event", { event_id: eventId })),
+  clearEvents: () => request<void>(opMethod("clear_events"), opPath("clear_events")),
   getEvent: (eventId: string) =>
-    request<import("./types").EventItem>(opMethod("get_api_v1_events_id"), opPath("get_api_v1_events_id", { event_id: eventId })),
-  listTopics: () => request<{ items: string[] }>(opMethod("get_api_v1_topics"), opPath("get_api_v1_topics")),
+    request<import("./types").EventItem>(opMethod("show_event"), opPath("show_event", { event_id: eventId })),
+  listTopics: () => request<{ items: string[] }>(opMethod("list_topics"), opPath("list_topics")),
 
   // Rules/Actions are bounded configuration catalogs as of opal_event.1.2.0.yaml: GET returns the
   // complete collection (no cursor/limit) with a strong ETag, and PATCH/DELETE require a matching
   // If-Match (428 if omitted server-side, 412 if stale). get{Rule,Action} below fetch-then-mutate
   // to auto-populate If-Match, mirroring the CLI's `_resource_etag` helper.
-  listRules: () => request<import("./types").ListRules>(opMethod("get_api_v1_rules"), opPath("get_api_v1_rules")),
+  listRules: () => request<import("./types").ListRules>(opMethod("list_rules"), opPath("list_rules")),
   createRule: async (body: import("./types").Rule) => {
-    const { etag } = await fetchWithEtag<import("./types").ListRules>(opPath("get_api_v1_rules"));
-    return request<import("./types").Rule>(opMethod("post_api_v1_rules"), opPath("post_api_v1_rules"), body, {
+    const { etag } = await fetchWithEtag<import("./types").ListRules>(opPath("list_rules"));
+    return request<import("./types").Rule>(opMethod("create_rule"), opPath("create_rule"), body, {
       "If-Match": etag,
     });
   },
   getRule: (ruleId: string) =>
-    fetchWithEtag<import("./types").Rule>(opPath("get_api_v1_rules_id", { rule_id: ruleId })),
+    fetchWithEtag<import("./types").Rule>(opPath("show_rule", { rule_id: ruleId })),
   deleteRule: async (ruleId: string, ifMatch?: string): Promise<void> => {
     const etag = ifMatch ?? (await api.getRule(ruleId)).etag;
-    await request<void>(opMethod("delete_api_v1_rules_id"), opPath("delete_api_v1_rules_id", { rule_id: ruleId }), undefined, {
+    await request<void>(opMethod("remove_rule"), opPath("remove_rule", { rule_id: ruleId }), undefined, {
       "If-Match": etag,
     });
   },
   patchRule: async (ruleId: string, patch: Partial<import("./types").Rule>, ifMatch?: string) => {
     const etag = ifMatch ?? (await api.getRule(ruleId)).etag;
     return request<import("./types").Rule>(
-      opMethod("patch_api_v1_rules_rule_id"),
-      opPath("patch_api_v1_rules_rule_id", { rule_id: ruleId }),
+      opMethod("update_rule"),
+      opPath("update_rule", { rule_id: ruleId }),
       patch,
       { "If-Match": etag },
     );
   },
   testRule: (ruleId: string, event: unknown) =>
-    request<import("./types").RuleTestResult>(opMethod("post_api_v1_rules_id_test"), opPath("post_api_v1_rules_id_test", { rule_id: ruleId }), { event }),
+    request<import("./types").RuleTestResult>(opMethod("test_rule"), opPath("test_rule", { rule_id: ruleId }), { event }),
 
-  listActions: () => request<import("./types").ListActions>(opMethod("get_api_v1_actions"), opPath("get_api_v1_actions")),
+  listActions: () => request<import("./types").ListActions>(opMethod("list_actions"), opPath("list_actions")),
   createAction: async (body: import("./types").Action) => {
-    const { etag } = await fetchWithEtag<import("./types").ListActions>(opPath("get_api_v1_actions"));
-    return request<import("./types").Action>(opMethod("post_api_v1_actions"), opPath("post_api_v1_actions"), body, {
+    const { etag } = await fetchWithEtag<import("./types").ListActions>(opPath("list_actions"));
+    return request<import("./types").Action>(opMethod("create_action"), opPath("create_action"), body, {
       "If-Match": etag,
     });
   },
   getAction: (actionId: string) =>
-    fetchWithEtag<import("./types").Action>(opPath("get_api_v1_actions_id", { action_id: actionId })),
+    fetchWithEtag<import("./types").Action>(opPath("show_action", { action_id: actionId })),
   deleteAction: async (actionId: string, ifMatch?: string): Promise<void> => {
     const etag = ifMatch ?? (await api.getAction(actionId)).etag;
-    await request<void>(opMethod("delete_api_v1_actions_id"), opPath("delete_api_v1_actions_id", { action_id: actionId }), undefined, {
+    await request<void>(opMethod("remove_action"), opPath("remove_action", { action_id: actionId }), undefined, {
       "If-Match": etag,
     });
   },
   patchAction: async (actionId: string, patch: Record<string, unknown>, ifMatch?: string) => {
     const etag = ifMatch ?? (await api.getAction(actionId)).etag;
     return request<import("./types").Action>(
-      opMethod("patch_api_v1_actions_action_id"),
-      opPath("patch_api_v1_actions_action_id", { action_id: actionId }),
+      opMethod("update_action"),
+      opPath("update_action", { action_id: actionId }),
       patch,
       { "If-Match": etag },
     );
   },
   executeAction: (actionId: string, event: unknown) =>
     request<import("./types").Execution>(
-      opMethod("post_api_v1_actions_id_execute"),
-      opPath("post_api_v1_actions_id_execute", { action_id: actionId }),
+      opMethod("execute_action"),
+      opPath("execute_action", { action_id: actionId }),
       { event },
     ),
 
   listExecutions: (query: Record<string, string | number | undefined>) =>
-    request<import("./types").ListExecutions>(opMethod("get_api_v1_executions"), withQuery(opPath("get_api_v1_executions"), query)),
+    request<import("./types").ListExecutions>(opMethod("list_executions"), withQuery(opPath("list_executions"), query)),
   getExecution: (executionId: string) =>
     request<import("./types").Execution>(
-      opMethod("get_api_v1_executions_id"),
-      opPath("get_api_v1_executions_id", { execution_id: executionId }),
+      opMethod("show_execution"),
+      opPath("show_execution", { execution_id: executionId }),
     ),
 
   getHealth: () => request<import("./types").Health>(opMethod("opal_health_get"), opPath("opal_health_get")),
   getHealthLive: () => request<import("./types").HealthProbe>(opMethod("opal_health_live_get"), opPath("opal_health_live_get")),
   getHealthReady: () =>
     request<import("./types").HealthProbe>(opMethod("opal_health_ready_get"), opPath("opal_health_ready_get")),
-  getStats: () => request<import("./types").Stats>(opMethod("get_api_v1_stats"), opPath("get_api_v1_stats")),
+
 
   getSettings: async (): Promise<{ settings: import("./types").PortableSettings; etag: string }> => {
     const resp = await fetch(opPath("opal_setting_list"), { headers: { ...contextHeaders(), ...authHeaders() } });
@@ -235,9 +235,6 @@ export const api = {
     request<import("./types").BackupImportResult>(opMethod("opal_backup_import"), opPath("opal_backup_import"), backup, {
       "If-Match": ifMatch,
     }),
-
-  getInfo: () => request<import("./types").ServiceInfo>(opMethod("opal_info_get"), opPath("opal_info_get")),
-  pingInfo: () => request<import("./types").LivenessRead>(opMethod("opal_info_ping"), opPath("opal_info_ping")),
 
   // Personas are a bounded configuration catalog (v1.6.0): list returns the complete
   // collection with a strong ETag, and every mutation requires If-Match (428/412).

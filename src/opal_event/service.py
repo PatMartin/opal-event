@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 import uuid
 from hashlib import sha256
 from typing import Any
@@ -52,7 +53,12 @@ class EventService:
         )
         self._retention_stop = threading.Event()
         self._retention_thread: threading.Thread | None = None
+        self._started_monotonic = time.monotonic()
         config.set_reload_callback(self._on_config_reload)
+
+    @property
+    def uptime_seconds(self) -> float:
+        return time.monotonic() - self._started_monotonic
 
     def start(self) -> None:
         try:

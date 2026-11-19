@@ -83,7 +83,7 @@ def test_fanout_saturation_still_admitted(tmp_path):
         finally:
             svc.publish = original
         assert _wait_execs(client, receipt["id"], 1)  # routed despite failed fan-out
-        stats = client.get("/api/v1/stats/").json()
+        stats = client.get("/api/v1/health/").json()["details"]["stats"]
         assert stats.get("fanout_dropped", 0) >= 1
 
 

@@ -15,7 +15,22 @@ from opal_event.cli.client import ApiClient
 runner = CliRunner()
 
 RESPONSES = {
-    "/api/v1/health/": (200, {"status": "ok", "broker_running": True, "database_ready": True, "pending_restart": False}),
+    "/api/v1/health/": (
+        200,
+        {
+            "name": "opal-event-svc",
+            "version": "1.7.1",
+            "api_version": "v1",
+            "status": "ok",
+            "live": True,
+            "ready": True,
+            "details": {"broker_running": True, "database_ready": True},
+            "checked_at": "2026-01-01T00:00:00Z",
+            "uptime_seconds": 1.0,
+            "pending_restart": False,
+            "pending_restart_fields": [],
+        },
+    ),
     "/api/v1/health/live": (200, {"status": "ok", "details": None}),
     "/api/v1/health/ready": (200, {"status": "ok", "details": {"broker": "ok", "database": "ok"}}),
 }

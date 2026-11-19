@@ -438,11 +438,23 @@ class OpalError(Strict):
     error: OpalErrorBody
 
 
-class Health(Strict):
-    status: Literal["ok", "degraded"]
-    broker_running: bool
-    database_ready: bool
-    pending_restart: bool
+class HealthReport(Strict):
+    """Kernel ``OpalHealthReport`` (v0.1.0): identity, liveness, readiness and diagnostics in one
+    document. Replaces the retired ``GET /api/v1/info/`` and ``GET /api/v1/info/ping`` reports;
+    module diagnostics live under ``details`` (``stats`` per ``x-opal-health-details``)."""
+
+    name: str
+    version: str
+    api_version: str
+    status: Literal["ok", "degraded", "error"]
+    live: bool
+    ready: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+    active_profile_id: str | None = None
+    checked_at: str
+    uptime_seconds: float
+    pending_restart: bool | list[str] = False
+    pending_restart_fields: list[str] = Field(default_factory=list)
 
 
 class SettingRead(Strict):
@@ -468,26 +480,11 @@ class OpalHealthProbe(Strict):
     details: dict[str, str] | None = None
 
 
-class ServiceInfo(Strict):
-    """Kernel ``ServiceInfo``: service identity (name, package version, API contract version)."""
-
-    name: str
-    version: str
-    api_version: str
-    description: str | None = None
-
-
-class LivenessRead(Strict):
-    """Kernel ``LivenessRead``: minimal liveness payload for process supervisors."""
-
-    status: Literal["ok"] = "ok"
-
-
 class Stats(Strict):
     observed_events: Annotated[int, Field(ge=0)]
     invalid_events: Annotated[int, Field(ge=0)]
     matched_events: Annotated[int, Field(ge=0)]
-    executions_succeeded: Annotated[int, Field(ge=0)]
+    executions_completed: Annotated[int, Field(ge=0)]
     executions_failed: Annotated[int, Field(ge=0)]
     executions_dropped: Annotated[int, Field(ge=0)]
     queue_depth: Annotated[int, Field(ge=0)]

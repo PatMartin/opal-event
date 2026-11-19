@@ -12,9 +12,9 @@ export default function HealthPage() {
   async function load() {
     try {
       setError(null);
-      const [h, s] = await Promise.all([api.getHealth(), api.getStats()]);
+      const h = await api.getHealth();
       setHealth(h);
-      setStats(s);
+      setStats(h.details?.stats ?? null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
@@ -56,9 +56,20 @@ export default function HealthPage() {
           <p>
             Status: <span className={`badge ${health.status}`}>{health.status}</span>
           </p>
-          <p>Broker running: {health.broker_running ? "yes" : "no"}</p>
-          <p>Database ready: {health.database_ready ? "yes" : "no"}</p>
-          <p>Pending restart: {health.pending_restart ? "yes (edit config restart-only fields applied)" : "no"}</p>
+          <p>
+            {health.name} v{health.version} (API {health.api_version}) — live: {health.live ? "yes" : "no"}, ready:{" "}
+            {health.ready ? "yes" : "no"}
+          </p>
+          <p>Broker running: {health.details?.broker_running ? "yes" : "no"}</p>
+          <p>Database ready: {health.details?.database_ready ? "yes" : "no"}</p>
+          <p>
+            Pending restart:{" "}
+            {health.pending_restart_fields?.length
+              ? `yes (${health.pending_restart_fields.join(", ")})`
+              : health.pending_restart
+                ? "yes (edit config restart-only fields applied)"
+                : "no"}
+          </p>
         </div>
       )}
       {stats && (

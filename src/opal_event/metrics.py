@@ -13,7 +13,7 @@ class Metrics:
             "observed_events": 0,
             "invalid_events": 0,
             "matched_events": 0,
-            "executions_succeeded": 0,
+            "executions_completed": 0,
             "executions_failed": 0,
             "executions_dropped": 0,
             "active_workers": 0,

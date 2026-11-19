@@ -15,16 +15,18 @@ def wait_until(predicate, timeout=3.0, interval=0.05):
 
 class TestEndToEndPipeline:
     def test_invalid_event_increments_stats_counter(self, app_client):
-        stats_url = "/api/v1/stats/"
-        invalid_events_before = app_client.get(stats_url).json()["invalid_events"]
+        stats_url = "/api/v1/health/"
+        invalid_events_before = app_client.get(stats_url).json()["details"]["stats"]["invalid_events"]
 
         app_client.app.state.service.broker.publish("invalid.topic", {"topic": "mismatched.topic", "data": {}})
 
-        assert wait_until(lambda: app_client.get(stats_url).json()["invalid_events"] == invalid_events_before + 1)
+        assert wait_until(
+            lambda: app_client.get(stats_url).json()["details"]["stats"]["invalid_events"] == invalid_events_before + 1
+        )
 
     def test_publisher_queue_full_returns_503_and_recovers(self, app_client, monkeypatch):
-        stats_url = "/api/v1/stats/"
-        stats_before = app_client.get(stats_url).json()
+        stats_url = "/api/v1/health/"
+        stats_before = app_client.get(stats_url).json()["details"]["stats"]
         rejected_before = stats_before["rejected_publications"]
 
         service = app_client.app.state.service
@@ -54,16 +56,17 @@ class TestEndToEndPipeline:
             resp3 = app_client.post("/api/v1/event/", json={"topic": "queue.e2e", "data": {"n": 3}})
             assert resp3.status_code == 202
 
-            # 3. New publication must be rejected with 503
+            # 3. Per opal_event_v0.1.0.yaml publish_event: a saturated publisher queue only loses the
+            # fan-out copy (stats.fanout_dropped) — admission itself is never refused. The 4th publish
+            # is still accepted...
             resp4 = app_client.post("/api/v1/event/", json={"topic": "queue.e2e", "data": {"n": 4}})
-            assert resp4.status_code == 503
-            body4 = resp4.json()
-            assert body4["error"]["code"] == "unavailable"
-            assert "Publisher queue is full" in body4["error"]["message"]
-            assert "request_id" in body4["error"]
+            assert resp4.status_code == 202
+            assert resp4.json()["status"] == "accepted"
 
-            # Stats must reflect the rejected publication
-            stats_mid = app_client.get(stats_url).json()
+            # ...and stats reflect it twice per the Stats schema: fanout_dropped counts the lost
+            # REST-admission fan-out; rejected_publications counts the broker queue-full rejection.
+            stats_mid = app_client.get(stats_url).json()["details"]["stats"]
+            assert stats_mid["fanout_dropped"] >= 1
             assert stats_mid["rejected_publications"] == rejected_before + 1
 
             # 4. Unblock the publisher thread to drain the queue
@@ -76,7 +79,7 @@ class TestEndToEndPipeline:
             assert resp5.json()["status"] == "accepted"
 
             # Rejected counter should not have changed for the successful publish
-            stats_after = app_client.get(stats_url).json()
+            stats_after = app_client.get(stats_url).json()["details"]["stats"]
             assert stats_after["rejected_publications"] == rejected_before + 1
         finally:
             unblock_event.set()
@@ -99,7 +102,7 @@ class TestEndToEndPipeline:
         assert matching[0]["rule_id"] == "front_door_alert"
         assert matching[0]["action_id"] == "echo_action"
 
-        stats = app_client.get("/api/v1/stats/").json()
+        stats = app_client.get("/api/v1/health/").json()["details"]["stats"]
         assert stats["observed_events"] >= 1
         assert stats["matched_events"] >= 1
 

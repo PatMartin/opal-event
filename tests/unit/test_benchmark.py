@@ -34,10 +34,10 @@ class FakeClient:
 
     def get(self, url, timeout=None, **kw):
         if url.endswith("/api/v1/rule/"):
-            return _Resp(200, {"items": self._rules}, {"etag": '"r1"'})
-        if url.endswith("/api/v1/stats/"):
+            return _Resp(200, self._rules, {"etag": '"r1"'})
+        if url.endswith("/api/v1/health/"):
             self._last_stats = self._stats()
-            return _Resp(200, self._last_stats)
+            return _Resp(200, {"details": {"stats": self._last_stats}})
         return _Resp(200, {}, {"etag": '"r1"'})
 
     def post(self, url, json=None, timeout=None, **kw):
@@ -74,7 +74,7 @@ BASE_STATS = {
     "observed_events": 0,
     "invalid_events": 0,
     "matched_events": 0,
-    "executions_succeeded": 0,
+    "executions_completed": 0,
     "executions_failed": 0,
     "executions_dropped": 0,
     "queue_depth": 0,
@@ -106,8 +106,8 @@ class TestRunScenarioAccounting:
         # 600/min x 1s = 10 sends; stats sequence: before, drain-hit, exec progression
         seq = [
             _stats(),  # before
-            _stats(observed_events=10, matched_events=10, executions_succeeded=10),  # drain+exec done
-            _stats(observed_events=10, matched_events=10, executions_succeeded=10),
+            _stats(observed_events=10, matched_events=10, executions_completed=10),  # drain+exec done
+            _stats(observed_events=10, matched_events=10, executions_completed=10),
         ]
         client = FakeClient(stats_seq=seq)
         row = benchmark.run_scenario(client, FakePub(), "http://x", "t", mode="zmq", rate_per_min=600, duration_s=1, rule_count=1)
@@ -174,8 +174,8 @@ class TestRunScenarioAccounting:
         monkeypatch.setattr(benchmark, "DRAIN_TIMEOUT_S", 0.3)
         seq = [
             _stats(),
-            _stats(observed_events=10, matched_events=10, executions_succeeded=3),
-            _stats(observed_events=10, matched_events=10, executions_succeeded=5),
+            _stats(observed_events=10, matched_events=10, executions_completed=3),
+            _stats(observed_events=10, matched_events=10, executions_completed=5),
         ]
         client = FakeClient(stats_seq=seq)
         row = benchmark.run_scenario(client, FakePub(), "http://x", "t", mode="zmq", rate_per_min=600, duration_s=1, rule_count=1)

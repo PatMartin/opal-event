@@ -345,7 +345,7 @@ class Executor:
             error_message=outcome.error_message,
         )
         if outcome.status == "succeeded":
-            self.metrics.incr("executions_succeeded")
+            self.metrics.incr("executions_completed")
         else:
             self.metrics.incr("executions_failed")
 

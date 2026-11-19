@@ -149,6 +149,17 @@ class ConfigStore:
             return self._pending_restart
 
     @property
+    def pending_restart_fields(self) -> list[str]:
+        """Dotted restart-only setting paths whose desired value diverges from the running baseline."""
+        with self._lock:
+            current = _restart_only_snapshot(self._settings)
+            return [
+                ".".join(path)
+                for path, base_value in self._restart_baseline.items()
+                if current.get(path) != base_value
+            ]
+
+    @property
     def reload_failed(self) -> bool:
         """True when the most recent attempted configuration reload (file edit or API write) was
         rejected as invalid and the last-good configuration is still the one in effect."""

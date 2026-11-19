@@ -129,13 +129,13 @@ class TestContractCoverage:
         spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
 
         clear_op = spec["paths"]["/api/v1/event/"]["delete"]
-        assert clear_op["operationId"] == "delete_api_v1_events"
+        assert clear_op["operationId"] == "clear_events"
         assert "204" in clear_op["responses"]
         assert "401" in clear_op["responses"]
         assert "403" in clear_op["responses"]
 
         delete_single_op = spec["paths"]["/api/v1/event/{event_id}"]["delete"]
-        assert delete_single_op["operationId"] == "delete_api_v1_events_id"
+        assert delete_single_op["operationId"] == "remove_event"
         assert "204" in delete_single_op["responses"]
         assert "401" in delete_single_op["responses"]
         assert "403" in delete_single_op["responses"]

@@ -1,100 +1,100 @@
 {
-  "post_api_v1_events": {
+  "publish_event": {
     "method": "POST",
     "path": "/api/v1/event/",
     "client": "publishEvent"
   },
-  "get_api_v1_events": {
+  "list_events": {
     "method": "GET",
     "path": "/api/v1/event/",
     "client": "listEvents"
   },
-  "delete_api_v1_events": {
+  "clear_events": {
     "method": "DELETE",
     "path": "/api/v1/event/",
     "client": "clearEvents"
   },
-  "get_api_v1_events_id": {
+  "show_event": {
     "method": "GET",
     "path": "/api/v1/event/{event_id}",
     "client": "getEvent"
   },
-  "delete_api_v1_events_id": {
+  "remove_event": {
     "method": "DELETE",
     "path": "/api/v1/event/{event_id}",
     "client": "deleteEvent"
   },
-  "get_api_v1_topics": {
+  "list_topics": {
     "method": "GET",
     "path": "/api/v1/topic/",
     "client": "listTopics"
   },
-  "get_api_v1_rules": {
+  "list_rules": {
     "method": "GET",
     "path": "/api/v1/rule/",
     "client": "listRules"
   },
-  "post_api_v1_rules": {
+  "create_rule": {
     "method": "POST",
     "path": "/api/v1/rule/",
     "client": "createRule"
   },
-  "get_api_v1_rules_id": {
+  "show_rule": {
     "method": "GET",
     "path": "/api/v1/rule/{rule_id}",
     "client": "getRule"
   },
-  "delete_api_v1_rules_id": {
+  "remove_rule": {
     "method": "DELETE",
     "path": "/api/v1/rule/{rule_id}",
     "client": "deleteRule"
   },
-  "patch_api_v1_rules_rule_id": {
+  "update_rule": {
     "method": "PATCH",
     "path": "/api/v1/rule/{rule_id}",
     "client": "patchRule"
   },
-  "post_api_v1_rules_id_test": {
+  "test_rule": {
     "method": "POST",
     "path": "/api/v1/rule/{rule_id}/test",
     "client": "testRule"
   },
-  "get_api_v1_actions": {
+  "list_actions": {
     "method": "GET",
     "path": "/api/v1/action/",
     "client": "listActions"
   },
-  "post_api_v1_actions": {
+  "create_action": {
     "method": "POST",
     "path": "/api/v1/action/",
     "client": "createAction"
   },
-  "get_api_v1_actions_id": {
+  "show_action": {
     "method": "GET",
     "path": "/api/v1/action/{action_id}",
     "client": "getAction"
   },
-  "delete_api_v1_actions_id": {
+  "remove_action": {
     "method": "DELETE",
     "path": "/api/v1/action/{action_id}",
     "client": "deleteAction"
   },
-  "patch_api_v1_actions_action_id": {
+  "update_action": {
     "method": "PATCH",
     "path": "/api/v1/action/{action_id}",
     "client": "patchAction"
   },
-  "post_api_v1_actions_id_execute": {
+  "execute_action": {
     "method": "POST",
     "path": "/api/v1/action/{action_id}/execute",
     "client": "executeAction"
   },
-  "get_api_v1_executions": {
+  "list_executions": {
     "method": "GET",
     "path": "/api/v1/execution/",
     "client": "listExecutions"
   },
-  "get_api_v1_executions_id": {
+  "show_execution": {
     "method": "GET",
     "path": "/api/v1/execution/{execution_id}",
     "client": "getExecution"
@@ -113,11 +113,6 @@
     "method": "GET",
     "path": "/api/v1/health/ready",
     "client": "getHealthReady"
-  },
-  "get_api_v1_stats": {
-    "method": "GET",
-    "path": "/api/v1/stats/",
-    "client": "getStats"
   },
   "opal_setting_list": {
     "method": "GET",
@@ -158,16 +153,6 @@
     "method": "DELETE",
     "path": "/api/v1/setting/{key}",
     "client": "deleteSetting"
-  },
-  "opal_info_get": {
-    "method": "GET",
-    "path": "/api/v1/info/",
-    "client": "getInfo"
-  },
-  "opal_info_ping": {
-    "method": "GET",
-    "path": "/api/v1/info/ping",
-    "client": "pingInfo"
   },
   "opal_persona_list": {
     "method": "GET",

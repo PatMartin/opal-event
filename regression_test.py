@@ -151,7 +151,7 @@ def t_stats_fields():
         "observed_events",
         "invalid_events",
         "matched_events",
-        "executions_succeeded",
+        "executions_completed",
         "executions_failed",
         "executions_dropped",
         "queue_depth",

@@ -119,7 +119,7 @@ def test_zmq_envelope_depth_enforced_and_audited(tmp_path):
         s.connect(cfg["zeromq"]["publishers"])
         time.sleep(0.5)
         topic = _topic()
-        stats0 = client.get("/api/v1/stats/").json()
+        stats0 = client.get("/api/v1/health/").json()["details"]["stats"]
 
         def send(depth):
             s.send_multipart([topic.encode(), json.dumps({
@@ -132,7 +132,7 @@ def test_zmq_envelope_depth_enforced_and_audited(tmp_path):
         send("bad")   # invalid metadata -> dropped as malformed
         send(15)      # under limit -> dispatches
 
-        stats = client.get("/api/v1/stats/").json()
+        stats = client.get("/api/v1/health/").json()["details"]["stats"]
         assert stats.get("chain_depth_rejections", 0) - stats0.get("chain_depth_rejections", 0) == 1
         assert stats["invalid_events"] - stats0["invalid_events"] == 1
         events = [e for e in client.get("/api/v1/event/").json() if e["topic"] == topic]

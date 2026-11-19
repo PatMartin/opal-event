@@ -114,7 +114,7 @@ def wait_ready(base_url: str) -> None:
 
 
 def stats(client: httpx.Client, base_url: str) -> dict:
-    return client.get(f"{base_url}/api/v1/stats/", timeout=10).json()
+    return client.get(f"{base_url}/api/v1/health/", timeout=10).json()["details"]["stats"]
 
 
 def _delete_rule(client: httpx.Client, base_url: str, rule_id: str) -> None:
@@ -208,16 +208,16 @@ def run_scenario(client, pub, base_url, name, *, mode, rate_per_min, duration_s,
     # Then wait (bounded) for the executions THIS scenario triggered to reach terminal state, so
     # the next scenario's before-snapshot is never polluted by still-running leftovers.
     expected_exec = after["matched_events"] - before["matched_events"]
-    exec_done = (after["executions_succeeded"] + after["executions_failed"] + after["executions_dropped"]) - (
-        before["executions_succeeded"] + before["executions_failed"] + before["executions_dropped"]
+    exec_done = (after["executions_completed"] + after["executions_failed"] + after["executions_dropped"]) - (
+        before["executions_completed"] + before["executions_failed"] + before["executions_dropped"]
     )
     exec_complete = True
     t_exec0 = time.monotonic()
     while exec_done < expected_exec and time.monotonic() - t_exec0 < DRAIN_TIMEOUT_S:
         time.sleep(0.25)
         after = stats(client, base_url)
-        exec_done = (after["executions_succeeded"] + after["executions_failed"] + after["executions_dropped"]) - (
-            before["executions_succeeded"] + before["executions_failed"] + before["executions_dropped"]
+        exec_done = (after["executions_completed"] + after["executions_failed"] + after["executions_dropped"]) - (
+            before["executions_completed"] + before["executions_failed"] + before["executions_dropped"]
         )
     exec_complete = exec_done >= expected_exec
     mins = duration_s / 60 or 1

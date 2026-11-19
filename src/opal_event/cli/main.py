@@ -197,7 +197,7 @@ def publish(
         body["source"] = source
     if timestamp:
         body["timestamp"] = timestamp
-    resp = _call(ctx, "post_api_v1_events", json=body)
+    resp = _call(ctx, "publish_event", json=body)
     _emit(ctx, resp.json())
 
 
@@ -206,16 +206,16 @@ def _list_events(
 ) -> None:
     raw_params = dict(limit=limit, topic=topic, source=source, **{"from": event_from, "to": event_to})
     params = {k: v for k, v in raw_params.items() if v is not None}
-    data = _call(ctx, "get_api_v1_events", params=params).json()
+    data = _call(ctx, "list_events", params=params).json()
     _emit(ctx, data, columns=["id", "topic", "source", "timestamp"])
 
 
 def _show_event(ctx: typer.Context, event_id: str) -> None:
-    _emit(ctx, _call(ctx, "get_api_v1_events_id", path_params={"event_id": event_id}).json())
+    _emit(ctx, _call(ctx, "show_event", path_params={"event_id": event_id}).json())
 
 
 def _remove_event(ctx: typer.Context, event_id: str) -> None:
-    _call(ctx, "delete_api_v1_events_id", path_params={"event_id": event_id})
+    _call(ctx, "remove_event", path_params={"event_id": event_id})
     if _state(ctx).json_output:
         typer.echo(json.dumps({"deleted": event_id}))
     else:
@@ -223,7 +223,7 @@ def _remove_event(ctx: typer.Context, event_id: str) -> None:
 
 
 def _clear_events(ctx: typer.Context) -> None:
-    _call(ctx, "delete_api_v1_events")
+    _call(ctx, "clear_events")
     if _state(ctx).json_output:
         typer.echo(json.dumps({"cleared": True}))
     else:
@@ -231,7 +231,7 @@ def _clear_events(ctx: typer.Context) -> None:
 
 
 def _topics(ctx: typer.Context) -> None:
-    _emit(ctx, _call(ctx, "get_api_v1_topics").json()["items"])
+    _emit(ctx, _call(ctx, "list_topics").json()["items"])
 
 
 @event_app.command("list")
@@ -308,18 +308,6 @@ def history_topics(ctx: typer.Context) -> None:
     _topics(ctx)
 
 
-@info_app.command("get")
-def info_get(ctx: typer.Context) -> None:
-    """Get service identity (name, version, API contract version)."""
-    _emit(ctx, _call(ctx, "opal_info_get").json())
-
-
-@info_app.command("ping")
-def info_ping(ctx: typer.Context) -> None:
-    """Liveness ping (GET /api/v1/info/ping; no auth required)."""
-    _emit(ctx, _call(ctx, "opal_info_ping").json())
-
-
 @info_app.command("health")
 def info_health(
     ctx: typer.Context,
@@ -333,19 +321,13 @@ def info_health(
     _emit(ctx, _call(ctx, op).json())
 
 
-@info_app.command("stats")
-def info_stats(ctx: typer.Context) -> None:
-    """Get event and execution counters."""
-    _emit(ctx, _call(ctx, "get_api_v1_stats").json())
-
-
 # -- `opal event rules` --------------------------------------------------------------------------
 
 
 @rules_app.command("list")
 def rules_list(ctx: typer.Context) -> None:
     """List rules (complete bounded catalog; no pagination)."""
-    data = _call(ctx, "get_api_v1_rules").json()
+    data = _call(ctx, "list_rules").json()
     _emit(ctx, data, columns=["id", "enabled", "topic", "actions"])
 
 
@@ -358,13 +340,13 @@ def rules_create(
     """Create a rule. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
     revision = _current_revision(ctx)
-    _emit(ctx, _call(ctx, "post_api_v1_rules", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "create_rule", json=body, headers={"If-Match": revision}).json())
 
 
 @rules_app.command("get")
 def rules_get(ctx: typer.Context, rule_id: str = typer.Argument(...)) -> None:
     """Get a rule."""
-    _emit(ctx, _call(ctx, "get_api_v1_rules_id", path_params={"rule_id": rule_id}).json())
+    _emit(ctx, _call(ctx, "show_rule", path_params={"rule_id": rule_id}).json())
 
 
 @rules_app.command("delete")
@@ -374,8 +356,8 @@ def rules_delete(
     if_match: str = typer.Option(None, "--if-match", help="Strong ETag precondition (default: auto-fetched)"),
 ) -> None:
     """Delete a rule. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
-    revision = if_match or _resource_etag(ctx, "get_api_v1_rules_id", {"rule_id": rule_id})
-    _call(ctx, "delete_api_v1_rules_id", path_params={"rule_id": rule_id}, headers={"If-Match": revision})
+    revision = if_match or _resource_etag(ctx, "show_rule", {"rule_id": rule_id})
+    _call(ctx, "remove_rule", path_params={"rule_id": rule_id}, headers={"If-Match": revision})
     typer.echo(f"deleted rule {rule_id}")
 
 
@@ -389,11 +371,11 @@ def rules_update(
 ) -> None:
     """Partially update a rule. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
-    revision = if_match or _resource_etag(ctx, "get_api_v1_rules_id", {"rule_id": rule_id})
+    revision = if_match or _resource_etag(ctx, "show_rule", {"rule_id": rule_id})
     _emit(
         ctx,
         _call(
-            ctx, "patch_api_v1_rules_rule_id", path_params={"rule_id": rule_id}, json=body, headers={"If-Match": revision}
+            ctx, "update_rule", path_params={"rule_id": rule_id}, json=body, headers={"If-Match": revision}
         ).json(),
     )
 
@@ -404,7 +386,7 @@ def rules_test(
 ) -> None:
     """Evaluate a rule against a sample event without executing any action."""
     body = {"event": _event_input(event_json)}
-    _emit(ctx, _call(ctx, "post_api_v1_rules_id_test", path_params={"rule_id": rule_id}, json=body).json())
+    _emit(ctx, _call(ctx, "test_rule", path_params={"rule_id": rule_id}, json=body).json())
 
 
 # -- `opal event actions` ------------------------------------------------------------------------
@@ -413,7 +395,7 @@ def rules_test(
 @actions_app.command("list")
 def actions_list(ctx: typer.Context) -> None:
     """List actions (complete bounded catalog; no pagination)."""
-    data = _call(ctx, "get_api_v1_actions").json()
+    data = _call(ctx, "list_actions").json()
     _emit(ctx, data, columns=["id", "type", "enabled"])
 
 
@@ -426,13 +408,13 @@ def actions_create(
     """Create an action. Requires a matching If-Match (428 if omitted server-side; auto-fetched here)."""
     body = _read_payload(json_str, file)
     revision = _current_revision(ctx)
-    _emit(ctx, _call(ctx, "post_api_v1_actions", json=body, headers={"If-Match": revision}).json())
+    _emit(ctx, _call(ctx, "create_action", json=body, headers={"If-Match": revision}).json())
 
 
 @actions_app.command("get")
 def actions_get(ctx: typer.Context, action_id: str = typer.Argument(...)) -> None:
     """Get an action."""
-    _emit(ctx, _call(ctx, "get_api_v1_actions_id", path_params={"action_id": action_id}).json())
+    _emit(ctx, _call(ctx, "show_action", path_params={"action_id": action_id}).json())
 
 
 @actions_app.command("delete")
@@ -442,8 +424,8 @@ def actions_delete(
     if_match: str = typer.Option(None, "--if-match", help="Strong ETag precondition (default: auto-fetched)"),
 ) -> None:
     """Delete an unused action (409 if referenced by a rule; 428/412 if If-Match is missing/stale)."""
-    revision = if_match or _resource_etag(ctx, "get_api_v1_actions_id", {"action_id": action_id})
-    _call(ctx, "delete_api_v1_actions_id", path_params={"action_id": action_id}, headers={"If-Match": revision})
+    revision = if_match or _resource_etag(ctx, "show_action", {"action_id": action_id})
+    _call(ctx, "remove_action", path_params={"action_id": action_id}, headers={"If-Match": revision})
     typer.echo(f"deleted action {action_id}")
 
 
@@ -457,12 +439,12 @@ def actions_update(
 ) -> None:
     """Partially update an action. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
     body = _read_payload(json_str, file)
-    revision = if_match or _resource_etag(ctx, "get_api_v1_actions_id", {"action_id": action_id})
+    revision = if_match or _resource_etag(ctx, "show_action", {"action_id": action_id})
     _emit(
         ctx,
         _call(
             ctx,
-            "patch_api_v1_actions_action_id",
+            "update_action",
             path_params={"action_id": action_id},
             json=body,
             headers={"If-Match": revision},
@@ -484,7 +466,7 @@ def actions_execute(
     headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
     _emit(
         ctx,
-        _call(ctx, "post_api_v1_actions_id_execute", path_params={"action_id": action_id}, json=body, headers=headers).json(),
+        _call(ctx, "execute_action", path_params={"action_id": action_id}, json=body, headers=headers).json(),
     )
 
 
@@ -503,14 +485,14 @@ def executions_list(
     """List executions."""
     raw_params = dict(limit=limit, status=status, rule_id=rule_id, action_id=action_id, event_id=event_id)
     params = {k: v for k, v in raw_params.items() if v is not None}
-    data = _call(ctx, "get_api_v1_executions", params=params).json()
+    data = _call(ctx, "list_executions", params=params).json()
     _emit(ctx, data, columns=["id", "action_id", "status", "trigger", "created_at"])
 
 
 @executions_app.command("get")
 def executions_get(ctx: typer.Context, execution_id: str = typer.Argument(...)) -> None:
     """Get an execution result."""
-    _emit(ctx, _call(ctx, "get_api_v1_executions_id", path_params={"execution_id": execution_id}).json())
+    _emit(ctx, _call(ctx, "show_execution", path_params={"execution_id": execution_id}).json())
 
 
 # -- `opal event settings` -----------------------------------------------------------------------

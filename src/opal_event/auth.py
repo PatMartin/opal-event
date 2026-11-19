@@ -42,7 +42,6 @@ def _route_path(request: Request) -> str | None:
 _PUBLISH_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("POST", "/api/v1/event/"),
-        ("GET", "/api/v1/info/"),
         ("GET", "/api/v1/health/"),
         ("GET", "/api/v1/health/live"),
         ("GET", "/api/v1/health/ready"),

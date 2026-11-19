@@ -79,7 +79,6 @@ class TestExecuteScopeDenied:
             ("post", "/api/v1/event/"),
             ("get", "/api/v1/event/"),
             ("delete", "/api/v1/event/"),
-            ("get", "/api/v1/stats/"),
         ],
     )
     def test_admin_operations_forbidden(self, scoped_client, method, path) -> None:

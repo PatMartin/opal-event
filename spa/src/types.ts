@@ -91,17 +91,31 @@ export interface Execution {
 export type ListExecutions = Execution[];
 
 export interface Health {
-  status: "ok" | "degraded";
-  broker_running: boolean;
-  database_ready: boolean;
-  pending_restart: boolean;
+  name: string;
+  version: string;
+  api_version: string;
+  status: "ok" | "degraded" | "error";
+  live: boolean;
+  ready: boolean;
+  details: {
+    broker_running?: boolean;
+    database_ready?: boolean;
+    executor_healthy?: boolean;
+    stats?: Stats;
+    [key: string]: unknown;
+  };
+  active_profile_id?: string | null;
+  checked_at?: string;
+  uptime_seconds?: number;
+  pending_restart?: boolean | string[];
+  pending_restart_fields?: string[];
 }
 
 export interface Stats {
   observed_events: number;
   invalid_events: number;
   matched_events: number;
-  executions_succeeded: number;
+  executions_completed: number;
   executions_failed: number;
   executions_dropped: number;
   queue_depth: number;
@@ -161,17 +175,6 @@ export interface PersonaUpdate {
   description?: string | null;
   voice_id?: string | null;
   enabled?: boolean;
-}
-
-export interface ServiceInfo {
-  name: string;
-  version: string;
-  api_version: string;
-  description?: string | null;
-}
-
-export interface LivenessRead {
-  status: "ok";
 }
 
 // ---------------------------------------------------------------------------

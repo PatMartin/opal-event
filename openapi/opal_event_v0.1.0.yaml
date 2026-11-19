@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Opal Event API
-  version: 1.7.1
+  version: '0.1.0'
   description: 'REST management and HTTP event ingress for opal-event-svc. API-first contract, release v1.
 
 
@@ -28,7 +28,7 @@ info:
 
 
     Execution: four worker slots default, bounded queue, overflow drops with execution record and metrics.
-    Independent concurrent actions; no retry, no ordering guarantees. Execution terminal states: succeeded,
+    Independent concurrent actions; no retry, no ordering guarantees. Execution terminal states: completed,
     failed, timed_out, dropped. Subprocess groups are terminated on timeout as OS supports. Output capture
     is truncated/redacted; event payloads are untrusted; logging must redact configured secrets.
 
@@ -52,8 +52,8 @@ info:
 
 
     OPAL shared conventions: /api/v1 prefix; trailing slash on collection roots; 201+Location for resource
-    creation; 204 for deletion; PATCH for partial updates; portable settings and backup endpoints. Full config
-    PUT remains for complete YAML replacement. Event publication and manual execution retain 202 for best-effort
+    creation; 204 for deletion; PATCH for partial updates; portable settings and configuration snapshot
+    endpoints. `config load` replaces the complete configuration atomically. Event publication and manual execution retain 202 for best-effort
     admission. This revision introduces breaking path changes from /v1.
 
 
@@ -63,7 +63,7 @@ info:
 
 
 
-    OPAL SUITE STANDARD v1.2 (normative)
+    OPAL SUITE STANDARD v2.0.0 (normative)
 
     X-Opal-Session-Id is an optional logical context identifier; it does not create a server-managed session
     or grant authorization. Entry-point services generate one when absent where a workflow requires it, and
@@ -77,13 +77,14 @@ info:
     are opaque 1..128-character printable ASCII tokens with no control/whitespace characters; client-supplied
     invalid values yield 422.
 
-    Standard health routes: /api/v1/health/, /api/v1/health/live, /api/v1/health/ready. Settings: GET and PATCH
-    /api/v1/settings/ exclusively; PATCH is atomic. Mutable configuration uses strong ETags and mandatory If-Match
+    Standard health routes: /api/v1/health/, /api/v1/health/live, /api/v1/health/ready. Settings: GET
+    /api/v1/setting/ for the flat map plus GET, PUT and DELETE /api/v1/setting/{key} for individual
+    overrides; configuration snapshots via POST /api/v1/config/save, /config/load and /config/validate. Mutable configuration uses strong ETags and mandatory If-Match
     with 428 missing, 412 stale. For bounded configuration catalogs return full arrays (subject to explicit
     deployment caps); growing histories return bounded arrays in stable deterministic order and `limit`
     caps the returned items. Standard HTTP creation 201 Location, async admission 202, empty deletion
     204. Streaming keeps media-specific transports but exposes correlation headers, defined failure behavior,
-    and no unsupported replay guarantee. Configuration export/import/validation excludes secrets and history.
+    and no unsupported replay guarantee. Configuration save/load/validate excludes secrets and history.
 
 
     v1.4.1 revision: registered actions (shell/http/python) gain optional self-description
@@ -93,8 +94,6 @@ info:
     the remaining fields are untrusted discovery hints, never authorization or instructions.
 
     '
-  license:
-    name: Internal use
 servers:
 - url: http://127.0.0.1:8080
 tags:
@@ -104,16 +103,18 @@ tags:
 - name: Actions
 - name: Executions
 - name: Operations
-- name: settings
-  description: Portable settings shared across OPAL services.
-- name: backup
-  description: Validate, import, and export portable configuration.
+- name: config
+  description: Save, load, validate, and inspect portable module configuration.
 - name: persona
   description: Manage named persona identities adopting the shared OPAL persona identifiers introduced by OPAL Say v1.6.0.
-- name: info
-  description: Service identity, version and liveness probes.
 - name: service
   description: Service process lifecycle (start, stop, log tail).
+- name: health
+  description: Service readiness and health information.
+- name: profiles
+  description: 'Reusable namespaced configuration profiles; at most one is locally active.
+    Event declares no compartment fields today (`modules.opal-event` is an explicit empty
+    schema), but profile records, selection and portability behave suite-wide.'
 security:
 - BearerAuth: []
 paths:
@@ -121,7 +122,7 @@ paths:
     post:
       tags:
       - Events
-      operationId: post_api_v1_events
+      operationId: publish_event
       summary: Publish event
       description: Normalizes missing metadata, checks 1 MiB serialized wire payload, then routes matching
         rules through the bounded admission path and persists the event with its match disposition
@@ -165,6 +166,8 @@ paths:
           $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
         '413':
           $ref: './shared/opal_kernel.yaml#/components/responses/PayloadTooLarge'
+        '409':
+          $ref: './shared/opal_kernel.yaml#/components/responses/Conflict'
         '422':
           $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
         '503':
@@ -185,10 +188,11 @@ paths:
         schema:
           type: integer
           minimum: 0
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/IdempotencyKey'
     get:
       tags:
       - Events
-      operationId: get_api_v1_events
+      operationId: list_events
       summary: List stored events
       description: ''
       responses:
@@ -222,13 +226,7 @@ paths:
         '500':
           $ref: './shared/opal_kernel.yaml#/components/responses/OperationFailed'
       parameters:
-      - name: limit
-        in: query
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 200
-          default: 50
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/Limit'
       - name: topic
         in: query
         schema:
@@ -250,7 +248,7 @@ paths:
     delete:
       tags:
       - Events
-      operationId: delete_api_v1_events
+      operationId: clear_events
       summary: Clear all stored events
       description: Clear all events from all topics.
       responses:
@@ -288,7 +286,7 @@ paths:
     get:
       tags:
       - Events
-      operationId: get_api_v1_events_id
+      operationId: show_event
       summary: Get stored event
       description: ''
       responses:
@@ -331,7 +329,7 @@ paths:
     delete:
       tags:
       - Events
-      operationId: delete_api_v1_events_id
+      operationId: remove_event
       summary: Delete stored event
       description: Delete an individual event given its ID.
       responses:
@@ -376,7 +374,7 @@ paths:
     get:
       tags:
       - Topics
-      operationId: get_api_v1_topics
+      operationId: list_topics
       summary: List observed topics
       description: '
 
@@ -428,7 +426,7 @@ paths:
     get:
       tags:
       - Rules
-      operationId: get_api_v1_rules
+      operationId: list_rules
       summary: List rules
       description: '
 
@@ -474,7 +472,7 @@ paths:
     post:
       tags:
       - Rules
-      operationId: post_api_v1_rules
+      operationId: create_rule
       summary: Create rule
       description: ''
       responses:
@@ -532,7 +530,7 @@ paths:
     get:
       tags:
       - Rules
-      operationId: get_api_v1_rules_id
+      operationId: show_rule
       summary: Get rule
       description: ''
       responses:
@@ -579,7 +577,7 @@ paths:
     delete:
       tags:
       - Rules
-      operationId: delete_api_v1_rules_id
+      operationId: remove_rule
       summary: Delete rule
       description: ''
       responses:
@@ -623,7 +621,7 @@ paths:
     patch:
       tags:
       - Rules
-      operationId: patch_api_v1_rules_rule_id
+      operationId: update_rule
       summary: Partially update rule
       description: Atomically update the selected fields of a registered resource and persist to YAML. Omitted
         fields are unchanged. Nested objects and arrays are replaced, not merged. ID and action type cannot
@@ -685,7 +683,7 @@ paths:
     post:
       tags:
       - Rules
-      operationId: post_api_v1_rules_id_test
+      operationId: test_rule
       summary: Evaluate rule without execution
       description: ''
       responses:
@@ -740,7 +738,7 @@ paths:
     get:
       tags:
       - Actions
-      operationId: get_api_v1_actions
+      operationId: list_actions
       summary: List actions
       description: '
 
@@ -786,7 +784,7 @@ paths:
     post:
       tags:
       - Actions
-      operationId: post_api_v1_actions
+      operationId: create_action
       summary: Create action
       description: ''
       responses:
@@ -844,7 +842,7 @@ paths:
     get:
       tags:
       - Actions
-      operationId: get_api_v1_actions_id
+      operationId: show_action
       summary: Get action
       description: ''
       responses:
@@ -891,7 +889,7 @@ paths:
     delete:
       tags:
       - Actions
-      operationId: delete_api_v1_actions_id
+      operationId: remove_action
       summary: Delete unused action
       description: 409 if referenced by a rule; delete or update referencing rules first.
       responses:
@@ -935,7 +933,7 @@ paths:
     patch:
       tags:
       - Actions
-      operationId: patch_api_v1_actions_action_id
+      operationId: update_action
       summary: Partially update action
       description: Atomically update the selected fields of a registered resource and persist to YAML. Omitted
         fields are unchanged. Nested objects and arrays are replaced, not merged. ID and action type cannot
@@ -997,7 +995,7 @@ paths:
     post:
       tags:
       - Actions
-      operationId: post_api_v1_actions_id_execute
+      operationId: execute_action
       summary: Execute registered action manually
       description: Enqueue one independent execution. Queue-full yields execution record status=dropped and
         HTTP 202, never an automatic retry. Registered and enabled action only. When the action declares
@@ -1079,7 +1077,7 @@ paths:
     get:
       tags:
       - Executions
-      operationId: get_api_v1_executions
+      operationId: list_executions
       summary: List executions
       description: '
 
@@ -1133,15 +1131,7 @@ paths:
         in: query
         schema:
           type: string
-      - name: limit
-        in: query
-        required: false
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 500
-          default: 100
-        description: Maximum items to return.
+      - $ref: './shared/opal_kernel.yaml#/components/parameters/Limit'
     parameters:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
@@ -1151,7 +1141,7 @@ paths:
     get:
       tags:
       - Executions
-      operationId: get_api_v1_executions_id
+      operationId: show_execution
       summary: Get execution result
       description: ''
       responses:
@@ -1198,48 +1188,6 @@ paths:
     - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
   /api/v1/health/:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/health'
-  /api/v1/stats/:
-    get:
-      tags:
-      - Operations
-      operationId: get_api_v1_stats
-      summary: Get event and execution counters
-      description: ''
-      responses:
-        '200':
-          description: Successful operation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Stats'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-        '400':
-          $ref: './shared/opal_kernel.yaml#/components/responses/BadRequest'
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '404':
-          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
-        '409':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Conflict'
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-        '500':
-          $ref: './shared/opal_kernel.yaml#/components/responses/OperationFailed'
-    parameters:
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
   /api/v1/profile/:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/profiles_collection'
   /api/v1/profile/{profile_id}:
@@ -1248,351 +1196,30 @@ paths:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/profile_activate'
   /api/v1/setting/:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/settings_collection'
-    x-opal-cli:
-      get:
-        parent: config
-        group: setting
-        command: list
-
-        aliases:
-        - setting get
-      patch:
-        parent: config
-        group: setting
-        command: update
-
-        aliases:
-        - config setting patch
   /api/v1/setting/{key}:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/settings_key'
-    x-opal-cli:
-      get:
-        parent: config
-        group: setting
-        command: show
-
-        aliases:
-        - setting get-key
-      put:
-        parent: config
-        group: setting
-        command: set
-
-        aliases:
-        - setting set-key
-      delete:
-        parent: config
-        group: setting
-        command: remove
-
-        aliases:
-        - setting reset-key
-  /api/v1/info/:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/info'
-  /api/v1/info/ping:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/info_ping'
+  /api/v1/config/save:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/config_save'
+  /api/v1/config/load:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/config_load'
+  /api/v1/config/validate:
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/config_validate'
   /api/v1/health/live:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/health_live'
   /api/v1/health/ready:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/health_ready'
-  /api/v1/backup/list:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_list'
-  /api/v1/backup/create:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_create'
-  /api/v1/backup/download/{filename}:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_download'
-  /api/v1/backup/restore/{filename}:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_restore'
-  /api/v1/backup/{filename}:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_delete'
-  /api/v1/backup/export:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_export'
-  /api/v1/backup/import:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_import'
-  /api/v1/backup/validate:
-    $ref: './shared/opal_kernel.yaml#/components/pathItems/backup_validate_post'
   /api/v1/service/start:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/service_start'
-    x-opal-cli:
-      post:
-        group: service
-        command: start
   /api/v1/service/stop:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/service_stop'
-    x-opal-cli:
-      post:
-        group: service
-        command: stop
   /api/v1/service/log:
     $ref: './shared/opal_kernel.yaml#/components/pathItems/service_log'
-    x-opal-cli:
-      get:
-        group: service
-        command: log
   /api/v1/persona/:
-    get:
-      tags:
-      - persona
-      summary: List Personas
-      description: List registered OPAL persona. A persona is a named automation identity so rules and actions attribute work to a consistent character; may bind an OPAL Say voice identifier for spoken notifications. Return the complete bounded configuration collection; pagination is not supported.
-      operationId: opal_persona_list
-      parameters:
-      - name: enabled
-        in: query
-        required: false
-        description: If supplied, filter by enabled state.
-        schema:
-          type: boolean
-      responses:
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '200':
-          description: Registered persona.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PersonaRead'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-            ETag:
-              description: Strong revision of logical portable configuration
-              schema:
-                type: string
-
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-    post:
-      tags:
-      - persona
-      summary: Create Persona
-      description: Register a persona. If `voice_id` is supplied, it names an OPAL Say voice identifier; this service does not validate voice existence locally. Strong If-Match is mandatory.
-      operationId: opal_persona_create
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PersonaCreate'
-      responses:
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '201':
-          description: Persona created.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PersonaRead'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-            Location:
-              description: Resource URL
-              schema:
-                type: string
-        '409':
-          description: The requested `persona_id` is already registered.
-          content:
-            application/json:
-              schema:
-                $ref: './shared/opal_kernel.yaml#/components/schemas/OpalError'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-        '412':
-          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
-        '428':
-          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
-      parameters:
-      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
-    parameters:
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/persona_collection'
   /api/v1/persona/{persona_id}/validate:
-    post:
-      summary: Validate Persona
-      description: Check that a persona is registered and enabled and that its declared bindings can be resolved.
-      operationId: opal_persona_validate
-      tags:
-      - persona
-      responses:
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '404':
-          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
-        '200':
-          description: Persona validation report.
-          content:
-            application/json:
-              schema:
-                $ref: './shared/opal_kernel.yaml#/components/schemas/OpalValidationReport'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-    parameters:
-    - $ref: '#/components/parameters/PersonaId'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/persona_validate'
   /api/v1/persona/{persona_id}:
-    parameters:
-    - $ref: '#/components/parameters/PersonaId'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalSessionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalTransactionIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalRequestIdParameter'
-    - $ref: './shared/opal_kernel.yaml#/components/parameters/OpalCausationIdParameter'
-    get:
-      tags:
-      - persona
-      summary: Get Persona
-      description: Return one registered persona.
-      operationId: opal_persona_get
-      responses:
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '200':
-          description: Persona.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PersonaRead'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-            ETag:
-              description: Strong revision of logical portable configuration
-              schema:
-                type: string
-
-        '404':
-          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-    patch:
-      tags:
-      - persona
-      summary: Update Persona
-      description: Partially update a persona.
-      operationId: opal_persona_patch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PersonaUpdate'
-      responses:
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '200':
-          description: Updated persona.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PersonaRead'
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-
-        '404':
-          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-        '412':
-          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
-        '428':
-          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
-      parameters:
-      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
-    delete:
-      tags:
-      - persona
-      summary: Delete Persona
-      description: Remove a persona registration. Strong If-Match is mandatory.
-      operationId: opal_persona_delete
-      responses:
-        '401':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Unauthorized'
-        '403':
-          $ref: './shared/opal_kernel.yaml#/components/responses/Forbidden'
-        '204':
-          description: Persona removed.
-          headers:
-            X-Opal-Session-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalSessionIdHeader'
-            X-Opal-Transaction-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalTransactionIdHeader'
-            X-Opal-Request-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalRequestIdHeader'
-            X-Opal-Causation-Id:
-              $ref: './shared/opal_kernel.yaml#/components/headers/OpalCausationIdHeader'
-
-        '404':
-          $ref: './shared/opal_kernel.yaml#/components/responses/NotFound'
-        '422':
-          $ref: './shared/opal_kernel.yaml#/components/responses/UnprocessableEntity'
-        '412':
-          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionFailed'
-        '428':
-          $ref: './shared/opal_kernel.yaml#/components/responses/PreconditionRequired'
-      parameters:
-      - $ref: './shared/opal_kernel.yaml#/components/parameters/IfMatch'
+    $ref: './shared/opal_kernel.yaml#/components/pathItems/persona_item'
 components:
   parameters:
     PersonaId:
@@ -2071,10 +1698,13 @@ components:
           type: string
         status:
           type: string
+          description: 'Shared lifecycle states (OpalLifecycleStatus); cancelled is unused
+            because executions cannot be cancelled, and dropped is EVENT-specific: the record
+            exists but the action was lost to queue saturation or rejected before dispatch.'
           enum:
           - queued
           - running
-          - succeeded
+          - completed
           - failed
           - timed_out
           - dropped
@@ -2204,16 +1834,10 @@ components:
         $ref: '#/components/schemas/Execution'
       description: Bounded list of executions, newest first; `limit` caps the returned items.
     TopicList:
-      type: object
+      type: array
       description: Observed topic names; incomplete when persistence is off.
-      properties:
-        items:
-          type: array
-          items:
-            type: string
-      additionalProperties: false
-      required:
-      - items
+      items:
+        type: string
     Stats:
       type: object
       description: Counter snapshot since service start.
@@ -2228,7 +1852,7 @@ components:
         matched_events:
           type: integer
           minimum: 0
-        executions_succeeded:
+        executions_completed:
           type: integer
           minimum: 0
         executions_failed:
@@ -2260,7 +1884,7 @@ components:
       - observed_events
       - invalid_events
       - matched_events
-      - executions_succeeded
+      - executions_completed
       - executions_failed
       - executions_dropped
       - queue_depth
@@ -2507,14 +2131,8 @@ components:
       - $ref: '#/components/schemas/ShellActionPatch'
       - $ref: '#/components/schemas/HttpActionPatch'
       - $ref: '#/components/schemas/PythonActionPatch'
-    PersonaCreate:
-      $ref: './shared/opal_kernel.yaml#/components/schemas/OpalPersonaCreate'
-    PersonaUpdate:
-      $ref: './shared/opal_kernel.yaml#/components/schemas/OpalPersonaUpdate'
-    PersonaRead:
-      $ref: './shared/opal_kernel.yaml#/components/schemas/OpalPersonaRead'
 x-opal-context-standard:
-  version: '1.2'
+  version: '2.0.0'
   headers:
   - X-Opal-Session-Id
   - X-Opal-Transaction-Id
@@ -2524,7 +2142,8 @@ x-opal-context-standard:
   id_format: opaque-printable-ascii-1-to-128
   transaction_atomicity: false
   events:
-    $ref: './shared/opal_kernel.yaml#/x-opal-event-envelope'
+    envelope:
+      $ref: './shared/opal_kernel.yaml#/x-opal-event-envelope'
     metadata_schema_version: '1.0'
   pagination:
     history: none
@@ -2542,7 +2161,7 @@ x-opal-authorization:
   description: Least-privilege scope model for EVENT access. BearerAuth authenticates;
     scopes authorize. 401 means missing or invalid credentials; 403 means authenticated
     but insufficient scope. Credentials are supplied via token_env and never appear in
-    configuration export, import, backup bundles, or log output.
+    configuration snapshots or log output.
   scopes:
     actions:read:
       description: Discover registered actions and topics.
@@ -2573,10 +2192,11 @@ x-opal-authorization:
       - DELETE /api/v1/rule/{rule_id}
       - POST /api/v1/rule/{rule_id}/test
     settings:write:
-      description: Change settings, credentials, or configuration backups.
+      description: Change settings or load configuration snapshots.
       permits:
-      - PATCH /api/v1/setting/
-      - POST /api/v1/backup/import
+      - PUT /api/v1/setting/{key}
+      - DELETE /api/v1/setting/{key}
+      - POST /api/v1/config/load
   principals:
     think:
       description: OPAL Think's least-privilege principal. Discovers enabled actions,
@@ -2596,7 +2216,7 @@ x-opal-authorization:
       scope enforcement is intended for non-loopback clients. Loopback access is
       administrative and is not a permission-escalation vector.
     credential_handling: Tokens are configured via token_env; no credential material is
-      exposed through configuration export/import, backup bundles, or log output.
+      exposed through configuration snapshots or log output.
     authenticated_but_not_permitted: '403'
     credentials: correlation headers are transport context, never authorization credentials
     secrets: secret values must not appear in responses, exports, or error details
@@ -2604,3 +2224,38 @@ x-opal-authorization:
       actions:read, actions:execute, executions:read cannot create/edit/delete actions,
       manage rules, change settings or credentials, escalate its own permissions, or
       bypass endpoint/destination restrictions.
+x-opal-profile-namespace:
+  compartment: opal-event
+  schema: './shared/opal_kernel.yaml#/components/schemas/OpalEventProfileNamespace'
+  patch_schema: './shared/opal_kernel.yaml#/components/schemas/OpalEventProfileNamespacePatch'
+  description: >-
+    Declares this module's compartment key in namespaced profiles and the
+    schemas that validate it. Event declares no profile-specific defaults; the
+    compartment is an explicit empty closed schema that preserves the
+    registered namespace for future fields. See docs/PROFILE_MIGRATION.md.
+x-opal-health-details:
+  version: '1.0'
+  description: >-
+    Module-defined members of OpalHealthReport.details. Event reports its
+    event and execution counters under `stats` - the payload formerly
+    served by the retired /api/v1/stats/ route.
+  members:
+    stats:
+      $ref: '#/components/schemas/Stats'
+x-opal-snapshot:
+  version: '1.0'
+  module: opal-event
+  format_versions:
+  - '1.0.0'
+  resources:
+  - profiles
+  - personas
+  - rules
+  - actions
+  description: >-
+    Declares the canonical module identity and resource sections carried in this module's
+    configuration snapshots. `config load`/`config validate` validate `snapshot` against the shared
+    `OpalConfigSnapshot` envelope and the declared `module` identity and resource
+    sections; wrong-module, unsupported-version, and unknown-section snapshots are
+    rejected. Snapshots carry persistent desired configuration only:
+    profiles, personas, rules, actions; never runtime history, sessions, streams, binaries, or secrets.

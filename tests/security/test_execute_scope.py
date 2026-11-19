@@ -72,7 +72,7 @@ class TestExecuteScopeDenied:
             ("post", "/api/v1/rule/"),
             ("post", "/api/v1/rule/front_door_alert/test"),
             ("get", "/api/v1/setting/"),
-            ("patch", "/api/v1/setting/"),
+            ("put", "/api/v1/setting/execution.queue_size"),
             ("get", "/api/v1/backup/export"),
             ("post", "/api/v1/backup/import"),
             ("post", "/api/v1/backup/validate"),

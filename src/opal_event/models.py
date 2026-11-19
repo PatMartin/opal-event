@@ -457,14 +457,21 @@ class HealthReport(Strict):
 
 
 class SettingRead(Strict):
-    """One portable setting key/value pair (kernel ``SettingRead``): ``key`` is a dotted path in
-    the portable settings map, ``value`` the live value, ``default`` the schema default, and
-    ``is_default`` whether the live value equals that default."""
+    """Kernel ``SettingRead`` (v0.1.0): one setting record with effective/configured/default
+    values plus provenance metadata (``source``, ``has_override``, ``is_default``,
+    ``restart_required``, ``pending_restart``, structured ``warnings``)."""
 
     key: str
     value: Any = None
+    configured_value: Any = None
+    updated_at: str | None = None
     default: Any = None
+    has_override: bool = False
     is_default: bool = True
+    source: Literal["default", "persisted", "dotenv", "environment"] = "default"
+    restart_required: bool = False
+    pending_restart: bool = False
+    warnings: list[dict[str, Any]] | None = None
 
 
 class SettingUpdate(Strict):

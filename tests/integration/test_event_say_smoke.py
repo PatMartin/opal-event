@@ -13,6 +13,7 @@ Two variants:
 Prereqs for the live variant: `uvicorn "opal_say.__main__:..."`/`opal-say-svc` on a free
 port with the piper or kokoro extra installed and a voice + profile configured.
 """
+
 import math
 import os
 import struct
@@ -33,9 +34,7 @@ RATE = 22050
 
 def _make_wav(path: Path, seconds: float = 0.25) -> None:
     n = int(RATE * seconds)
-    frames = b"".join(
-        struct.pack("<h", int(20000 * math.sin(2 * math.pi * 440 * i / RATE))) for i in range(n)
-    )
+    frames = b"".join(struct.pack("<h", int(20000 * math.sin(2 * math.pi * 440 * i / RATE))) for i in range(n))
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -66,24 +65,37 @@ class _SayStub(BaseHTTPRequestHandler):
 def _service(tmp_path, say_url, wav_out):
     cfg = base_config(
         tmp_path,
-        actions=[{
-            "id": "speak", "type": "python", "enabled": True,
-            "module": "opal_event.plugins.say_request", "function": "request_speech",
-            "timeout_seconds": 30,
-        }],
-        rules=[{
-            "id": "say_rule", "enabled": True, "topic": "say.request", "conditions": [],
-            "actions": ["speak"],
-        }],
+        actions=[
+            {
+                "id": "speak",
+                "type": "python",
+                "enabled": True,
+                "module": "opal_event.plugins.say_request",
+                "function": "request_speech",
+                "timeout_seconds": 30,
+            }
+        ],
+        rules=[
+            {
+                "id": "say_rule",
+                "enabled": True,
+                "topic": "say.request",
+                "conditions": [],
+                "actions": ["speak"],
+            }
+        ],
     )
     app = create_app(str(write_config(tmp_path, cfg)))
     client = TestClient(app)
     return client, {
         "url": f"{say_url}/api/v1/generate",
         "output": str(wav_out),
-        "body": {"text": "smoke test", "voice_id": os.environ.get("OPAL_SAY_VOICE") or "v1",
-                 "engine_id": os.environ.get("OPAL_SAY_ENGINE") or "fake",
-                 "output_format": "wav"},
+        "body": {
+            "text": "smoke test",
+            "voice_id": os.environ.get("OPAL_SAY_VOICE") or "v1",
+            "engine_id": os.environ.get("OPAL_SAY_ENGINE") or "fake",
+            "output_format": "wav",
+        },
     }
 
 

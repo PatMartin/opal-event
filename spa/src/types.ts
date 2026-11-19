@@ -144,6 +144,9 @@ export interface PortableSettings {
   max_event_bytes: number;
 }
 
+// Kernel OpalSettingsMap (v0.1.0): flat map of registered setting keys to effective values.
+export type SettingsMap = Record<string, unknown>;
+
 export interface RuleTestResult {
   matched: boolean;
   action_ids: string[];

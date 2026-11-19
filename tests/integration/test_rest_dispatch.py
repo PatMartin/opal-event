@@ -2,6 +2,7 @@
 through the bounded entry point, its broker echo can never re-dispatch, and every
 admitted id carries a traceable disposition (executions by event_id incl. queue
 saturation drops, events.matched flag, stats counters)."""
+
 import json
 import time
 import uuid
@@ -17,15 +18,27 @@ from tests.conftest import base_config, write_config
 def _cfg(tmp_path, **overrides):
     return base_config(
         tmp_path,
-        actions=[{
-            "id": "count_action", "type": "shell", "enabled": True, "mode": "exec",
-            "executable": "cmd", "args": ["/c", f"echo 1 >> {tmp_path / 'c.txt'}"],
-            "stdin": "none", "timeout_seconds": 5,
-        }],
-        rules=[{
-            "id": "count_rule", "enabled": True, "topic": "vision.*", "conditions": [],
-            "actions": ["count_action"],
-        }],
+        actions=[
+            {
+                "id": "count_action",
+                "type": "shell",
+                "enabled": True,
+                "mode": "exec",
+                "executable": "cmd",
+                "args": ["/c", f"echo 1 >> {tmp_path / 'c.txt'}"],
+                "stdin": "none",
+                "timeout_seconds": 5,
+            }
+        ],
+        rules=[
+            {
+                "id": "count_rule",
+                "enabled": True,
+                "topic": "vision.*",
+                "conditions": [],
+                "actions": ["count_action"],
+            }
+        ],
         **overrides,
     )
 
@@ -99,17 +112,12 @@ def test_execution_queue_saturation_is_dropped_status(tmp_path):
     cfg["actions"][0]["timeout_seconds"] = 10
     client = _client(tmp_path, cfg)
     with client:
-        receipts = [
-            client.post("/api/v1/event/", json={"topic": "vision.burst", "data": {}}).json()
-            for _ in range(6)
-        ]
+        receipts = [client.post("/api/v1/event/", json={"topic": "vision.burst", "data": {}}).json() for _ in range(6)]
         deadline = time.time() + 20
         statuses = []
         while time.time() < deadline:
             statuses = [
-                e["status"]
-                for r in receipts
-                for e in client.get("/api/v1/execution/", params={"event_id": r["id"]}).json()
+                e["status"] for r in receipts for e in client.get("/api/v1/execution/", params={"event_id": r["id"]}).json()
             ]
             if statuses and all(s in ("completed", "failed", "dropped", "timed_out") for s in statuses):
                 break
@@ -127,10 +135,21 @@ def test_raw_zmq_producer_still_dispatched(tmp_path):
         s.connect(cfg["zeromq"]["publishers"])
         time.sleep(0.5)
         eid = str(uuid.uuid4())
-        s.send_multipart([b"vision.door", json.dumps({
-            "id": eid, "topic": "vision.door", "source": "zmq", "type": "test",
-            "timestamp": "2026-01-01T00:00:00+00:00", "data": {},
-        }).encode()])
+        s.send_multipart(
+            [
+                b"vision.door",
+                json.dumps(
+                    {
+                        "id": eid,
+                        "topic": "vision.door",
+                        "source": "zmq",
+                        "type": "test",
+                        "timestamp": "2026-01-01T00:00:00+00:00",
+                        "data": {},
+                    }
+                ).encode(),
+            ]
+        )
         rows = _wait_execs(client, eid, 1)
         assert len(rows) == 1 and rows[0]["rule_id"] == "count_rule"
         s.close(0)

@@ -10,6 +10,7 @@ reload semantics this module implements.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import logging
 import os
@@ -144,6 +145,13 @@ class ConfigStore:
             return self._revision
 
     @property
+    def raw_at_load(self) -> dict:
+        """Deep copy of the last successfully validated YAML document (persistent desired
+        configuration before environment overlays)."""
+        with self._lock:
+            return copy.deepcopy(self._raw_at_load)
+
+    @property
     def pending_restart(self) -> bool:
         with self._lock:
             return self._pending_restart
@@ -153,11 +161,7 @@ class ConfigStore:
         """Dotted restart-only setting paths whose desired value diverges from the running baseline."""
         with self._lock:
             current = _restart_only_snapshot(self._settings)
-            return [
-                ".".join(path)
-                for path, base_value in self._restart_baseline.items()
-                if current.get(path) != base_value
-            ]
+            return [".".join(path) for path, base_value in self._restart_baseline.items() if current.get(path) != base_value]
 
     @property
     def reload_failed(self) -> bool:

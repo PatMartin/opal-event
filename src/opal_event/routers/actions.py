@@ -69,9 +69,7 @@ def _action_allowed(request: Request, action_id: str) -> bool:
 def list_actions(request: Request, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     if is_execute_scope(request):
-        return JSONResponse(
-            [discovery_projection(a) for a in config.settings.actions if _action_allowed(request, a.id)]
-        )
+        return JSONResponse([discovery_projection(a) for a in config.settings.actions if _action_allowed(request, a.id)])
     return config.settings.actions
 
 

@@ -119,11 +119,6 @@
     "path": "/api/v1/setting/",
     "client": "getSettings"
   },
-  "opal_setting_patch": {
-    "method": "PATCH",
-    "path": "/api/v1/setting/",
-    "client": "patchSettings"
-  },
   "opal_backup_export": {
     "method": "GET",
     "path": "/api/v1/backup/export",

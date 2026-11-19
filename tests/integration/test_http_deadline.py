@@ -1,6 +1,7 @@
 """Elapsed HTTP action deadline (step 6): timeout_seconds bounds connect + headers +
 streamed body (monotonic), not just each socket recv. A slow-drip body must expire;
 the worker is released promptly and the next action still runs."""
+
 import http.server
 import threading
 import time
@@ -48,8 +49,12 @@ def server():
 
 def _action(port, path="/", timeout=2):
     return HttpAction(
-        id="a1", type="http", method="GET", url=f"http://127.0.0.1:{port}{path}",
-        body_mode="none", timeout_seconds=timeout,
+        id="a1",
+        type="http",
+        method="GET",
+        url=f"http://127.0.0.1:{port}{path}",
+        body_mode="none",
+        timeout_seconds=timeout,
     )
 
 

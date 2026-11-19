@@ -29,7 +29,6 @@ rules_app = typer.Typer(help="Manage rules that match events to actions.", no_ar
 actions_app = typer.Typer(help="Manage registered actions (shell/http/python).", no_args_is_help=True)
 executions_app = typer.Typer(help="Inspect action execution history.", no_args_is_help=True)
 info_app = typer.Typer(help="Service identity, health, and runtime metrics.", no_args_is_help=True)
-settings_app = typer.Typer(help="Portable, live-adjustable service settings.", no_args_is_help=True)
 backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
 service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
@@ -38,7 +37,6 @@ history_app = typer.Typer(help="Stored-event history: list, inspect, and remove 
 # Canonical x-opal-cli bindings: `config setting <verb>` plus the declared flat `setting` aliases.
 config_app = typer.Typer(help="Configuration resources.", no_args_is_help=True)
 config_setting_app = typer.Typer(help="Service-wide portable settings.", no_args_is_help=True)
-setting_app = typer.Typer(help="Portable settings (aliases for `config setting ...`).", no_args_is_help=True)
 config_app.add_typer(config_setting_app, name="setting")
 for _sub, _name in (
     (rules_app, "rules"),
@@ -46,9 +44,7 @@ for _sub, _name in (
     (executions_app, "executions"),
     (history_app, "history"),
     (info_app, "info"),
-    (settings_app, "settings"),
     (config_app, "config"),
-    (setting_app, "setting"),
     (profiles_app, "profiles"),
     (backup_app, "backup"),
     (personas_app, "personas"),
@@ -374,9 +370,7 @@ def rules_update(
     revision = if_match or _resource_etag(ctx, "show_rule", {"rule_id": rule_id})
     _emit(
         ctx,
-        _call(
-            ctx, "update_rule", path_params={"rule_id": rule_id}, json=body, headers={"If-Match": revision}
-        ).json(),
+        _call(ctx, "update_rule", path_params={"rule_id": rule_id}, json=body, headers={"If-Match": revision}).json(),
     )
 
 
@@ -493,66 +487,6 @@ def executions_list(
 def executions_get(ctx: typer.Context, execution_id: str = typer.Argument(...)) -> None:
     """Get an execution result."""
     _emit(ctx, _call(ctx, "show_execution", path_params={"execution_id": execution_id}).json())
-
-
-# -- `opal event settings` -----------------------------------------------------------------------
-
-
-@settings_app.command("get")
-def settings_get(ctx: typer.Context) -> None:
-    """Get portable settings."""
-    _emit(ctx, _call(ctx, "opal_setting_list").json())
-
-
-@settings_app.command("update")
-def settings_update(
-    ctx: typer.Context,
-    json_str: str = typer.Option(None, "--json", help="Partial PortableSettingsPatch JSON body"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the PortableSettingsPatch JSON body"),
-    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
-) -> None:
-    """Update portable settings (execution/persistence subset, max_event_bytes)."""
-    body = _read_payload(json_str, file)
-    revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "opal_setting_patch", json=body, headers={"If-Match": revision}).json())
-
-
-@settings_app.command("get-key")
-def settings_get_key(ctx: typer.Context, key: str = typer.Argument(..., help="Dotted portable setting key")) -> None:
-    """Get a single portable setting (e.g. execution.queue_size)."""
-    _emit(ctx, _call(ctx, "opal_setting_get", path_params={"key": key}).json())
-
-
-@settings_app.command("set-key")
-def settings_set_key(
-    ctx: typer.Context,
-    key: str = typer.Argument(..., help="Dotted portable setting key"),
-    value: str = typer.Option(..., "--value", help="JSON value to set"),
-    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
-) -> None:
-    """Set a single portable setting to a JSON value."""
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        typer.echo("Error: --value must be valid JSON", err=True)
-        raise typer.Exit(1) from None
-    revision = if_match or _current_revision(ctx)
-    _emit(
-        ctx,
-        _call(ctx, "opal_setting_put", path_params={"key": key}, json={"value": parsed}, headers={"If-Match": revision}).json(),
-    )
-
-
-@settings_app.command("reset-key")
-def settings_reset_key(
-    ctx: typer.Context,
-    key: str = typer.Argument(..., help="Dotted portable setting key"),
-    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
-) -> None:
-    """Reset a single portable setting to its schema default."""
-    revision = if_match or _current_revision(ctx)
-    _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision})
-    typer.echo(f"reset setting '{key}' to default")
 
 
 # -- `opal event backup` -------------------------------------------------------------------------
@@ -810,9 +744,10 @@ def command_tree(
     Console().print(_render_rich_command_tree())
 
 
-# -- `opal event config setting` + `setting` aliases (x-opal-cli canonical bindings) --------------
-# Contract-declared spellings: `config setting list|show|set|update|remove`, with
-# `config setting patch` (alias of `update`) and flat `setting get|get-key|set-key|reset-key`.
+# -- `opal event config setting` (x-opal-cli canonical bindings, v0.1.0) ---------------------------
+# Kernel-declared spellings only: `config setting list|show|set|remove` with `--name` bound to the
+# {key} path parameter. The retired collection PATCH, `config setting update|patch`, and the flat
+# `setting`/`settings` groups are removed.
 
 
 def _settings_show_all(ctx: typer.Context) -> None:
@@ -838,17 +773,11 @@ def _settings_set_key(ctx: typer.Context, key: str, value: str, if_match: str | 
 def _settings_remove_key(ctx: typer.Context, key: str, if_match: str | None) -> None:
     revision = if_match or _current_revision(ctx)
     _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision})
-    typer.echo(f"reset setting '{key}' to default")
+    typer.echo(f"removed setting override '{key}'")
 
 
-def _settings_update_map(ctx: typer.Context, json_str: str | None, file: str | None, if_match: str | None) -> None:
-    body = _read_payload(json_str, file)
-    revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "opal_setting_patch", json=body, headers={"If-Match": revision}).json())
-
-
-_KEY = typer.Argument(..., help="Dotted portable setting key")
-_VALUE = typer.Option(..., "--value", help="JSON value to set")
+_NAME = typer.Option(..., "--name", help="Dotted portable setting key")
+_VALUE = typer.Option(..., "--value", help="JSON value (or literal string) to set")
 _IFM = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)")
 
 
@@ -859,66 +788,20 @@ def config_setting_list(ctx: typer.Context) -> None:
 
 
 @config_setting_app.command("show")
-def config_setting_show(ctx: typer.Context, key: str = _KEY) -> None:
+def config_setting_show(ctx: typer.Context, key: str = _NAME) -> None:
     """Show one setting."""
     _settings_show_key(ctx, key)
 
 
 @config_setting_app.command("set")
-def config_setting_set(ctx: typer.Context, key: str = _KEY, value: str = _VALUE, if_match: str = _IFM) -> None:
+def config_setting_set(ctx: typer.Context, key: str = _NAME, value: str = _VALUE, if_match: str = _IFM) -> None:
     """Create or replace one setting value."""
     _settings_set_key(ctx, key, value, if_match)
 
 
 @config_setting_app.command("remove")
-def config_setting_remove(ctx: typer.Context, key: str = _KEY, if_match: str = _IFM) -> None:
-    """Reset one setting to its schema default."""
-    _settings_remove_key(ctx, key, if_match)
-
-
-@config_setting_app.command("update")
-def config_setting_update(
-    ctx: typer.Context,
-    json_str: str = typer.Option(None, "--json", help="Partial settings-map JSON body"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the patch body"),
-    if_match: str = _IFM,
-) -> None:
-    """Atomically merge-patch the portable settings map."""
-    _settings_update_map(ctx, json_str, file, if_match)
-
-
-@config_setting_app.command("patch", hidden=True)
-def config_setting_patch_alias(
-    ctx: typer.Context,
-    json_str: str = typer.Option(None, "--json"),
-    file: str = typer.Option(None, "--file"),
-    if_match: str = _IFM,
-) -> None:
-    """Alias of `config setting update` (contract-declared)."""
-    _settings_update_map(ctx, json_str, file, if_match)
-
-
-@setting_app.command("get")
-def setting_get(ctx: typer.Context) -> None:
-    """Alias of `config setting list`."""
-    _settings_show_all(ctx)
-
-
-@setting_app.command("get-key")
-def setting_get_key(ctx: typer.Context, key: str = _KEY) -> None:
-    """Alias of `config setting show`."""
-    _settings_show_key(ctx, key)
-
-
-@setting_app.command("set-key")
-def setting_set_key(ctx: typer.Context, key: str = _KEY, value: str = _VALUE, if_match: str = _IFM) -> None:
-    """Alias of `config setting set`."""
-    _settings_set_key(ctx, key, value, if_match)
-
-
-@setting_app.command("reset-key")
-def setting_reset_key(ctx: typer.Context, key: str = _KEY, if_match: str = _IFM) -> None:
-    """Alias of `config setting remove`."""
+def config_setting_remove(ctx: typer.Context, key: str = _NAME, if_match: str = _IFM) -> None:
+    """Delete the persistent override for one setting key (restores the default)."""
     _settings_remove_key(ctx, key, if_match)
 
 

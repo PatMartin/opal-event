@@ -11,17 +11,17 @@ import yaml
 
 from opal_event.cli.client import OPERATIONS as CLI_OPERATIONS
 
-CONTRACT_PATH = Path(__file__).resolve().parents[2] / "openapi" / "opal_event_v1.7.1.yaml"
+CONTRACT_PATH = Path(__file__).resolve().parents[2] / "openapi" / "opal_event_v0.1.0.yaml"
 SPA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "spa" / "src" / "api.operations.json"
 
-# Contract operations declared in v1.7.1 but not yet wired into the REST app. The v1.7.1
+# Contract operations declared in v0.1.0 but not yet wired into the REST app. The v1.7.1
 # migration landed surface-by-surface; now empty — full parity is enforced.
 PENDING_OPS: frozenset[str] = frozenset()
 
 
 @functools.lru_cache(maxsize=1)
 def load_contract_operations() -> dict[str, tuple[str, str]]:
-    """operationId -> (method, path) for the whole contract. opal_event_v1.7.1.yaml declares
+    """operationId -> (method, path) for the whole contract. opal_event_v0.1.0.yaml declares
     shared endpoints as path-level ``$ref`` into ``shared/opal_kernel.yaml``'s
     ``components/pathItems`` — resolve those references so shared ops get the same parity
     checks as service-local ones."""
@@ -143,7 +143,7 @@ class TestContractCoverage:
 
 
 class TestSelfDescribingActions:
-    """v1.4.1's optional self-description fields carried forward into v1.7.1: every action
+    """v1.4.1's optional self-description fields carried forward into v0.1.0: every action
     type declares description/input_schema/keywords/suggested_prompts as optional."""
 
     def _spec(self) -> dict:
@@ -161,9 +161,9 @@ class TestSelfDescribingActions:
             assert props["keywords"]["maxItems"] == 16
             assert props["suggested_prompts"]["maxItems"] == 8
 
-    def test_v160_singular_paths_and_new_resources(self) -> None:
-        """v1.6.0 breaking rename: collections are singular; persona/info endpoints exist.
-        v1.7.1 adds kernel-mounted profile, managed-backup, and service-lifecycle paths."""
+    def test_v010_paths_and_retired_resources(self) -> None:
+        """v0.1.0: info/stats merged into health; backup surface replaced by config
+        snapshots; singular collections and kernel-mounted shared paths retained."""
         spec = self._spec()
         for path in (
             "/api/v1/event/",
@@ -172,25 +172,36 @@ class TestSelfDescribingActions:
             "/api/v1/action/",
             "/api/v1/execution/",
             "/api/v1/setting/",
-            "/api/v1/info/",
-            "/api/v1/info/ping",
+            "/api/v1/setting/{key}",
+            "/api/v1/health/",
+            "/api/v1/health/live",
+            "/api/v1/health/ready",
             "/api/v1/persona/",
             "/api/v1/persona/{persona_id}",
             "/api/v1/persona/{persona_id}/validate",
             "/api/v1/profile/",
             "/api/v1/profile/{profile_id}",
             "/api/v1/profile/{profile_id}/activate",
-            "/api/v1/backup/list",
-            "/api/v1/backup/create",
-            "/api/v1/backup/download/{filename}",
-            "/api/v1/backup/restore/{filename}",
-            "/api/v1/backup/{filename}",
+            "/api/v1/config/save",
+            "/api/v1/config/load",
+            "/api/v1/config/validate",
             "/api/v1/service/start",
             "/api/v1/service/stop",
             "/api/v1/service/log",
         ):
             assert path in spec["paths"], f"missing path {path}"
-        for legacy in (
+        for retired in (
+            "/api/v1/info/",
+            "/api/v1/info/ping",
+            "/api/v1/stats/",
+            "/api/v1/backup/list",
+            "/api/v1/backup/create",
+            "/api/v1/backup/download/{filename}",
+            "/api/v1/backup/restore/{filename}",
+            "/api/v1/backup/{filename}",
+            "/api/v1/backup/export",
+            "/api/v1/backup/import",
+            "/api/v1/backup/validate",
             "/api/v1/events/",
             "/api/v1/topics/",
             "/api/v1/rules/",
@@ -198,4 +209,4 @@ class TestSelfDescribingActions:
             "/api/v1/executions/",
             "/api/v1/settings/",
         ):
-            assert legacy not in spec["paths"], f"legacy plural path still present: {legacy}"
+            assert retired not in spec["paths"], f"retired path still present: {retired}"

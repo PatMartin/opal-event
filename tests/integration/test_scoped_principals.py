@@ -2,6 +2,7 @@
 prefixes; an execute principal (the Think stand-in) restricted to named actions and to
 receipts it owns. Two synthetic principals, verified over the real REST surface.
 """
+
 import time
 
 import pytest
@@ -23,12 +24,26 @@ def client(tmp_path, monkeypatch):
     cfg = base_config(
         tmp_path,
         actions=[
-            {"id": "count_action", "type": "shell", "enabled": True, "mode": "exec",
-             "executable": "cmd", "args": ["/c", f"echo 1 >> {tmp_path / 'c.txt'}"],
-             "stdin": "none", "timeout_seconds": 5},
-            {"id": "other_action", "type": "shell", "enabled": True, "mode": "exec",
-             "executable": "cmd", "args": ["/c", f"echo 1 >> {tmp_path / 'o.txt'}"],
-             "stdin": "none", "timeout_seconds": 5},
+            {
+                "id": "count_action",
+                "type": "shell",
+                "enabled": True,
+                "mode": "exec",
+                "executable": "cmd",
+                "args": ["/c", f"echo 1 >> {tmp_path / 'c.txt'}"],
+                "stdin": "none",
+                "timeout_seconds": 5,
+            },
+            {
+                "id": "other_action",
+                "type": "shell",
+                "enabled": True,
+                "mode": "exec",
+                "executable": "cmd",
+                "args": ["/c", f"echo 1 >> {tmp_path / 'o.txt'}"],
+                "stdin": "none",
+                "timeout_seconds": 5,
+            },
         ],
         rules=[],
     )
@@ -37,10 +52,14 @@ def client(tmp_path, monkeypatch):
         "token_env": "OPAL_EVENT_API_TOKEN",
         "execute_token_env": None,
         "principals": [
-            {"name": "producer", "token_env": "PRODUCER_TOKEN", "scope": "publish",
-             "topic_prefixes": ["vision."]},
-            {"name": "think", "token_env": "THINK_TOKEN", "scope": "execute",
-             "actions": ["count_action"], "own_receipts_only": True},
+            {"name": "producer", "token_env": "PRODUCER_TOKEN", "scope": "publish", "topic_prefixes": ["vision."]},
+            {
+                "name": "think",
+                "token_env": "THINK_TOKEN",
+                "scope": "execute",
+                "actions": ["count_action"],
+                "own_receipts_only": True,
+            },
         ],
     }
     app = create_app(str(write_config(tmp_path, cfg)))
@@ -78,19 +97,21 @@ def test_think_discovers_only_named_actions(client):
 
 
 def test_think_executes_named_action_only(client):
-    ok = client.post("/api/v1/action/count_action/execute",
-                     json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(THINK))
+    ok = client.post("/api/v1/action/count_action/execute", json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(THINK))
     assert ok.status_code == 202
-    denied = client.post("/api/v1/action/other_action/execute",
-                         json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(THINK))
+    denied = client.post(
+        "/api/v1/action/other_action/execute", json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(THINK)
+    )
     assert denied.status_code == 404
 
 
 def test_think_sees_only_own_receipts(client):
-    mine = client.post("/api/v1/action/count_action/execute",
-                       json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(THINK)).json()
-    theirs = client.post("/api/v1/action/count_action/execute",
-                         json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(ADMIN)).json()
+    mine = client.post(
+        "/api/v1/action/count_action/execute", json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(THINK)
+    ).json()
+    theirs = client.post(
+        "/api/v1/action/count_action/execute", json={"event": {"topic": "t.z", "data": {}}}, headers=_auth(ADMIN)
+    ).json()
     time.sleep(0.5)
     assert client.get(f"/api/v1/execution/{mine['id']}", headers=_auth(THINK)).status_code == 200
     assert client.get(f"/api/v1/execution/{theirs['id']}", headers=_auth(THINK)).status_code == 404

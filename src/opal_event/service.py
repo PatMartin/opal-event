@@ -132,7 +132,9 @@ class EventService:
             self.metrics.incr("chain_depth_rejections")
             logger.warning(
                 "event %s reached chain depth %d (>=%d); rule dispatch refused",
-                event.get("id"), depth, settings.security.max_chain_depth,
+                event.get("id"),
+                depth,
+                settings.security.max_chain_depth,
             )
 
         matched_any = self._route_event(event, settings) if not chain_blocked else False

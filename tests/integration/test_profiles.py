@@ -78,14 +78,14 @@ class TestProfileActivation:
         profiles = app_client.get("/api/v1/profile/").json()
         assert [p["is_active"] for p in profiles] == [True, False]
         settings = app_client.get("/api/v1/setting/").json()
-        assert settings["execution"]["max_workers"] == 9
-        assert settings["execution"]["queue_size"] == 42
+        assert settings["execution.max_workers"] == 9
+        assert settings["execution.queue_size"] == 42
 
         etag = app_client.get("/api/v1/profile/").headers["etag"]
         app_client.post("/api/v1/profile/2/activate", headers={"If-Match": etag})
         profiles = app_client.get("/api/v1/profile/").json()
         assert [p["is_active"] for p in profiles] == [False, True]
-        assert app_client.get("/api/v1/setting/").json()["execution"]["max_workers"] == 1
+        assert app_client.get("/api/v1/setting/").json()["execution.max_workers"] == 1
 
     def test_patch_is_active_true_activates(self, app_client, etag):
         assert _create(app_client, {"name": "a", "settings": {"max_event_bytes": 1234}}, etag).status_code == 201

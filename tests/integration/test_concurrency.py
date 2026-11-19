@@ -78,63 +78,63 @@ class TestActionsConcurrency:
 
 
 class TestSettingsConcurrency:
-    def test_patch_without_if_match_is_428(self, app_client):
+    """v0.1.0: the collection PATCH is retired; per-key PUT/DELETE carry the If-Match contract."""
+
+    def test_collection_patch_is_retired(self, app_client):
         resp = app_client.patch("/api/v1/setting/", json={"max_event_bytes": 500000})
+        assert resp.status_code == 405
+
+    def test_put_without_if_match_is_428(self, app_client):
+        resp = app_client.put("/api/v1/setting/max_event_bytes", json={"value": 500000})
         assert resp.status_code == 428
         assert resp.json()["error"]["code"] == "precondition_required"
 
-    def test_patch_with_stale_if_match_is_412(self, app_client):
-        resp = app_client.patch("/api/v1/setting/", json={"max_event_bytes": 500000}, headers={"If-Match": "stale"})
+    def test_put_with_stale_if_match_is_412(self, app_client):
+        resp = app_client.put("/api/v1/setting/max_event_bytes", json={"value": 500000}, headers={"If-Match": "stale"})
         assert resp.status_code == 412
         assert resp.json()["error"]["code"] == "precondition_failed"
 
-    def test_patch_with_correct_if_match_succeeds(self, app_client):
+    def test_put_with_correct_if_match_succeeds(self, app_client):
         etag = app_client.get("/api/v1/setting/").headers["etag"]
-        resp = app_client.patch("/api/v1/setting/", json={"max_event_bytes": 500000}, headers={"If-Match": etag})
+        resp = app_client.put("/api/v1/setting/max_event_bytes", json={"value": 500000}, headers={"If-Match": etag})
         assert resp.status_code == 200
-        assert resp.json()["max_event_bytes"] == 500000
+        assert resp.json()["value"] == 500000
 
-    def test_patch_execution_settings_preserves_unspecified_fields(self, app_client):
+    def test_put_one_key_preserves_siblings(self, app_client):
         get_resp = app_client.get("/api/v1/setting/")
         assert get_resp.status_code == 200
         etag = get_resp.headers["etag"]
-        original_execution = get_resp.json()["execution"]
-        original_queue_size = original_execution["queue_size"]
-        new_workers = original_execution["max_workers"] + 1
+        original = get_resp.json()
+        original_queue_size = original["execution.queue_size"]
+        new_workers = original["execution.max_workers"] + 1
 
-        # Patch only max_workers in execution
-        patch_resp = app_client.patch(
-            "/api/v1/setting/",
-            json={"execution": {"max_workers": new_workers}},
+        put_resp = app_client.put(
+            "/api/v1/setting/execution.max_workers",
+            json={"value": new_workers},
             headers={"If-Match": etag},
         )
-        assert patch_resp.status_code == 200
-        updated_settings = patch_resp.json()
-        assert updated_settings["execution"]["max_workers"] == new_workers
-        assert updated_settings["execution"]["queue_size"] == original_queue_size
-        assert updated_settings["execution"]["default_timeout_seconds"] == original_execution["default_timeout_seconds"]
-        assert updated_settings["execution"]["overflow"] == original_execution["overflow"]
-        assert updated_settings["execution"]["max_output_bytes"] == original_execution["max_output_bytes"]
+        assert put_resp.status_code == 200
+        assert put_resp.json()["value"] == new_workers
 
-        # Ensure persistence by re-fetching
         refetched = app_client.get("/api/v1/setting/").json()
-        assert refetched["execution"]["max_workers"] == new_workers
-        assert refetched["execution"]["queue_size"] == original_queue_size
+        assert refetched["execution.max_workers"] == new_workers
+        assert refetched["execution.queue_size"] == original_queue_size
+        assert refetched["execution.default_timeout_seconds"] == original["execution.default_timeout_seconds"]
 
-    def test_patch_max_event_bytes_updates_broker_observer_limit(self, app_client):
-        # Verify that updating max_event_bytes via settings PATCH updates the runtime broker observer
+    def test_put_max_event_bytes_updates_broker_observer_limit(self, app_client):
+        # Verify that updating max_event_bytes via settings PUT updates the runtime broker observer
         broker = app_client.app.state.service.broker
         initial_broker_limit = broker.max_event_bytes
 
         etag = app_client.get("/api/v1/setting/").headers["etag"]
         new_limit = 250000
-        patch_resp = app_client.patch(
-            "/api/v1/setting/",
-            json={"max_event_bytes": new_limit},
+        put_resp = app_client.put(
+            "/api/v1/setting/max_event_bytes",
+            json={"value": new_limit},
             headers={"If-Match": etag},
         )
-        assert patch_resp.status_code == 200
-        assert patch_resp.json()["max_event_bytes"] == new_limit
+        assert put_resp.status_code == 200
+        assert put_resp.json()["value"] == new_limit
         assert broker.max_event_bytes == new_limit
         assert broker.max_event_bytes != initial_broker_limit
 

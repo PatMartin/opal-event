@@ -1,19 +1,33 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import type { PortableSettings } from "../types";
+import type { SettingsMap } from "../types";
+
+// v0.1.0: GET /api/v1/setting/ is a flat OpalSettingsMap and the collection PATCH is retired;
+// each changed key is written individually with PUT /api/v1/setting/{key} + If-Match.
+const EDITABLE_KEYS = [
+  "execution.max_workers",
+  "execution.queue_size",
+  "execution.default_timeout_seconds",
+  "execution.max_output_bytes",
+  "persistence.event_mode",
+  "persistence.retention_days",
+  "max_event_bytes",
+] as const;
+
+type EditableKey = (typeof EDITABLE_KEYS)[number];
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<PortableSettings | null>(null);
-  const [etag, setEtag] = useState("");
+  const [map, setMap] = useState<SettingsMap | null>(null);
+  const [saved, setSavedMap] = useState<SettingsMap | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [savedFlag, setSavedFlag] = useState(false);
 
   async function load() {
     try {
       setError(null);
-      const { settings, etag } = await api.getSettings();
-      setSettings(settings);
-      setEtag(etag);
+      const { settings } = await api.getSettings();
+      setMap(settings);
+      setSavedMap(settings);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
@@ -23,28 +37,33 @@ export default function SettingsPage() {
     load();
   }, []);
 
+  function setKey(key: EditableKey, value: unknown) {
+    setMap((m) => (m ? { ...m, [key]: value } : m));
+  }
+
+  const num = (key: EditableKey) => Number(map?.[key] ?? 0);
+  const str = (key: EditableKey) => String(map?.[key] ?? "");
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!settings) return;
+    if (!map || !saved) return;
     try {
       setError(null);
-      setSaved(false);
-      await api.patchSettings(
-        {
-          execution: settings.execution,
-          persistence: settings.persistence,
-          max_event_bytes: settings.max_event_bytes,
-        },
-        etag,
-      );
-      setSaved(true);
+      setSavedFlag(false);
+      for (const key of EDITABLE_KEYS) {
+        if (map[key] !== saved[key]) {
+          const { etag } = await api.getSettings();
+          await api.putSetting(key, map[key], etag);
+        }
+      }
+      setSavedFlag(true);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }
 
-  if (!settings) return <p className="muted">Loading...</p>;
+  if (!map) return <p className="muted">Loading...</p>;
 
   return (
     <div>
@@ -54,7 +73,7 @@ export default function SettingsPage() {
         database path require editing the YAML config file directly and restarting the service.
       </p>
       {error && <div className="error-banner">{error}</div>}
-      {saved && <p className="muted">Saved.</p>}
+      {savedFlag && <p className="muted">Saved.</p>}
       <form className="panel" onSubmit={save}>
         <h3>Execution</h3>
         <label>
@@ -63,8 +82,8 @@ export default function SettingsPage() {
             type="number"
             min={1}
             max={128}
-            value={settings.execution.max_workers}
-            onChange={(e) => setSettings({ ...settings, execution: { ...settings.execution, max_workers: Number(e.target.value) } })}
+            value={num("execution.max_workers")}
+            onChange={(e) => setKey("execution.max_workers", Number(e.target.value))}
           />
         </label>
         <label>
@@ -73,8 +92,8 @@ export default function SettingsPage() {
             type="number"
             min={1}
             max={100000}
-            value={settings.execution.queue_size}
-            onChange={(e) => setSettings({ ...settings, execution: { ...settings.execution, queue_size: Number(e.target.value) } })}
+            value={num("execution.queue_size")}
+            onChange={(e) => setKey("execution.queue_size", Number(e.target.value))}
           />
         </label>
         <label>
@@ -83,10 +102,8 @@ export default function SettingsPage() {
             type="number"
             min={1}
             max={3600}
-            value={settings.execution.default_timeout_seconds}
-            onChange={(e) =>
-              setSettings({ ...settings, execution: { ...settings.execution, default_timeout_seconds: Number(e.target.value) } })
-            }
+            value={num("execution.default_timeout_seconds")}
+            onChange={(e) => setKey("execution.default_timeout_seconds", Number(e.target.value))}
           />
         </label>
         <label>
@@ -95,8 +112,8 @@ export default function SettingsPage() {
             type="number"
             min={0}
             max={10485760}
-            value={settings.execution.max_output_bytes}
-            onChange={(e) => setSettings({ ...settings, execution: { ...settings.execution, max_output_bytes: Number(e.target.value) } })}
+            value={num("execution.max_output_bytes")}
+            onChange={(e) => setKey("execution.max_output_bytes", Number(e.target.value))}
           />
         </label>
 
@@ -104,10 +121,8 @@ export default function SettingsPage() {
         <label>
           Event mode
           <select
-            value={settings.persistence.event_mode}
-            onChange={(e) =>
-              setSettings({ ...settings, persistence: { ...settings.persistence, event_mode: e.target.value as "all" | "matched" | "none" } })
-            }
+            value={str("persistence.event_mode")}
+            onChange={(e) => setKey("persistence.event_mode", e.target.value)}
           >
             <option value="all">all</option>
             <option value="matched">matched</option>
@@ -120,10 +135,8 @@ export default function SettingsPage() {
             type="number"
             min={1}
             max={3650}
-            value={settings.persistence.retention_days}
-            onChange={(e) =>
-              setSettings({ ...settings, persistence: { ...settings.persistence, retention_days: Number(e.target.value) } })
-            }
+            value={num("persistence.retention_days")}
+            onChange={(e) => setKey("persistence.retention_days", Number(e.target.value))}
           />
         </label>
 
@@ -134,8 +147,8 @@ export default function SettingsPage() {
             type="number"
             min={1}
             max={1048576}
-            value={settings.max_event_bytes}
-            onChange={(e) => setSettings({ ...settings, max_event_bytes: Number(e.target.value) })}
+            value={num("max_event_bytes")}
+            onChange={(e) => setKey("max_event_bytes", Number(e.target.value))}
           />
         </label>
 

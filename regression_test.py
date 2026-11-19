@@ -2,7 +2,7 @@
 """Full regression test for a RUNNING opal-event service.
 
 Covers: health/stats, event publish + history + delete, topics, rules CRUD + If-Match
-preconditions + dry-test, actions CRUD + manual execute, executions, settings GET/PATCH,
+preconditions + dry-test, actions CRUD + manual execute, executions, settings GET+PUT/key,
 backup export/validate/import, OPAL correlation headers, all three error shapes, scoped
 cursors, the REST->ZeroMQ->observer->rules->executor->DB pipeline, and the raw ZeroMQ
 publish path.
@@ -395,13 +395,18 @@ def t_settings_get_and_patch():
     r = CLIENT.get("/api/v1/setting/")
     check(r.status_code == 200, f"settings -> {r.status_code}")
     body = r.json()
-    check(set(body) <= {"execution", "persistence", "max_event_bytes"}, f"non-portable keys leaked: {set(body)}")
+    check("max_event_bytes" in body, f"portable key missing: {list(body)[:8]}")
+    check(not any(k in body for k in ("zmq", "auth", "database")), f"non-portable keys leaked: {list(body)}")
     etag = r.headers.get("etag")
     check(etag, "settings missing ETag")
-    r2 = CLIENT.patch("/api/v1/setting/", json={"max_event_bytes": body["max_event_bytes"]})
-    check(r2.status_code == 428, f"settings PATCH w/o If-Match -> {r2.status_code} (want 428)")
-    r3 = CLIENT.patch("/api/v1/setting/", json={"max_event_bytes": body["max_event_bytes"]}, headers={"If-Match": etag})
-    check(r3.status_code == 200, f"settings PATCH -> {r3.status_code}")
+    r0 = CLIENT.patch("/api/v1/setting/", json={"max_event_bytes": body["max_event_bytes"]}, headers={"If-Match": etag})
+    check(r0.status_code in (404, 405), f"collection PATCH retired, got {r0.status_code} (want 404/405)")
+    r2 = CLIENT.put("/api/v1/setting/max_event_bytes", json={"value": body["max_event_bytes"]})
+    check(r2.status_code == 428, f"setting PUT w/o If-Match -> {r2.status_code} (want 428)")
+    r3 = CLIENT.put("/api/v1/setting/max_event_bytes", json={"value": body["max_event_bytes"]}, headers={"If-Match": etag})
+    check(r3.status_code == 200, f"setting PUT -> {r3.status_code}")
+    rec = r3.json()
+    check("configured_value" in rec and "has_override" in rec, f"SettingRead shape: {list(rec)}")
 
 
 def t_backup_export_validate_import():

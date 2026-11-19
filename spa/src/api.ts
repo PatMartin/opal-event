@@ -205,16 +205,12 @@ export const api = {
     request<import("./types").HealthProbe>(opMethod("opal_health_ready_get"), opPath("opal_health_ready_get")),
 
 
-  getSettings: async (): Promise<{ settings: import("./types").PortableSettings; etag: string }> => {
+  getSettings: async (): Promise<{ settings: import("./types").SettingsMap; etag: string }> => {
     const resp = await fetch(opPath("opal_setting_list"), { headers: { ...contextHeaders(), ...authHeaders() } });
     const data = await resp.json();
     if (!resp.ok) throw new ApiError(resp.status, data);
     return { settings: data, etag: resp.headers.get("etag") || "" };
   },
-  patchSettings: (patch: Record<string, unknown>, ifMatch: string) =>
-    request<import("./types").PortableSettings>(opMethod("opal_setting_patch"), opPath("opal_setting_patch"), patch, {
-      "If-Match": ifMatch,
-    }),
   getSetting: (key: string) =>
     request<import("./types").SettingRead>(opMethod("opal_setting_get"), opPath("opal_setting_get", { key })),
   putSetting: (key: string, value: unknown, ifMatch: string) =>

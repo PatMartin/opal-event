@@ -1,4 +1,4 @@
-"""Per-key settings endpoints (opal_event_v1.6.0 kernel ``opal_setting_*`` ops)."""
+"""Per-key settings endpoints (v0.1.0 kernel ``opal_setting_*`` ops)."""
 
 import pytest
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opal-event"
-version = "1.7.1"
+version = "0.1.0"
 description = "OPAL Event: event bus, rule engine and action execution service (opal-event-svc), CLI and SPA"
 readme = "README.md"
 license = {text = "Apache-2.0"}

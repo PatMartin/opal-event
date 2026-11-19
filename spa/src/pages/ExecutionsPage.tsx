@@ -15,7 +15,7 @@ export default function ExecutionsPage() {
   // any response that resolves after a newer load was issued is discarded as stale.
   const listGate = useRef(createRequestGate()).current;
 
-  // v1.7.1: execution history is a bounded array (newest first); `limit` caps the count,
+  // v0.1.0: execution history is a bounded array (newest first); `limit` caps the count,
   // there is no cursor pagination.
   async function load(statusFilter: string) {
     try {

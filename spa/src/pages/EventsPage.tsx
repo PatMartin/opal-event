@@ -12,7 +12,7 @@ export default function EventsPage() {
   const [publishDataValid, setPublishDataValid] = useState(true);
   const [publishResult, setPublishResult] = useState<string | null>(null);
 
-  // v1.7.1: event history is a bounded array (newest first); `limit` caps the count,
+  // v0.1.0: event history is a bounded array (newest first); `limit` caps the count,
   // there is no cursor pagination.
   async function loadPage() {
     try {

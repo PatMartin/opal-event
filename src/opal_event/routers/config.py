@@ -6,6 +6,7 @@ and secrets are never included. Loads are atomic full replacements under a manda
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -41,7 +42,7 @@ from opal_event.models import (
     ValidationIssue,
     _utcnow,
 )
-from opal_event.routers.settings import _defaults_map, _key_parts, _portable_map
+from opal_event.routers.settings import _defaults_map, _key_parts
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -97,10 +98,8 @@ def _write_managed(path: Path, snapshot: ConfigSnapshot) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp, path)
     except OSError as exc:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise OperationFailedError(f"failed to write managed snapshot: {exc}") from exc
 
 

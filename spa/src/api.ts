@@ -112,7 +112,7 @@ function opPath(op: OpId, params?: Record<string, string>): string {
 
 /** Thin wrapper exposing one typed call per contract operationId, mirroring the CLI's client.
  * Methods/paths come from api.operations.json — the same manifest the contract tests verify
- * against openapi/opal_event_v1.7.1.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
+ * against openapi/opal_event_v0.1.0.yaml. `satisfies` makes tsc fail if a manifest client fn is missing. */
 export const api = {
   publishEvent: (body: { topic: string; data: unknown; id?: string; source?: string; timestamp?: string }) =>
     request<{ id: string; status: string; published_at: string }>(
@@ -280,7 +280,7 @@ export const api = {
       opPath("opal_persona_validate", { persona_id: personaId }),
     ),
 
-  // Profiles (v1.7.1): bounded catalog, strong ETag on GET, mandatory If-Match on mutations —
+  // Profiles (v0.1.0 kernel v3): bounded catalog, strong ETag on GET, mandatory If-Match on mutations —
   // the same fetch-then-mutate convention as rules/actions/personas.
   listProfiles: () => request<import("./types").Profile[]>(opMethod("opal_profile_list"), opPath("opal_profile_list")),
   createProfile: async (body: import("./types").ProfileCreate) => {

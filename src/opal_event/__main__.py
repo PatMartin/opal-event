@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=args.log_level.upper())
 
-    # Managed-server protocol (v1.7.1 kernel `service` tag): when launched by
+    # Managed-server protocol (v0.1.0 kernel `service` tag): when launched by
     # POST /api/v1/service/start with a restart pending, hold off binding until the
     # parent pids have exited so the port frees cleanly.
     wait_pids = os.environ.get("OPAL_EVENT_WAIT_FOR_PID")

@@ -1,4 +1,4 @@
-"""``/api/v1/persona``: CRUD over YAML-persisted persona registrations (v1.7.1).
+"""``/api/v1/persona``: CRUD over YAML-persisted persona registrations (v0.1.0 kernel persona path items).
 
 A persona is a named automation identity that rules and actions can attribute work to; an
 optional ``voice_id`` binds it to an OPAL Say voice for spoken notifications. Personas are a

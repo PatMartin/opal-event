@@ -81,9 +81,9 @@ The install gives you **three commands**:
 | `opal event ...` | Unified OPAL Typer command group |
 | `opal-event ...` | Shorter alias for the same Event CLI |
 
-The Python package and the OpenAPI contract are both at **1.7.1** (two different version identifiers that happen to match: `pyproject.toml` for the distribution, `openapi/opal_event_v1.7.1.yaml` for the REST contract).
+The Python package and the OpenAPI contract are both at **0.1.0** (`pyproject.toml` for the distribution, `openapi/opal_event_v0.1.0.yaml` for the REST contract).
 
-`openapi/opal_event_v1.7.1.yaml` is the authoritative contract, with `openapi/shared/opal_kernel.yaml` as the shared OPAL suite kernel. v1.7.1 adds kernel-mounted `/api/v1/profile/` (named presets of portable settings; activation applies a profile to live config atomically, one active at a time), managed backup archives (`/api/v1/backup/list|create|download|restore|delete` as `.tar.gz` bundles), and service process lifecycle (`/api/v1/service/start|stop|log`, pidfile-tracked with start-as-restart). `POST /api/v1/backup/import` now takes the bare config bundle with mandatory `If-Match` (428/412), and personas read back an `origin` field (`local`|`owner`).
+`openapi/opal_event_v0.1.0.yaml` is the authoritative contract, with `openapi/shared/opal_kernel.yaml` as the shared OPAL suite kernel. v1.7.1 adds kernel-mounted `/api/v1/profile/` (named presets of portable settings; activation applies a profile to live config atomically, one active at a time), managed backup archives (`/api/v1/backup/list|create|download|restore|delete` as `.tar.gz` bundles), and service process lifecycle (`/api/v1/service/start|stop|log`, pidfile-tracked with start-as-restart). `POST /api/v1/backup/import` now takes the bare config bundle with mandatory `If-Match` (428/412), and personas read back an `origin` field (`local`|`owner`).
 
 ### 2. Create your configuration file
 
@@ -735,7 +735,7 @@ The ZeroMQ proxy forwards messages as a best-effort transport. The internal obse
 
 ### REST-first by design
 
-The [OpenAPI contract](openapi/opal_event_v1.7.1.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
+The [OpenAPI contract](openapi/opal_event_v0.1.0.yaml) describes the interface. The CLI and SPA are API clients—not independent implementations of business logic. You can use Swagger UI at `/docs`, or build another client against the same API.
 
 | Interface | Role |
 | --- | --- |
@@ -857,7 +857,7 @@ opal-event/
 ├── README.md                      this guide
 ├── LICENSE                        Apache-2.0
 ├── pyproject.toml                 package + CLI entry points
-├── openapi/opal_event_v1.7.1.yaml  OpenAPI contract (+ shared/opal_kernel.yaml)
+├── openapi/opal_event_v0.1.0.yaml  OpenAPI contract (+ shared/opal_kernel.yaml)
 ├── .env.example                   annotated dotenv template
 ├── config/opal_event.yaml         your config (gitignored—see installation step 2)
 ├── examples/                      sample JSON payloads
@@ -883,7 +883,7 @@ opal-event/
 - [CLI reference](docs/CLI.md)—every command, option, and payload in detail
 - [Cookbook](docs/COOKBOOK.md)—standalone one-liners plus OPAL suite integration recipes
 - [User guide](docs/USER_GUIDE.md)—deployment, security, REST usage, and operations
-- [OpenAPI contract](openapi/opal_event_v1.7.1.yaml)—the authoritative REST interface (shared kernel: `openapi/shared/opal_kernel.yaml`)
+- [OpenAPI contract](openapi/opal_event_v0.1.0.yaml)—the authoritative REST interface (shared kernel: `openapi/shared/opal_kernel.yaml`)
 - [ZeroMQ wire protocol](specs/zeromq_protocol.md)—framing, delivery semantics, raw PUB/SUB examples
 - [Interactive API docs](http://127.0.0.1:8080/docs)—Swagger UI, while the service is running
 

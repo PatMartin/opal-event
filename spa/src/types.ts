@@ -207,7 +207,7 @@ export interface ProfilePatch {
 }
 
 // ---------------------------------------------------------------------------
-// Managed backup archives + service lifecycle (v1.7.1)
+// Service lifecycle (v0.1.0 kernel `service` tag)
 // ---------------------------------------------------------------------------
 
 export interface ServiceStatus {

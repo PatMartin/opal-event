@@ -224,7 +224,7 @@ def t_events_list():
     r = CLIENT.get("/api/v1/event/", params={"topic": f"{TOPIC_BASE}.one"})
     check(r.status_code == 200, f"list -> {r.status_code}")
     body = r.json()
-    check(isinstance(body, list), f"events list must be a bare array (v1.7.1): {type(body)}")
+    check(isinstance(body, list), f"events list must be a bare array (v0.1.0): {type(body)}")
     check(any(i["id"] == _state["event_id"] for i in body), "published event not in list")
 
 
@@ -236,7 +236,7 @@ def t_second_publish():
 
 
 def t_limit_bounded():
-    # v1.7.1: history collections are bounded arrays — `limit` caps the count, no cursors.
+    # v0.1.0: history collections are bounded arrays — `limit` caps the count, no cursors.
     r = CLIENT.get("/api/v1/event/", params={"limit": 1})
     check(r.status_code == 200, f"limited list -> {r.status_code}")
     body = r.json()
@@ -260,7 +260,7 @@ def t_rules_catalog():
     r = CLIENT.get("/api/v1/rule/")
     check(r.status_code == 200, f"rules list -> {r.status_code}")
     body = r.json()
-    check(isinstance(body, list), "rules catalog must be a bare array (v1.7.1)")
+    check(isinstance(body, list), "rules catalog must be a bare array (v0.1.0)")
     check(r.headers.get("etag"), "rules list missing ETag")
     _state["rules_etag"] = r.headers["etag"]
 
@@ -377,7 +377,7 @@ def t_executions_list():
     r = CLIENT.get("/api/v1/execution/", params={"event_id": "does-not-exist"})
     check(r.status_code == 200, f"executions list -> {r.status_code}")
     body = r.json()
-    check(isinstance(body, list), f"executions list must be a bare array (v1.7.1): {type(body)}")
+    check(isinstance(body, list), f"executions list must be a bare array (v0.1.0): {type(body)}")
     r2 = CLIENT.get("/api/v1/execution/", params={"action_id": ACTION_ID})
     check(any(i["id"] == _state["exec_id"] for i in r2.json()), "execution not filterable by action_id")
 

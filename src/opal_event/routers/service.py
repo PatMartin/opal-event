@@ -1,4 +1,4 @@
-"""``/api/v1/service``: managed server-process lifecycle (v1.7.1 kernel ``service`` tag).
+"""``/api/v1/service``: managed server-process lifecycle (v0.1.0 kernel ``service`` tag).
 
 All three routes delegate to :class:`opal_event.lifecycle.ServiceProcessManager`. When the
 pidfile-tracked process *is* this serving process, start/stop report the status and then

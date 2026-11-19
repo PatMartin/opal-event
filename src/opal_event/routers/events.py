@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 
 from opal_event.auth import require_auth
@@ -14,6 +15,7 @@ from opal_event.db import _ts_to_us
 from opal_event.deps import get_config, get_service
 from opal_event.errors import (
     ChainDepthExceededError,
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     OpalContextualError,
@@ -22,7 +24,7 @@ from opal_event.errors import (
 )
 from opal_event.models import Event, EventInput, EventList, PublishReceipt, TopicList
 from opal_event.normalization import is_rfc3339_datetime, normalize_event, parse_chain_depth
-from opal_event.opal_context import get_opal_context
+from opal_event.opal_context import get_opal_context, is_valid_opal_id
 from opal_event.service import EventService
 from opal_event.zeromq_broker import PublisherQueueFullError
 
@@ -64,12 +66,23 @@ def _check_time_filters(from_: str | None, to: str | None) -> None:
         )
 
 
+def _publish_caller_key(request: Request, idem_key: str) -> str:
+    """Caller-scoped dedup identity for REST admissions: principal scope (or ``admin`` for
+    the full token) plus a credential hash — callers can never collide on each other's keys."""
+    p = getattr(request.state, "principal", None)
+    scope = getattr(p, "scope", "admin") or "admin"
+    credential = request.headers.get("authorization", "")
+    cred_hash = hashlib.sha256(credential.encode("utf-8")).hexdigest()[:12] if credential else "anon"
+    return f"publish:{scope}:{cred_hash}:{idem_key}"
+
+
 @router.post("/api/v1/event/", status_code=202, response_model=PublishReceipt)
 def publish_event(
     event_input: EventInput,
     request: Request,
     service: Annotated[EventService, Depends(get_service)],
     config=Depends(get_config),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     if not service.is_ready():
         raise ServiceUnavailableError("ZeroMQ broker is not running")
@@ -78,10 +91,36 @@ def publish_event(
     if p is not None and p.scope == "publish" and not any(event_input.topic.startswith(prefix) for prefix in p.topic_prefixes):
         raise ForbiddenError(f"publish-scoped principal '{p.name}' may not publish to topic '{event_input.topic}'")
     chain_depth = _enforce_chain_depth(request, config.settings.security.max_chain_depth)
+    if idempotency_key is not None and not is_valid_opal_id(idempotency_key):
+        raise OpalContextualError(422, "invalid_header", "Idempotency-Key must be 1-128 printable ASCII characters")
     envelope = normalize_event(event_input)
     wire_size = len(envelope["topic"].encode("utf-8")) + len(json.dumps(envelope).encode("utf-8"))
     if wire_size > config.settings.zeromq.max_event_bytes:
         raise PayloadTooLargeError()
+
+    # Optional caller-scoped dedup: a retry carrying the same Idempotency-Key and an
+    # identical body replays the original receipt; a reused key with a different body is
+    # a 409 conflict. The raw input is fingerprinted, not the normalized envelope, so a
+    # byte-identical retry hashes identically. The claim is taken only after every
+    # admission precondition passes.
+    if idempotency_key is not None:
+        fingerprint = hashlib.sha256(
+            json.dumps(event_input.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        decision, existing = service.db.admit_idempotency(
+            _publish_caller_key(request, idempotency_key), fingerprint, envelope["id"]
+        )
+        if decision == "duplicate":
+            stored = service.db.get_event(existing)
+            return PublishReceipt(
+                id=existing,
+                status="accepted",
+                published_at=stored["timestamp"] if stored else envelope["timestamp"],
+            )
+        if decision == "conflict":
+            raise ConflictError(
+                f"Idempotency-Key '{idempotency_key}' was already used with a different request body (event {existing})"
+            )
 
     # Suite standard v1.2: "Propagate them into derived ZeroMQ envelope metadata." Additive-only
     # optional keys on the outbound two-frame envelope (zeromq_protocol.md permits extra optional

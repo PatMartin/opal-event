@@ -1,4 +1,4 @@
-"""Pydantic models mirroring the schemas in ``openapi/opal_event_v1.7.1.yaml``.
+"""Pydantic models mirroring the schemas in ``openapi/opal_event_v0.1.0.yaml``.
 
 Field names, types, constraints, and ``additionalProperties: false`` semantics are kept in lock-step with the
 OpenAPI contract. The contract is authoritative; do not add fields here that are not present there.
@@ -774,7 +774,7 @@ class ValidationReport(Strict):
 
 
 # --------------------------------------------------------------------------------------
-# Service process lifecycle (v1.7.1 kernel ``service`` tag)
+# Service process lifecycle (v0.1.0 kernel ``service`` tag)
 # --------------------------------------------------------------------------------------
 
 

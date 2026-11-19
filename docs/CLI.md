@@ -3,10 +3,10 @@
 The `opal event` command (and its standalone alias `opal-event`) is the terminal interface to the
 OPAL Event service (`opal-event-svc`). It provides command-line control over event publication,
 event and topic inspection, rules and actions catalogs, execution history, live-adjustable portable
-settings, configuration backups, service health, and operational diagnostics.
+settings, configuration snapshots, service health, and operational diagnostics.
 
 The CLI is a thin REST client. **Every command calls the Opal Event REST API** through the operations
-declared in the authoritative OpenAPI 3.1 specification (`openapi/opal_event_v1.7.1.yaml`). It never accesses
+declared in the authoritative OpenAPI 3.1 specification (`openapi/opal_event_v0.1.0.yaml`). It never accesses
 the SQLite database or ZeroMQ sockets directly. The server must therefore be running, either locally or
 on a remote host.
 
@@ -25,7 +25,7 @@ on a remote host.
 9. [`actions`: action management](#9-actions-action-management)
 10. [`executions`: execution history](#10-executions-execution-history)
 11. [`settings`: portable service settings](#11-settings-portable-service-settings)
-12. [`backup`: configuration export, validation, and import](#12-backup-configuration-export-validation-and-import)
+12. [`config save`, `load` & `validate`: configuration snapshots](#12-config-save--load--validate-configuration-snapshots)
 13. [Health, readiness, and metrics](#13-health-readiness-and-metrics)
 14. [Walkthroughs](#14-walkthroughs)
 15. [Scripting and automation](#15-scripting-and-automation)
@@ -151,7 +151,7 @@ export OPAL_EVENT_API_TOKEN=secret-token-123
 opal event info health                 # connects to 192.168.1.50 with bearer token
 
 # Override for a single command:
-OPAL_EVENT_API_URL=http://pi5.local:8080 opal event info stats
+OPAL_EVENT_API_URL=http://pi5.local:8080 opal event info health
 
 # Explicit CLI flags override environment variables:
 opal event --api-url http://127.0.0.1:8080 health
@@ -179,7 +179,7 @@ Error: cannot reach Opal Event API: [Errno 111] Connection refused
 
 ### Input payloads (`--json`, `--file`, stdin)
 
-Commands that create or modify rules, actions, settings, or backups accept structured JSON payloads.
+Commands that create or modify rules, actions, settings, profiles, or personas accept structured JSON payloads.
 These commands support three input methods, checked in this priority order:
 
 1. `--json '<raw JSON text>'`: Inline JSON string.
@@ -205,13 +205,13 @@ If no payload is supplied and stdin is a TTY, the CLI fails immediately with:
 
 Per the OPAL v1.2 standard, mutating operations (`POST`/`PATCH`/`DELETE /api/v1/rule`, `POST`/`PATCH`/`DELETE /api/v1/action`,
 `POST`/`PATCH`/`DELETE /api/v1/persona`, `PATCH /api/v1/setting/`, and
-`POST /api/v1/backup/import`) require an `If-Match` precondition header containing the current strong
+`POST /api/v1/config/load`) require an `If-Match` precondition header containing the current strong
 `ETag` revision.
 
 The CLI automates this for you:
 - When `--if-match` is omitted on `rules create`, `rules update`, `rules delete`, `actions create`,
   `actions update`, `actions delete`, `personas create`, `personas update`, `personas delete`,
-  `settings update`, `settings set-key`, `settings reset-key`, or `backup import`, **the CLI
+  `config setting set`, `config setting remove`, or `config load`, **the CLI
   automatically fetches the resource's current ETag** via a `GET` request immediately before sending the mutation.
 - You can provide an explicit `--if-match` if you want strict optimistic concurrency control:
 
@@ -279,7 +279,7 @@ opal event --json rules list
 | Exit code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | API error (`4xx` or `5xx`), validation failure, or `backup validate` failed |
+| `1` | API error (`4xx` or `5xx`), validation failure, or `config validate` failed |
 | `2` | CLI usage error (invalid arguments/flags, bad JSON syntax) or API unreachable |
 
 ---
@@ -382,44 +382,40 @@ opal
     │   │   └── [--event-id <event_id>]         Filter by triggering event ID
     │   └── get <execution_id>                  Get execution details by ID
     │
-    ├── settings                                Portable, live-adjustable service settings
-    │   ├── get                                 Get portable service settings
-    │   ├── update                              Update portable settings
-    │   │   ├── [--json <json>]                 Partial settings JSON body
-    │   │   ├── [--file <path>]                 File path containing JSON
+    ├── config                                  Configuration resources
+    │   ├── save                                Capture configuration snapshot
+    │   │   └── [--out <file>]                  Write snapshot to file (default: managed store)
+    │   ├── load                                Load snapshot atomically
+    │   │   ├── [--in <file>]                   YAML/JSON snapshot (default: managed snapshot)
     │   │   └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
-    │   ├── get-key <key>                       Read a single dotted-key setting
-    │   ├── set-key <key> --value <value>       Set a single dotted-key setting
-    │   │   └── [--if-match <etag>]
-    │   └── reset-key <key>                     Reset a key to its configured value
-    │       └── [--if-match <etag>]
+    │   ├── validate                            Validate a snapshot or live config
+    │   │   └── [--in <file>]                   Candidate snapshot file
+    │   └── setting                             Service-wide portable settings
+    │       ├── list                            List portable settings (flat dotted-key map)
+    │       ├── show --name <key>               Show one setting record
+    │       ├── set --name <key> --value <v>    Set one setting (JSON or literal value)
+    │       │   └── [--if-match <etag>]
+    │       └── remove --name <key>             Remove a setting override
+    │           └── [--if-match <etag>]
     │
-    ├── profiles                                Named presets of portable operating defaults
+    ├── profile                                 Namespaced profiles (shared + module compartments)
     │   ├── list                                List profiles
-    │   ├── create <name>                       Create a profile
-    │   │   ├── [--description <str>]
-    │   │   ├── [--active]                      Activate immediately
-    │   │   ├── [--json <json> | --file <path>] Preset settings patch
+    │   ├── add                                 Add a profile
+    │   │   ├── [--in <file>]                   Whole profile document (YAML/JSON)
+    │   │   ├── [--name <name>] [--description <str>]
+    │   │   ├── [--is-active | --no-is-active]  Activate immediately
+    │   │   ├── [--shared <file>]               Shared-values object file
+    │   │   ├── [--module <file>]               opal-event compartment file
     │   │   └── [--if-match <etag>]
-    │   ├── get <profile_id>                    Get profile by ID
-    │   ├── update <profile_id>                 Update profile
-    │   │   ├── [--json <json> | --file <path>]
+    │   ├── show <profile_id>                   Show one profile
+    │   ├── update <profile_id>                 Patch a profile
+    │   │   ├── [--in <file>]                   Patch document (YAML/JSON)
+    │   │   ├── [--name | --description | --is-active | --shared | --module]
     │   │   └── [--if-match <etag>]
-    │   ├── delete <profile_id>                 Delete profile
+    │   ├── remove <profile_id>                 Remove profile
     │   │   └── [--if-match <etag>]
-    │   └── activate <profile_id>               Make it the active profile (one at a time)
+    │   └── activate <profile_id>               Select it as the active profile (one at a time)
     │       └── [--if-match <etag>]
-    │
-    ├── backup
-    │   ├── export                              Export configuration bundle
-    │   │   └── [--output <path>]               Write to file instead of stdout
-    │   ├── validate                            Validate configuration bundle
-    │   │   ├── [--json <json>]                 Full ConfigBackup JSON body
-    │   │   └── [--file <path>]                 File path containing JSON
-    │   └── import                              Import configuration bundle atomically
-    │       ├── [--json <json>]                 BackupImportRequest JSON body
-    │       ├── [--file <path>]                 File path containing JSON
-    │       └── [--if-match <etag>]             Revision ETag (auto-fetched if omitted)
     │
     ├── personas                                Named automation identities
     │   ├── list                                List personas (bounded catalog)
@@ -437,23 +433,7 @@ opal
     │   │   └── [--if-match <etag>]             Precondition ETag (auto-fetched if omitted)
     │   └── validate <persona_id>               Check registration, enabled state, bindings
     │
-    ├── config                                  Configuration resources
-    │   └── setting                             Service-wide portable settings
-    │       ├── list                            List portable settings
-    │       ├── show <key>                      Show one setting
-    │       ├── set <key> --value <value>       Set one setting
-    │       │   └── [--if-match <etag>]
-    │       ├── remove <key>                    Remove a setting override
-    │       │   └── [--if-match <etag>]
-    │       └── update                          Bulk-update settings
-    │           ├── [--json <json> | --file <path>]
-    │           └── [--if-match <etag>]
-    │
-    ├── setting                                 Aliases for `config setting` reads/writes
-    │   ├── get · get-key <key>
-    │   ├── set-key <key> --value <value>
-    │   └── reset-key <key>
-    │
+
     └── service                                 Manage the local opal-event-svc process
         ├── start                               Start (or restart) the managed server
         │   ├── [--config <path>]               YAML config file [env: OPAL_EVENT_CONFIG]
@@ -1027,7 +1007,7 @@ Output:
   "event_id": null,
   "rule_id": null,
   "action_id": "announce_person",
-  "status": "succeeded",
+  "status": "completed",
   "trigger": "manual",
   "created_at": "2026-10-12T15:45:00.100000Z",
   "started_at": "2026-10-12T15:45:00.102000Z",
@@ -1062,7 +1042,7 @@ opal event executions list [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `--limit INT` | `100` | Maximum items to return (1–500) |
-| `--status TEXT` | `None` | Filter by status (`queued`, `running`, `succeeded`, `failed`, `timed_out`, `dropped`) |
+| `--status TEXT` | `None` | Filter by status (`queued`, `running`, `completed`, `failed`, `timed_out`, `dropped`) |
 | `--rule-id TEXT` | `None` | Filter by rule ID |
 | `--action-id TEXT` | `None` | Filter by action ID |
 | `--event-id TEXT` | `None` | Filter by triggering event ID |
@@ -1081,7 +1061,7 @@ opal event executions list --action-id announce_person --limit 20
 Example table output:
 ```
 ID                                    ACTION_ID        STATUS     TRIGGER  CREATED_AT
-c8b417e9-3891-4cf1-831e-450f381289de  announce_person  succeeded  manual   2026-10-12T15:45:00.100000Z
+c8b417e9-3891-4cf1-831e-450f381289de  announce_person  completed  manual   2026-10-12T15:45:00.100000Z
 a1111111-2222-3333-4444-555555555555  send_notification failed    rule     2026-10-12T15:46:12.450000Z
 ```
 
@@ -1127,7 +1107,7 @@ Output:
 |---|---|
 | `queued` | Enqueued in the bounded executor queue waiting for an available worker |
 | `running` | Currently executing inside an active worker thread/subprocess |
-| `succeeded` | Completed successfully (shell exit 0, HTTP 2xx, or Python return) |
+| `completed` | Completed successfully (shell exit 0, HTTP 2xx, or Python return) |
 | `failed` | Execution failed (non-zero exit code, HTTP 4xx/5xx, plugin exception, or template error) |
 | `timed_out` | Killed after exceeding the configured timeout |
 | `dropped` | Worker queue was full when submitted (`error_code: queue_full`); never executed |
@@ -1140,71 +1120,42 @@ The Opal Event service distinguishes between **restart-only system settings** (s
 ZeroMQ network bindings, and database file paths) and **portable runtime settings** that can be modified
 live without restarting the service.
 
-### `settings get`
+### `config setting list`
 
-Inspects the current portable settings:
+Inspects the current portable settings as a flat dotted-key map:
 
 ```bash
-opal event settings get
+opal event config setting list
 ```
 
 Output:
 ```json
 {
-  "execution": {
-    "max_workers": 4,
-    "queue_size": 100,
-    "default_timeout_seconds": 30,
-    "overflow": "drop_and_log",
-    "retry_enabled": false,
-    "max_output_bytes": 65536
-  },
-  "persistence": {
-    "event_mode": "all",
-    "retention_days": 7,
-    "execution_history_enabled": true
-  },
+  "execution.max_workers": 4,
+  "execution.queue_size": 100,
+  "execution.default_timeout_seconds": 30,
+  "execution.overflow": "drop_and_log",
+  "execution.retry_enabled": false,
+  "execution.max_output_bytes": 65536,
+  "persistence.event_mode": "all",
+  "persistence.retention_days": 7,
+  "persistence.execution_history_enabled": true,
   "max_event_bytes": 1048576
 }
 ```
 
-### `settings update`
+### `config setting show` / `set` / `remove`
 
-Updates portable settings. Mutated fields apply immediately to the running service and are written
-to disk. Supports `--if-match` (auto-fetched if omitted):
-
-```
-opal event settings update [--json TEXT | --file PATH] [--if-match TEXT]
-```
-
-```bash
-# Adjust worker count and timeout
-opal event settings update --json '{
-  "execution": {
-    "max_workers": 8,
-    "default_timeout_seconds": 45
-  }
-}'
-
-# Change persistence mode and retention
-opal event settings update --json '{
-  "persistence": {
-    "event_mode": "matched",
-    "retention_days": 14
-  }
-}'
-```
-
-### `settings get-key` / `set-key` / `reset-key`
-
-Read, set, or reset a single portable setting by its dotted key (the same key space
-as the Portable Settings Reference below). `set-key` takes a JSON `--value`;
-`set-key` and `reset-key` auto-fetch the current revision unless `--if-match` is given.
+Read, set, or remove a single portable setting by its dotted key (the same key space
+as the Portable Settings Reference below). `set` parses `--value` as JSON first and
+falls back to the literal string; `set` and `remove` auto-fetch the current revision
+unless `--if-match` is given. `remove` deletes the persistent override — the effective
+value falls back to the registered default.
 
 ```bash
-opal event settings get-key execution.queue_size
-opal event settings set-key execution.queue_size --value 150
-opal event settings reset-key execution.queue_size
+opal event config setting show --name execution.queue_size
+opal event config setting set --name execution.queue_size --value 150
+opal event config setting remove --name execution.queue_size
 ```
 
 #### Portable Settings Reference
@@ -1224,50 +1175,53 @@ opal event settings reset-key execution.queue_size
 
 ---
 
-## 12. `backup`: configuration export, validation, and import
+## 12. `config save` / `load` / `validate`: configuration snapshots
 
-The `backup` group manages complete, portable configuration bundles containing all rules, actions,
-and portable settings. Sensitive local configuration (secrets, database paths, network bindings) is
-excluded, making backup bundles safe to commit to version control or migrate across environments.
+Configuration snapshots are portable `OpalConfigSnapshot` envelopes containing all rules, actions,
+personas, profiles, and portable setting overrides. Sensitive local configuration (secrets, database
+paths, network bindings) is excluded, making snapshots safe to commit to version control or migrate
+across environments.
 
-### `backup export`
+### `config save`
 
-Exports the entire portable configuration to stdout or a file:
+Captures the persistent configuration. Without `--out` the snapshot is stored in the service's
+managed snapshot store; with `--out` it is written to a local file instead:
 
 ```
-opal event backup export [--output PATH]
+opal event config save [--out FILE]
 ```
 
 ```bash
-# Print to stdout
-opal event backup export
+# Store in the managed snapshot store
+opal event config save
 
 # Save to a file
-opal event backup export --output backup.json
-# Output: exported configuration to backup.json
+opal event config save --out snapshot.json
+# Output: snapshot written to snapshot.json
 ```
 
-Exported backup bundle format:
+Snapshot envelope format:
 ```json
 {
-  "format_version": 1,
-  "settings": { ... },
-  "actions": [ ... ],
-  "rules": [ ... ]
+  "format_version": "1.0.0",
+  "module": "opal-event",
+  "created_at": "2026-01-01T00:00:00Z",
+  "settings": { "execution.max_workers": 8 },
+  "resources": { "profiles": [], "personas": [], "rules": [], "actions": [] }
 }
 ```
 
-### `backup validate`
+### `config validate`
 
-Validates a backup bundle against the schema and referential integrity constraints without applying
+Validates a candidate snapshot — or the live configuration when `--in` is omitted — without applying
 any changes:
 
 ```
-opal event backup validate [--json TEXT | --file PATH]
+opal event config validate [--in FILE]
 ```
 
 ```bash
-opal event backup validate --file backup.json
+opal event config validate --in snapshot.json
 ```
 
 Output on success:
@@ -1279,37 +1233,40 @@ Output on success:
 }
 ```
 
-If validation fails (for example, if a rule references a non-existent action ID), the command outputs
-the error list and exits with code `1`:
+If validation fails (for example, an unknown setting key or resource section), the command outputs
+the structured issue list and exits with code `1`:
 
 ```json
 {
   "valid": false,
   "errors": [
-    "Rule 'front_door_alert' references unknown action 'missing_action'"
+    { "code": "unknown_setting", "path": "settings.nope.key", "message": "unknown setting key 'nope.key'" }
   ],
   "warnings": []
 }
 ```
 
-### `backup import`
+### `config load`
 
-Atomically replaces the active rules, actions, and portable settings with the contents of the backup
-bundle. Supports `--if-match` (auto-fetched if omitted):
+Atomically replaces the complete portable configuration — setting overrides revert to defaults when
+omitted by the snapshot, and omitted resource sections become empty. With `--in` the candidate file
+is loaded; without it the managed snapshot is loaded (fails if none exists). Supports `--if-match`
+(auto-fetched if omitted):
 
 ```
-opal event backup import [--json TEXT | --file PATH] [--if-match TEXT]
+opal event config load [--in FILE] [--if-match TEXT]
 ```
 
 ```bash
-opal event backup import --file backup.json
+opal event config load --in snapshot.json
 ```
 
 Output:
 ```json
 {
-  "revision": "\"2-b2c3d4e5\"",
-  "pending_restart": false
+  "applied": true,
+  "pending_restart_fields": [],
+  "warnings": []
 }
 ```
 
@@ -1330,17 +1287,31 @@ opal event info health
 Output:
 ```json
 {
+  "name": "opal-event-svc",
+  "version": "0.1.0",
+  "api_version": "v1",
   "status": "ok",
-  "broker_running": true,
-  "database_ready": true,
-  "pending_restart": false
+  "live": true,
+  "ready": true,
+  "details": {
+    "broker_running": true,
+    "database_ready": true,
+    "executor_healthy": true,
+    "stats": { "observed_events": 1420, "executions_completed": 348 }
+  },
+  "active_profile_id": null,
+  "checked_at": "2026-01-01T00:00:00Z",
+  "uptime_seconds": 61.2,
+  "pending_restart": false,
+  "pending_restart_fields": []
 }
 ```
 
-- `status`: `"ok"` or `"degraded"`.
-- `broker_running`: Indicates the ZeroMQ XSUB/XPUB proxy is healthy.
-- `database_ready`: Indicates SQLite WAL connection is functional.
-- `pending_restart`: `true` if changes were made to restart-only YAML settings on disk.
+- `status`: `"ok"`, `"degraded"`, or `"error"`.
+- `details.broker_running`: Indicates the ZeroMQ XSUB/XPUB proxy is healthy.
+- `details.database_ready`: Indicates SQLite WAL connection is functional.
+- `details.stats`: Runtime metrics (see below).
+- `pending_restart`: `true` if changes were made to restart-only YAML settings on disk; `pending_restart_fields` lists the divergent dotted paths.
 
 #### `info health --live` (Liveness Probe)
 
@@ -1383,36 +1354,21 @@ Output:
 
 `--live` and `--ready` are mutually exclusive.
 
-### `stats` (Runtime Metrics)
+### Runtime metrics (`details.stats`)
 
-Returns in-memory operational metrics and queue counters:
-
-```bash
-opal event info stats
-```
-
-Output:
-```json
-{
-  "observed_events": 1420,
-  "invalid_events": 3,
-  "matched_events": 350,
-  "executions_succeeded": 348,
-  "executions_failed": 2,
-  "executions_dropped": 0,
-  "queue_depth": 0,
-  "active_workers": 0
-}
-```
+`opal event info health` embeds the operational counters under `details.stats` (the old
+`GET /api/v1/stats/` surface is retired):
 
 - `observed_events`: Total events received by the internal observer.
 - `invalid_events`: Events rejected by the internal observer as invalid.
 - `matched_events`: Events that matched at least one enabled rule.
-- `executions_succeeded`: Completed actions with successful outcomes.
+- `executions_completed`: Completed actions with successful outcomes.
 - `executions_failed`: Actions that returned errors or non-zero status.
 - `executions_dropped`: Actions dropped due to queue overflow.
 - `queue_depth`: Number of actions currently waiting in the executor queue.
 - `active_workers`: Number of worker threads currently executing an action.
+- `rejected_publications`: Publications rejected because the publisher queue was full.
+- `fanout_dropped`: REST admissions whose best-effort ZeroMQ fan-out was lost to saturation (the admission itself succeeded).
 
 ---
 
@@ -1533,17 +1489,17 @@ opal event --json rules list | jq -r '.[] | select(.enabled) | .actions[]' | sor
 
 ### CI/CD configuration guard
 
-Validate backup bundles in CI before deploying changes to production:
+Validate configuration snapshots in CI before deploying changes to production:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Validating backup configuration..."
-opal event backup validate --file config/backup.json
+echo "Validating snapshot..."
+opal event config validate --in config/snapshot.json
 
 echo "Deploying to production..."
-opal event --api-url http://prod-event.local:8080 backup import --file config/backup.json
+opal event --api-url http://prod-event.local:8080 config load --in config/snapshot.json
 
 echo "Checking health..."
 opal event --api-url http://prod-event.local:8080 info health --ready
@@ -1583,8 +1539,8 @@ done
 
 ## 17. Appendix: CLI ↔ REST mapping
 
-All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All 40 OpenAPI
-operations declared in `openapi/opal_event_v1.7.1.yaml` (including `openapi/shared/opal_kernel.yaml`) are
+All REST endpoints reside under `/api/v1`. Collection endpoints use trailing slashes. All OpenAPI
+operations declared in `openapi/opal_event_v0.1.0.yaml` (including `openapi/shared/opal_kernel.yaml`) are
 mapped below:
 
 | CLI command | HTTP method | API endpoint | If-Match / ETag |
@@ -1609,18 +1565,20 @@ mapped below:
 | `opal event actions execute` | `POST` | `/api/v1/action/{action_id}/execute` | None |
 | `opal event executions list` | `GET` | `/api/v1/execution/` | None |
 | `opal event executions get` | `GET` | `/api/v1/execution/{execution_id}` | None |
-| `opal event settings get` | `GET` | `/api/v1/setting/` | Response carries strong `ETag` |
-| `opal event settings update` | `PATCH` | `/api/v1/setting/` | Required (`If-Match`; auto-fetched) |
-| `opal event settings get-key` | `GET` | `/api/v1/setting/{key}` | None |
-| `opal event settings set-key` | `PUT` | `/api/v1/setting/{key}` | Required (`If-Match`; auto-fetched) |
-| `opal event settings reset-key` | `DELETE` | `/api/v1/setting/{key}` | Required (`If-Match`; auto-fetched) |
-| `opal event backup export` | `GET` | `/api/v1/backup/export` | None |
-| `opal event backup validate` | `POST` | `/api/v1/backup/validate` | None |
-| `opal event backup import` | `POST` | `/api/v1/backup/import` | Required (`If-Match`; auto-fetched) |
+| `opal event config setting list` | `GET` | `/api/v1/setting/` | Response carries strong `ETag` |
+| `opal event config setting show` | `GET` | `/api/v1/setting/{key}` | None |
+| `opal event config setting set` | `PUT` | `/api/v1/setting/{key}` | Required (`If-Match`; auto-fetched) |
+| `opal event config setting remove` | `DELETE` | `/api/v1/setting/{key}` | Required (`If-Match`; auto-fetched) |
+| `opal event config save` | `POST` | `/api/v1/config/save` | Response carries captured revision `ETag` |
+| `opal event config load` | `POST` | `/api/v1/config/load` | Required (`If-Match`; auto-fetched) |
+| `opal event config validate` | `POST` | `/api/v1/config/validate` | None |
+| `opal event profile list` | `GET` | `/api/v1/profile/` | Response carries strong `ETag` |
+| `opal event profile add` | `POST` | `/api/v1/profile/` | Required (`If-Match`; auto-fetched) |
+| `opal event profile show` | `GET` | `/api/v1/profile/{profile_id}` | Response carries strong `ETag` |
+| `opal event profile update` | `PATCH` | `/api/v1/profile/{profile_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event profile remove` | `DELETE` | `/api/v1/profile/{profile_id}` | Required (`If-Match`; auto-fetched) |
+| `opal event profile activate` | `POST` | `/api/v1/profile/{profile_id}/activate` | Required (`If-Match`; auto-fetched) |
 | `opal event info health` | `GET` | `/api/v1/health/` | None |
-| `opal event info stats` | `GET` | `/api/v1/stats/` | None |
-| `opal event info get` | `GET` | `/api/v1/info/` | None |
-| `opal event info ping` | `GET` | `/api/v1/info/ping` | None (no auth required) |
 | `opal event personas list` | `GET` | `/api/v1/persona/` | Response carries strong `ETag` |
 | `opal event personas create` | `POST` | `/api/v1/persona/` | Required (`If-Match`; auto-fetched) |
 | `opal event personas get` | `GET` | `/api/v1/persona/{persona_id}` | Response carries strong `ETag` |

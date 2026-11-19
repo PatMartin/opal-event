@@ -36,7 +36,7 @@ class TestExecuteScopeAllowed:
             assert c.get("/api/v1/action/echo_action", headers=_EXEC).status_code == 200
 
     def test_list_topics(self, scoped_client) -> None:
-        # actions:read — "Discover registered actions and topics." (v1.7.1 x-opal-authorization)
+        # actions:read — "Discover registered actions and topics." (v0.1.0 x-opal-authorization)
         with scoped_client as c:
             assert c.get("/api/v1/topic/", headers=_EXEC).status_code == 200
 

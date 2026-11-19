@@ -20,7 +20,7 @@ from opal_event.service import EventService
 logger = logging.getLogger("opal_event.routers.operations")
 
 SERVICE_NAME = "opal-event-svc"
-SERVICE_VERSION = "1.7.1"
+SERVICE_VERSION = "0.1.0"
 API_VERSION = "v1"
 
 router = APIRouter()

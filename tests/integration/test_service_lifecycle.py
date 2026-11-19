@@ -1,4 +1,4 @@
-"""/api/v1/service/* : log tail, stop-on-nothing, and start/stop status shapes (v1.7.1).
+"""/api/v1/service/* : log tail, stop-on-nothing, and start/stop status shapes (v0.1.0 kernel service tag).
 Spawning a real managed child is covered by the CLI e2e path, not here — these tests
 exercise the REST contract and the pidfile/bookkeeping logic directly."""
 

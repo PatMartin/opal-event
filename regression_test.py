@@ -135,18 +135,27 @@ def t_health_ready():
     check(r.json()["status"] == "ok", f"ready body {r.json()}")
 
 
+def _stats() -> dict:
+    r = CLIENT.get("/api/v1/health/")
+    check(r.status_code == 200, f"health -> {r.status_code}")
+    return r.json().get("details", {}).get("stats", {})
+
+
 def t_health_fields():
     r = CLIENT.get("/api/v1/health/")
     check(r.status_code == 200, f"health -> {r.status_code}")
     body = r.json()
-    for key in ("status", "broker_running", "database_ready", "pending_restart"):
+    for key in ("status", "live", "ready", "details", "pending_restart", "pending_restart_fields"):
         check(key in body, f"health missing '{key}'")
-    check(body["status"] == "ok" and body["broker_running"] and body["database_ready"], f"degraded: {body}")
+    details = body.get("details", {})
+    check(
+        body["status"] == "ok" and details.get("broker_running") and details.get("database_ready"),
+        f"degraded: {body}",
+    )
 
 
 def t_stats_fields():
-    r = CLIENT.get("/api/v1/stats/")
-    check(r.status_code == 200, f"stats -> {r.status_code}")
+    stats = _stats()
     for key in (
         "observed_events",
         "invalid_events",
@@ -157,7 +166,7 @@ def t_stats_fields():
         "queue_depth",
         "active_workers",
     ):
-        check(key in r.json(), f"stats missing '{key}'")
+        check(key in stats, f"details.stats missing '{key}'")
 
 
 def t_opal_headers_echoed():
@@ -391,7 +400,7 @@ def t_action_delete():
     check(r.status_code == 204, f"delete w/ If-Match -> {r.status_code}")
 
 
-def t_settings_get_and_patch():
+def t_settings_get_and_put():
     r = CLIENT.get("/api/v1/setting/")
     check(r.status_code == 200, f"settings -> {r.status_code}")
     body = r.json()
@@ -507,7 +516,7 @@ def t_e2e_pipeline():
     r2 = CLIENT.post("/api/v1/event/", json={"topic": f"{TOPIC_BASE}.e2e.go", "data": {"person": False}})
     check(r2.status_code == 202, "non-match publish failed")
     eid2 = r2.json()["id"]
-    if CLIENT.get("/api/v1/setting/").json()["persistence"]["event_mode"] == "all":
+    if CLIENT.get("/api/v1/setting/").json().get("persistence.event_mode") == "all":
         poll_until(lambda: CLIENT.get(f"/api/v1/event/{eid2}").status_code == 200, "non-matching event persisted")
     else:
         time.sleep(2)  # no persistence signal for unmatched events; best-effort wait
@@ -561,13 +570,13 @@ def t_zmq_publish():
 
 
 def t_zmq_invalid_frame():
-    before = CLIENT.get("/api/v1/stats/").json()["invalid_events"]
+    before = _stats()["invalid_events"]
     # frame topic != envelope topic -> observer must reject it (proxy still forwards fine)
     _zmq_send([f"{TOPIC_BASE}.frame".encode(), json.dumps({"topic": "mismatched.topic", "data": {}}).encode()])
 
     def bumped():
-        r = CLIENT.get("/api/v1/stats/")
-        return r if r.status_code == 200 and r.json()["invalid_events"] > before else None
+        stats = _stats()
+        return stats if stats.get("invalid_events", 0) > before else None
 
     poll_until(bumped, "invalid_events counter increment")
 
@@ -606,7 +615,7 @@ TESTS = [
     ("execution terminal state", t_execution_reaches_terminal),
     ("executions list + filters", t_executions_list),
     ("action delete 428/204", t_action_delete),
-    ("settings get + patch", t_settings_get_and_patch),
+    ("settings list + per-key put", t_settings_get_and_put),
     ("config snapshot save/validate/load", t_config_snapshot_save_validate_load),
     ("profiles catalog + activate", t_profiles),
     ("managed snapshot roundtrip", t_managed_snapshot_roundtrip),

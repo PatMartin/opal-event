@@ -83,8 +83,7 @@ class PublishReceipt(Strict):
 EventList = list[Event]
 
 
-class TopicList(Strict):
-    items: list[str]
+TopicList = list[str]
 
 
 # --------------------------------------------------------------------------------------
@@ -332,7 +331,7 @@ ActionList = list[Action]
 # Executions
 # --------------------------------------------------------------------------------------
 
-ExecutionStatus = Literal["queued", "running", "succeeded", "failed", "timed_out", "dropped"]
+ExecutionStatus = Literal["queued", "running", "completed", "failed", "timed_out", "dropped"]
 
 
 class Execution(Strict):

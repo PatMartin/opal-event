@@ -41,7 +41,7 @@ class TestExecutor:
                 security_settings=SecuritySettings(),
             )
             assert record.status == "queued"
-            assert wait_until(lambda: db.get_execution(record.id)["status"] == "succeeded")
+            assert wait_until(lambda: db.get_execution(record.id)["status"] == "completed")
             assert metrics.get("executions_completed") == 1
         finally:
             executor.stop()
@@ -101,7 +101,7 @@ class TestExecutor:
     def test_fast_job_does_not_remain_queued_due_to_worker_race(self, tmp_path):
         db = Database(tmp_path / "t.db")
         metrics = Metrics()
-        # Fast jobs executed by active worker must transition to succeeded and never be overwritten to queued.
+        # Fast jobs executed by active worker must transition to completed and never be overwritten to queued.
         executor = Executor(db, metrics, queue_size=10, max_workers=2)
         executor.start()
         try:
@@ -123,10 +123,10 @@ class TestExecutor:
             ]
 
             for record in records:
-                assert wait_until(lambda r=record: db.get_execution(r.id)["status"] == "succeeded")
+                assert wait_until(lambda r=record: db.get_execution(r.id)["status"] == "completed")
                 exec_row = db.get_execution(record.id)
                 assert exec_row is not None
-                assert exec_row["status"] == "succeeded"
+                assert exec_row["status"] == "completed"
         finally:
             executor.stop()
 
@@ -176,7 +176,7 @@ class TestExecutor:
             )
 
             assert wait_until(lambda: db.get_execution(record_fail.id)["status"] == "failed")
-            assert wait_until(lambda: db.get_execution(record_ok.id)["status"] == "succeeded")
+            assert wait_until(lambda: db.get_execution(record_ok.id)["status"] == "completed")
 
             row_fail = db.get_execution(record_fail.id)
             assert row_fail is not None
@@ -189,7 +189,7 @@ class TestExecutor:
 
             row_ok = db.get_execution(record_ok.id)
             assert row_ok is not None
-            assert row_ok["status"] == "succeeded"
+            assert row_ok["status"] == "completed"
             assert row_ok["started_at"] is not None
             assert row_ok["finished_at"] is not None
             assert row_ok["duration_ms"] is not None
@@ -342,7 +342,7 @@ class TestExecutor:
 
             # All admitted jobs (r0, r1, r2, r3, r5) must succeed
             for r in (r0, r1, r2, r3, r5):
-                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "completed", timeout=3)
 
             assert metrics.get("executions_completed") == 5
             assert metrics.get("executions_dropped") == 1
@@ -480,7 +480,7 @@ class TestExecutor:
             # Unblock worker and verify all accepted jobs finish
             unblock_worker.set()
             for r in (r0, r1, r2, r4, r5):
-                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "completed", timeout=3)
 
             assert metrics.get("executions_completed") == 5
             assert metrics.get("executions_dropped") == 2
@@ -564,8 +564,8 @@ class TestExecutor:
             unblock_job1.set()
 
             assert wait_until(lambda: metrics.get("active_workers") == 0, timeout=3)
-            assert wait_until(lambda: db.get_execution(r0.id)["status"] == "succeeded", timeout=3)
-            assert wait_until(lambda: db.get_execution(r1.id)["status"] == "succeeded", timeout=3)
+            assert wait_until(lambda: db.get_execution(r0.id)["status"] == "completed", timeout=3)
+            assert wait_until(lambda: db.get_execution(r1.id)["status"] == "completed", timeout=3)
             assert metrics.get("executions_completed") == 2
         finally:
             unblock_job0.set()
@@ -669,11 +669,11 @@ class TestExecutor:
 
             # The 3 running jobs must complete successfully
             for r in (r0, r1, r2):
-                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "completed", timeout=3)
 
             # The 2 surplus workers retire without taking jobs 3 and 4; the single remaining worker processes them
             for r in (r3, r4):
-                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "succeeded", timeout=3)
+                assert wait_until(lambda rec=r: db.get_execution(rec.id)["status"] == "completed", timeout=3)
 
             assert wait_until(lambda: metrics.get("active_workers") == 0, timeout=3)
             assert metrics.get("executions_completed") == 5
@@ -696,7 +696,7 @@ class TestExecutorShutdown:
             if action.id == "blocking":
                 running.set()
                 release.wait(timeout=10)
-            return ExecutionOutcome(status="succeeded", exit_code=0)
+            return ExecutionOutcome(status="completed", exit_code=0)
 
         monkeypatch.setattr(executor_module, "run_action", mock_run_action)
         return running, release
@@ -742,7 +742,7 @@ class TestExecutorShutdown:
             release.set()
             stopper.join(timeout=5)
             assert not stopper.is_alive()
-            assert db.get_execution(r0.id)["status"] == "succeeded"  # running job finished, not dropped
+            assert db.get_execution(r0.id)["status"] == "completed"  # running job finished, not dropped
             assert executor.queue_depth == 0
         finally:
             release.set()
@@ -765,7 +765,7 @@ class TestExecutorShutdown:
             release.set()
             stopper.join(timeout=5)
             assert not stopper.is_alive()
-            assert db.get_execution(r0.id)["status"] == "succeeded"
+            assert db.get_execution(r0.id)["status"] == "completed"
             assert executor.worker_count == 0
         finally:
             release.set()
@@ -837,7 +837,7 @@ class TestExecutorShutdown:
             stopped.set()
             time.sleep(0.3)  # any surviving worker would write its result now
             assert late_writes == []
-            assert db.get_execution(r0.id)["status"] == "succeeded"
+            assert db.get_execution(r0.id)["status"] == "completed"
             db.close()  # provably safe: no writer can still be alive
         finally:
             release.set()

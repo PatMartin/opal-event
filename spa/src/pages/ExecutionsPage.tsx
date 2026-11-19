@@ -54,7 +54,7 @@ export default function ExecutionsPage() {
           Filter by status
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">(any)</option>
-            {["queued", "running", "succeeded", "failed", "timed_out", "dropped"].map((s) => (
+            {["queued", "running", "completed", "failed", "timed_out", "dropped"].map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>

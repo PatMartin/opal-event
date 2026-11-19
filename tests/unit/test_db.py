@@ -73,14 +73,14 @@ class TestDatabaseExecutions:
         db.insert_execution(
             {"id": "x1", "action_id": "a1", "status": "queued", "trigger": "manual", "created_at": "2026-01-01T00:00:00Z"}
         )
-        db.update_execution("x1", status="succeeded", result={"ok": True})
+        db.update_execution("x1", status="completed", result={"ok": True})
         execution = db.get_execution("x1")
-        assert execution["status"] == "succeeded"
+        assert execution["status"] == "completed"
         assert execution["result"] == {"ok": True}
 
     def test_list_executions_filters_by_status(self, tmp_path):
         db = Database(tmp_path / "t.db")
-        db.insert_execution({"id": "x1", "action_id": "a1", "status": "succeeded", "trigger": "manual", "created_at": "t"})
+        db.insert_execution({"id": "x1", "action_id": "a1", "status": "completed", "trigger": "manual", "created_at": "t"})
         db.insert_execution({"id": "x2", "action_id": "a1", "status": "failed", "trigger": "manual", "created_at": "t"})
         items = db.list_executions(status="failed")
         assert [e["id"] for e in items] == ["x2"]
@@ -89,7 +89,7 @@ class TestDatabaseExecutions:
         db = Database(tmp_path / "t.db")
         db.insert_event({"id": "old", "topic": "a", "source": "s", "timestamp": "2000-01-01T00:00:00Z", "data": {}})
         db.insert_execution(
-            {"id": "old", "action_id": "a1", "status": "succeeded", "trigger": "manual", "created_at": "2000-01-01T00:00:00Z"}
+            {"id": "old", "action_id": "a1", "status": "completed", "trigger": "manual", "created_at": "2000-01-01T00:00:00Z"}
         )
         db.cleanup_retention(retention_days=7)
         assert db.get_event("old") is None
@@ -128,12 +128,25 @@ class TestReconcileInterrupted:
         assert row["error_code"] == "service_restart"
         assert row["started_at"] == "2026-01-01T00:00:01Z" and row["finished_at"] is not None
 
+    def test_legacy_succeeded_rows_migrate_to_completed(self, tmp_path):
+        """v0.1.0 lifecycle rename: a DB written by v1.7.1 (status='succeeded') reopens with
+        'completed' so pre-migration execution history stays readable."""
+        path = tmp_path / "t.db"
+        db = Database(path)
+        db.insert_execution(self._row("e1", "completed", finished_at="2026-01-02T00:00:00Z"))
+        with db._lock, db._conn:
+            db._conn.execute("UPDATE executions SET status='succeeded' WHERE id='e1'")
+        db.close()
+        db = Database(path)
+        assert db.get_execution("e1")["status"] == "completed"
+        db.close()
+
     def test_terminal_rows_untouched(self, tmp_path):
         db = Database(tmp_path / "t.db")
-        for i, s in enumerate(("succeeded", "failed", "timed_out", "dropped")):
+        for i, s in enumerate(("completed", "failed", "timed_out", "dropped")):
             db.insert_execution(self._row(f"e{i}", s, finished_at="2026-01-02T00:00:00Z"))
         assert db.reconcile_interrupted_executions() == 0
-        for i, s in enumerate(("succeeded", "failed", "timed_out", "dropped")):
+        for i, s in enumerate(("completed", "failed", "timed_out", "dropped")):
             row = db.get_execution(f"e{i}")
             assert row["status"] == s and row["finished_at"] == "2026-01-02T00:00:00Z"
 
@@ -158,7 +171,7 @@ class TestRetention:
         return {"id": eid, "topic": "a.b", "source": "t", "timestamp": ts, "data": {}}
 
     def _exec(self, eid, ts):
-        return {"id": eid, "action_id": "a1", "status": "succeeded", "trigger": "manual", "created_at": ts}
+        return {"id": eid, "action_id": "a1", "status": "completed", "trigger": "manual", "created_at": ts}
 
     def test_expired_event_deleted(self, tmp_path):
         db = Database(tmp_path / "t.db")

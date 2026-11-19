@@ -22,7 +22,7 @@ from opal_event.models import Action, ExecutionSettings, HttpAction, PythonActio
 
 @dataclass
 class ExecutionOutcome:
-    status: str  # succeeded | failed | timed_out
+    status: str  # completed | failed | timed_out
     exit_code: int | None = None
     http_status: int | None = None
     stdout: str | None = None

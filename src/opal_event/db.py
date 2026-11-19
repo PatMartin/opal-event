@@ -125,6 +125,11 @@ class Database:
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(events)")}
         if "matched" not in cols:
             self._conn.execute("ALTER TABLE events ADD COLUMN matched INTEGER")
+        # Lifecycle vocabulary v0.1.0: 'succeeded' renamed 'completed'. Rewrite stored terminal
+        # rows in place so existing execution history stays readable under the new vocabulary.
+        migrated = self._conn.execute("UPDATE executions SET status='completed' WHERE status='succeeded'").rowcount
+        if migrated:
+            logger.info("migrated %d execution row(s) from status 'succeeded' to 'completed'", migrated)
 
     def close(self) -> None:
         with self._lock:

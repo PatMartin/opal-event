@@ -30,30 +30,30 @@ def _shell(code: str) -> ShellAction:
 class TestShellBoundedCapture:
     def test_output_below_limit(self):
         outcome = run_shell_action(_shell("print('hi')"), {"topic": "t", "data": {}}, timeout=10, max_output_bytes=65536)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.stdout.strip() == "hi"
         assert outcome.stderr == ""
 
     def test_output_greatly_exceeding_limit(self):
         code = "import sys; sys.stdout.write('x' * 200000)"
         outcome = run_shell_action(_shell(code), {"topic": "t", "data": {}}, timeout=10, max_output_bytes=1024)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.stdout.startswith("x" * 1024)
         assert outcome.stdout.endswith("...[truncated]")
 
     def test_simultaneous_stdout_and_stderr_both_bounded(self):
         code = "import sys; sys.stdout.write('o' * 50000); sys.stdout.flush(); sys.stderr.write('e' * 50000); sys.stderr.flush()"
         outcome = run_shell_action(_shell(code), {"topic": "t", "data": {}}, timeout=10, max_output_bytes=512)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.stdout.startswith("o" * 512) and outcome.stdout.endswith("...[truncated]")
         assert outcome.stderr.startswith("e" * 512) and outcome.stderr.endswith("...[truncated]")
 
     def test_zero_byte_limit(self):
         loud = run_shell_action(_shell("print('loud')"), {"topic": "t", "data": {}}, timeout=10, max_output_bytes=0)
-        assert loud.status == "succeeded"
+        assert loud.status == "completed"
         assert loud.stdout == "...[truncated]"
         quiet = run_shell_action(_shell("pass"), {"topic": "t", "data": {}}, timeout=10, max_output_bytes=0)
-        assert quiet.status == "succeeded"
+        assert quiet.status == "completed"
         assert quiet.stdout == ""
 
     def test_timeout_while_flooding_output(self):
@@ -84,7 +84,7 @@ class TestPluginBoundedCapture:
 
     def test_small_json_result_preserved(self, plugin):
         outcome = run_python_action(self._action("small"), {"topic": "t", "data": {"n": 7}}, timeout=15, max_output_bytes=65536)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.result == {"ok": True, "n": 7}
 
     def test_oversized_json_rejected_not_parsed(self, plugin):

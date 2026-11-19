@@ -67,6 +67,6 @@ def run_shell_action(action: ShellAction, event: dict[str, Any], timeout: int, m
 
     stdout = decode_bounded(out)
     stderr = decode_bounded(err)
-    status = "succeeded" if proc.returncode == 0 else "failed"
-    error_code = None if status == "succeeded" else "nonzero_exit"
+    status = "completed" if proc.returncode == 0 else "failed"
+    error_code = None if status == "completed" else "nonzero_exit"
     return ExecutionOutcome(status=status, exit_code=proc.returncode, stdout=stdout, stderr=stderr, error_code=error_code)

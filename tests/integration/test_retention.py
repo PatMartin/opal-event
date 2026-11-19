@@ -18,7 +18,7 @@ def test_startup_runs_retention_cleanup(tmp_path):
     pre = Database(db_path)
     pre.insert_event({"id": "expired", "topic": "a.b", "source": "t", "timestamp": "2020-01-01T00:00:00Z", "data": {}})
     pre.insert_execution(
-        {"id": "expired-x", "action_id": "a1", "status": "succeeded", "trigger": "manual", "created_at": "2020-01-01T00:00:00Z"}
+        {"id": "expired-x", "action_id": "a1", "status": "completed", "trigger": "manual", "created_at": "2020-01-01T00:00:00Z"}
     )
     pre.insert_event({"id": "fresh", "topic": "a.b", "source": "t", "timestamp": "2999-01-01T00:00:00Z", "data": {}})
     pre.close()

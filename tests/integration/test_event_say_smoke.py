@@ -1,7 +1,7 @@
 """Event → Say smoke test (step 7): real Event broker routes a synthetic ``say.request``
 event through an Event rule to the ``say_request`` plugin action, which POSTs a
 GenerateRequest to a speech endpoint and saves the WAV. The trace is verified
-event-id → succeeded execution receipt → valid WAV (RIFF + positive frame count).
+event-id → completed execution receipt → valid WAV (RIFF + positive frame count).
 
 Two variants:
 - ``test_event_to_say_fake_engine`` — self-contained; a stub HTTP endpoint emits a
@@ -91,7 +91,7 @@ def _wait_terminal(client, execution_id, timeout=30):
     deadline = time.time() + timeout
     while time.time() < deadline:
         row = client.get(f"/api/v1/execution/{execution_id}").json()
-        if row["status"] in ("succeeded", "failed", "timed_out", "dropped"):
+        if row["status"] in ("completed", "failed", "timed_out", "dropped"):
             return row
         time.sleep(0.5)
     raise AssertionError(f"execution {execution_id} did not reach a terminal state")
@@ -108,7 +108,7 @@ def _run_flow(client, data, wav_out):
         time.sleep(0.25)
     assert rows, "no execution admitted for the event"
     final = _wait_terminal(client, rows[0]["id"])
-    assert final["status"] == "succeeded", final
+    assert final["status"] == "completed", final
     # WAV validation: RIFF container + positive frame count.
     with wave.open(str(wav_out), "rb") as w:
         assert w.getnframes() > 0

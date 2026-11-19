@@ -69,7 +69,7 @@ class TestRunHttpActionHeaders:
         monkeypatch.setattr(httpx.Client, "send", mock_send)
 
         outcome = run_http_action(action, event, timeout=5, max_output_bytes=1000, allowlist=ALLOWLIST)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.http_status == 200
         assert captured["trust_env"] is False
         assert captured["headers"]["x-static"] == "constant-value"
@@ -130,7 +130,7 @@ class TestRunHttpActionStreaming:
         monkeypatch.setattr(httpx.Client, "send", mock_send)
 
         outcome = run_http_action(action, {}, timeout=5, max_output_bytes=1000, allowlist=ALLOWLIST)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.http_status == 200
         assert outcome.result == {"status": "ok", "value": 42}
         assert response_closed is True
@@ -173,7 +173,7 @@ class TestRunHttpActionStreaming:
 
         # max_output_bytes is 50. It should read up to 50 bytes and then stop streaming & close.
         outcome = run_http_action(action, {}, timeout=5, max_output_bytes=50, allowlist=ALLOWLIST)
-        assert outcome.status == "succeeded"
+        assert outcome.status == "completed"
         assert outcome.http_status == 200
         assert isinstance(outcome.result, str)
         assert outcome.result.endswith("...[truncated]")

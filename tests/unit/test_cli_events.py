@@ -19,7 +19,7 @@ EVENT = {"id": "evt_1", "topic": "vision.object.detected", "source": "test", "ti
 RESPONSES = {
     "/api/v1/event/": (200, [EVENT]),
     "/api/v1/event/evt_1": (200, EVENT),
-    "/api/v1/topic/": (200, {"items": ["vision.object.detected"]}),
+    "/api/v1/topic/": (200, ["vision.object.detected"]),
 }
 
 

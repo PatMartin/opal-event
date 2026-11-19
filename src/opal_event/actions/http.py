@@ -95,9 +95,9 @@ def run_http_action(
             result = json.loads(text)
         except (json.JSONDecodeError, ValueError):
             result = text
-    status = "succeeded" if 200 <= response.status_code < 300 else "failed"
-    error_code = None if status == "succeeded" else "http_status_error"
-    error_message = None if status == "succeeded" else f"HTTP {response.status_code}"
+    status = "completed" if 200 <= response.status_code < 300 else "failed"
+    error_code = None if status == "completed" else "http_status_error"
+    error_message = None if status == "completed" else f"HTTP {response.status_code}"
     return ExecutionOutcome(
         status=status,
         http_status=response.status_code,

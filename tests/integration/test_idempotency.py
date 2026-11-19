@@ -66,7 +66,7 @@ def _wait_terminal(client: TestClient, execution_id: str, timeout: float = 10.0,
     deadline = time.time() + timeout
     while time.time() < deadline:
         r = client.get(f"/api/v1/execution/{execution_id}", headers=headers)
-        if r.status_code == 200 and r.json()["status"] in ("succeeded", "failed", "dropped", "timed_out"):
+        if r.status_code == 200 and r.json()["status"] in ("completed", "failed", "dropped", "timed_out"):
             return r.json()
         time.sleep(0.05)
     raise AssertionError(f"execution {execution_id} never reached a terminal state")
@@ -88,7 +88,7 @@ def _wait_executions(client: TestClient, action_id: str, expected: int, timeout:
         rows = [
             e
             for e in client.get("/api/v1/execution/", params={"action_id": action_id}).json()
-            if e["status"] in ("succeeded", "failed", "dropped", "timed_out")
+            if e["status"] in ("completed", "failed", "dropped", "timed_out")
         ]
         if len(rows) >= expected:
             return rows
@@ -113,7 +113,7 @@ class TestManualIdempotency:
         r1 = _execute(client, BODY, key="k-1")
         assert r1.status_code == 202, r1.text
         first = _wait_terminal(client, r1.json()["id"])
-        assert first["status"] == "succeeded", first
+        assert first["status"] == "completed", first
 
         r2 = _execute(client, BODY, key="k-1")
         assert r2.status_code == 202, r2.text
@@ -197,7 +197,7 @@ class TestRuleRedelivery:
         self._publish(rule_client, str(uuid.uuid4()))
         rows = _wait_executions(rule_client, "count_action", 2)
         assert {r["rule_id"] for r in rows} == {"rule_a", "rule_b"}
-        assert all(r["status"] == "succeeded" for r in rows)
+        assert all(r["status"] == "completed" for r in rows)
 
     def test_redelivered_event_does_not_rerun(self, rule_client):
         event_id = str(uuid.uuid4())

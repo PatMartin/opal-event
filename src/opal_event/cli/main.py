@@ -231,7 +231,7 @@ def _clear_events(ctx: typer.Context) -> None:
 
 
 def _topics(ctx: typer.Context) -> None:
-    _emit(ctx, _call(ctx, "list_topics").json()["items"])
+    _emit(ctx, _call(ctx, "list_topics").json())
 
 
 @event_app.command("list")

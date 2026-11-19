@@ -90,7 +90,7 @@ th {
 }
 
 .badge.ok,
-.badge.succeeded,
+.badge.completed,
 .badge.enabled {
   background: #1d3b2a;
   color: #4ade80;

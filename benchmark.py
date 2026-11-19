@@ -13,7 +13,7 @@ What is measured, per scenario:
   publish_lat    mean per-request acceptance latency, ms (REST only; ZMQ send is fire-and-forget)
   observed       events/min reaching the observer copy (stats.observed_events delta)
   matched        events/min matching >=1 enabled rule (stats.matched_events delta)
-  exec_done      executions/min reaching a terminal state (succeeded+failed+dropped delta)
+  exec_done      executions/min reaching a terminal state (completed+failed+dropped delta)
   drain_s        seconds for the observer to catch up after the last event was sent (lag)
   queue_peak     max executor queue_depth sampled during the run
   dropped        executions dropped (queue_full / shutdown) during the run

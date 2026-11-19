@@ -154,7 +154,7 @@ def delete_event(event_id: str, service: Annotated[EventService, Depends(get_ser
 @router.get("/api/v1/topic/", response_model=TopicList)
 def list_topics(service: Annotated[EventService, Depends(get_service)], response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
-    return TopicList(items=service.db.list_topics())
+    return service.db.list_topics()
 
 
 @router.delete("/api/v1/event/", status_code=204)

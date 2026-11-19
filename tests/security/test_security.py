@@ -126,7 +126,7 @@ class TestShellArgvIsolation:
                 json={"event": {"topic": "t", "data": {"payload": malicious}}},
             )
             execution_id = resp.json()["id"]
-            assert wait_until(lambda: c.get(f"/api/v1/execution/{execution_id}").json()["status"] == "succeeded")
+            assert wait_until(lambda: c.get(f"/api/v1/execution/{execution_id}").json()["status"] == "completed")
             execution = c.get(f"/api/v1/execution/{execution_id}").json()
             # The payload is echoed back verbatim as a single argv entry, not executed as shell code.
             assert execution["stdout"].strip() == malicious

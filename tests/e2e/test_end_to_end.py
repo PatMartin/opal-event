@@ -38,7 +38,7 @@ class TestEndToEndPipeline:
 
         def blocked_send(sock_self, frames, *args, **kwargs):
             send_started.set()
-            unblock_event.wait(timeout=5)
+            unblock_event.wait(timeout=60)
             return original_send(sock_self, frames, *args, **kwargs)
 
         monkeypatch.setattr(zmq.Socket, "send_multipart", blocked_send)
@@ -148,7 +148,7 @@ class TestEndToEndPipeline:
         events_resp = app_client.get("/api/v1/event/").json()
         assert events_resp == []
         topics_resp = app_client.get("/api/v1/topic/").json()
-        assert topics_resp["items"] == []
+        assert topics_resp == []
 
     def test_delete_event_operation(self, app_client):
         resp = app_client.post("/api/v1/event/", json={"topic": "vision.object.detected", "data": {"object": "person"}})
@@ -174,7 +174,7 @@ class TestEndToEndPipeline:
         )
         assert resp.status_code == 202
         execution_id = resp.json()["id"]
-        assert wait_until(lambda: app_client.get(f"/api/v1/execution/{execution_id}").json()["status"] == "succeeded")
+        assert wait_until(lambda: app_client.get(f"/api/v1/execution/{execution_id}").json()["status"] == "completed")
         execution = app_client.get(f"/api/v1/execution/{execution_id}").json()
         assert execution["result"] == {"received_topic": "manual.test", "object": "cat"}
 

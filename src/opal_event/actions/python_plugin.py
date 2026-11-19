@@ -67,4 +67,4 @@ def run_python_action(action: PythonAction, event: dict[str, Any], timeout: int,
             error_code="invalid_result",
             error_message=f"plugin stdout was not valid JSON: {exc}",
         )
-    return ExecutionOutcome(status="succeeded", exit_code=proc.returncode, result=result, stderr=stderr)
+    return ExecutionOutcome(status="completed", exit_code=proc.returncode, result=result, stderr=stderr)

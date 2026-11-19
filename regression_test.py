@@ -250,7 +250,7 @@ def t_topics_list():
         r = CLIENT.get("/api/v1/topic/")
         if r.status_code != 200:
             return None
-        return r if f"{TOPIC_BASE}.one" in r.json().get("items", []) else None
+        return r if f"{TOPIC_BASE}.one" in r.json() else None
 
     r = poll_until(found, "topic visible in /topics/")
     check(r.headers.get("etag"), "topics list missing ETag")
@@ -364,11 +364,11 @@ def t_execution_reaches_terminal():
         r = CLIENT.get(f"/api/v1/execution/{eid}")
         if r.status_code != 200:
             return None
-        return r if r.json()["status"] in ("succeeded", "failed", "timed_out", "dropped") else None
+        return r if r.json()["status"] in ("completed", "failed", "timed_out", "dropped") else None
 
     r = poll_until(done, f"execution {eid} terminal")
     ex = r.json()
-    check(ex["status"] == "succeeded", f"python action should succeed: {ex['status']} {ex.get('error_message')}")
+    check(ex["status"] == "completed", f"python action should succeed: {ex['status']} {ex.get('error_message')}")
     check(ex["started_at"] and ex["finished_at"] and ex["duration_ms"] is not None, "missing timing fields")
     check(ex.get("action_revision"), "missing action_revision")
 
@@ -485,10 +485,10 @@ def t_e2e_pipeline():
         if lr.status_code != 200 or not lr.json():
             return None
         ex = lr.json()[0]
-        return ex if ex["status"] in ("succeeded", "failed", "timed_out", "dropped") else None
+        return ex if ex["status"] in ("completed", "failed", "timed_out", "dropped") else None
 
     ex = poll_until(done, "rule->action execution terminal")
-    check(ex["status"] == "succeeded", f"pipeline execution: {ex['status']} {ex.get('error_message')}")
+    check(ex["status"] == "completed", f"pipeline execution: {ex['status']} {ex.get('error_message')}")
     check(ex["rule_id"] == E2E_RULE_ID and ex["trigger"] == "rule", f"wrong linkage: {ex}")
 
     # Non-matching event: no execution may appear. The observer evaluates rules and synchronously

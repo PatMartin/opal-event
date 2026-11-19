@@ -127,7 +127,7 @@ export const api = {
   clearEvents: () => request<void>(opMethod("clear_events"), opPath("clear_events")),
   getEvent: (eventId: string) =>
     request<import("./types").EventItem>(opMethod("show_event"), opPath("show_event", { event_id: eventId })),
-  listTopics: () => request<{ items: string[] }>(opMethod("list_topics"), opPath("list_topics")),
+  listTopics: () => request<string[]>(opMethod("list_topics"), opPath("list_topics")),
 
   // Rules/Actions are bounded configuration catalogs as of opal_event.1.2.0.yaml: GET returns the
   // complete collection (no cursor/limit) with a strong ETag, and PATCH/DELETE require a matching

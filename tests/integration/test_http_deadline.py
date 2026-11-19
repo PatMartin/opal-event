@@ -59,7 +59,7 @@ def _allowlist(port):
 
 def test_normal_endpoint_succeeds(server):
     out = run_http_action(_action(server.server_port, "/"), {}, 5, 65536, _allowlist(server.server_port))
-    assert out.status == "succeeded" and out.http_status == 200
+    assert out.status == "completed" and out.http_status == 200
     assert out.result == {"ok": True}
 
 
@@ -72,10 +72,10 @@ def test_slow_drip_expires_and_releases(server):
     assert elapsed < 10
     # The executor is free: a follow-up call runs normally.
     out2 = run_http_action(_action(server.server_port, "/"), {}, 5, 65536, _allowlist(server.server_port))
-    assert out2.status == "succeeded"
+    assert out2.status == "completed"
 
 
 def test_response_size_limit_preserved(server):
     out = run_http_action(_action(server.server_port, "/drip", timeout=10), {}, 10, 4, _allowlist(server.server_port))
-    assert out.status == "succeeded"
+    assert out.status == "completed"
     assert out.result.endswith("...[truncated]")

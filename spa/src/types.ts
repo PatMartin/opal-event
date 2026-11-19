@@ -72,7 +72,7 @@ export interface Execution {
   event_id: string | null;
   rule_id: string | null;
   action_id: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "timed_out" | "dropped";
+  status: "queued" | "running" | "completed" | "failed" | "timed_out" | "dropped";
   trigger: "rule" | "manual";
   created_at: string;
   started_at: string | null;

@@ -111,7 +111,7 @@ def test_execution_queue_saturation_is_dropped_status(tmp_path):
                 for r in receipts
                 for e in client.get("/api/v1/execution/", params={"event_id": r["id"]}).json()
             ]
-            if statuses and all(s in ("succeeded", "failed", "dropped", "timed_out") for s in statuses):
+            if statuses and all(s in ("completed", "failed", "dropped", "timed_out") for s in statuses):
                 break
             time.sleep(0.3)
         assert len(statuses) == 6

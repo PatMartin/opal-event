@@ -5,7 +5,7 @@ import RulesPage from "./pages/RulesPage";
 import ActionsPage from "./pages/ActionsPage";
 import ExecutionsPage from "./pages/ExecutionsPage";
 import SettingsPage from "./pages/SettingsPage";
-import BackupPage from "./pages/BackupPage";
+import SnapshotPage from "./pages/SnapshotPage";
 import HealthPage from "./pages/HealthPage";
 import PersonasPage from "./pages/PersonasPage";
 import ProfilesPage from "./pages/ProfilesPage";
@@ -19,7 +19,7 @@ const TABS = [
   { key: "profiles", label: "Profiles", component: ProfilesPage },
   { key: "executions", label: "Executions", component: ExecutionsPage },
   { key: "settings", label: "Settings", component: SettingsPage },
-  { key: "backup", label: "Backup", component: BackupPage },
+  { key: "snapshots", label: "Snapshots", component: SnapshotPage },
 ] as const;
 
 export default function App() {

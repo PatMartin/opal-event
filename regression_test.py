@@ -3,7 +3,7 @@
 
 Covers: health/stats, event publish + history + delete, topics, rules CRUD + If-Match
 preconditions + dry-test, actions CRUD + manual execute, executions, settings GET+PUT/key,
-backup export/validate/import, OPAL correlation headers, all three error shapes, scoped
+config snapshot save/load/validate, OPAL correlation headers, all three error shapes, scoped
 cursors, the REST->ZeroMQ->observer->rules->executor->DB pipeline, and the raw ZeroMQ
 publish path.
 
@@ -20,7 +20,7 @@ a 30-second overall budget (polling loops bail out early). Results are printed a
 PASS/FAIL/SKIP lines; exit code is 0 only when everything passes (skips are allowed).
 
 WARNING: this suite MUTATES the target service. It creates/deletes rules and actions, runs
-actions, re-imports the exported backup, and deletes some of its own events. Every config
+actions, re-loads a saved snapshot, and deletes some of its own events. Every config
 write makes the service rewrite its YAML file (comments are not preserved). Resources are
 namespaced with a per-run token and removed at the end; test events stay in history. Do not
 point it at a shared or production instance.
@@ -409,19 +409,21 @@ def t_settings_get_and_patch():
     check("configured_value" in rec and "has_override" in rec, f"SettingRead shape: {list(rec)}")
 
 
-def t_backup_export_validate_import():
-    r = CLIENT.get("/api/v1/backup/export")
-    check(r.status_code == 200, f"export -> {r.status_code}")
-    backup = r.json()
-    check(backup.get("format_version") == 1 and "actions" in backup and "rules" in backup, f"bad backup shape: {list(backup)}")
-    v = CLIENT.post("/api/v1/backup/validate", json=backup)
+def t_config_snapshot_save_validate_load():
+    r = CLIENT.post("/api/v1/config/save", json={"destination": "response"})
+    check(r.status_code == 200, f"config save -> {r.status_code}")
+    result = r.json()
+    snap = result["snapshot"]
+    check(result["managed"] is False, "response destination must not write the managed snapshot")
+    check(snap.get("format_version") == "1.0.0" and snap.get("module") == "opal-event", f"bad snapshot envelope: {list(snap)}")
+    check("actions" in snap["resources"] and "rules" in snap["resources"], f"bad snapshot resources: {list(snap['resources'])}")
+    v = CLIENT.post("/api/v1/config/validate", json={"snapshot": snap})
     check(v.status_code == 200 and v.json()["valid"] is True, f"validate -> {v.status_code} {v.text[:200]}")
-    r2 = CLIENT.post("/api/v1/backup/import", json=backup)
-    check(r2.status_code == 428, f"import w/o If-Match -> {r2.status_code} (want 428)")
+    r2 = CLIENT.post("/api/v1/config/load", json={"snapshot": snap})
+    check(r2.status_code == 428, f"load w/o If-Match -> {r2.status_code} (want 428)")
     etag = CLIENT.get("/api/v1/setting/").headers["etag"]
-    r3 = CLIENT.post("/api/v1/backup/import", json=backup, headers={"If-Match": etag})
-    check(r3.status_code == 200, f"import -> {r3.status_code} {r3.text[:200]}")
-    check("revision" in r3.json() and "pending_restart" in r3.json(), f"bad import result: {r3.text[:200]}")
+    r3 = CLIENT.post("/api/v1/config/load", json={"snapshot": snap}, headers={"If-Match": etag})
+    check(r3.status_code == 200 and r3.json()["applied"] is True, f"load -> {r3.status_code} {r3.text[:200]}")
 
 
 def t_profiles():
@@ -434,22 +436,17 @@ def t_profiles():
     etag = CLIENT.get("/api/v1/profile/").headers["etag"]
     r2 = CLIENT.post(f"/api/v1/profile/{pid}/activate", headers={"If-Match": etag})
     check(r2.status_code == 200 and r2.json()["is_active"] is True, f"activate -> {r2.status_code}")
-    check(CLIENT.get("/api/v1/setting/").json()["execution"]["max_workers"] == 2, "preset not applied")
+    check(CLIENT.get("/api/v1/setting/").json()["execution.max_workers"] == 2, "preset not applied")
     etag = CLIENT.get(f"/api/v1/profile/{pid}").headers["etag"]
     check(CLIENT.delete(f"/api/v1/profile/{pid}", headers={"If-Match": etag}).status_code == 204, "profile delete")
 
 
-def t_backup_archives():
-    r = CLIENT.post("/api/v1/backup/create")
-    check(r.status_code == 201, f"backup create -> {r.status_code}")
-    fn = r.json()["filename"]
-    check(r.headers.get("location") == f"/api/v1/backup/download/{fn}", "bad archive Location")
-    check(any(b["filename"] == fn for b in CLIENT.get("/api/v1/backup/list").json()), "archive not listed")
-    dl = CLIENT.get(f"/api/v1/backup/download/{fn}")
-    check(dl.status_code == 200 and dl.content[:2] == b"\x1f\x8b", "download not gzip")
+def t_managed_snapshot_roundtrip():
+    r = CLIENT.post("/api/v1/config/save", json={"destination": "managed"})
+    check(r.status_code == 200 and r.json()["managed"] is True, f"managed save -> {r.status_code} {r.text[:200]}")
     etag = CLIENT.get("/api/v1/setting/").headers["etag"]
-    check(CLIENT.post(f"/api/v1/backup/restore/{fn}", headers={"If-Match": etag}).status_code == 200, "restore")
-    check(CLIENT.delete(f"/api/v1/backup/{fn}").status_code == 204, "archive delete")
+    r2 = CLIENT.post("/api/v1/config/load", json={}, headers={"If-Match": etag})
+    check(r2.status_code == 200 and r2.json()["applied"] is True, f"managed load -> {r2.status_code} {r2.text[:200]}")
 
 
 def t_service_log():
@@ -602,9 +599,9 @@ TESTS = [
     ("executions list + filters", t_executions_list),
     ("action delete 428/204", t_action_delete),
     ("settings get + patch", t_settings_get_and_patch),
-    ("backup export/validate/import", t_backup_export_validate_import),
+    ("config snapshot save/validate/load", t_config_snapshot_save_validate_load),
     ("profiles catalog + activate", t_profiles),
-    ("backup archives lifecycle", t_backup_archives),
+    ("managed snapshot roundtrip", t_managed_snapshot_roundtrip),
     ("service log tail", t_service_log),
     ("e2e rule->action pipeline", t_e2e_pipeline),
     ("zmq raw publish", t_zmq_publish),

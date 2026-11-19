@@ -684,49 +684,69 @@ class Settings(Strict):
 
 
 # --------------------------------------------------------------------------------------
-# Backup
+# Configuration snapshots (v0.1.0 kernel ``config`` tag): OpalConfigSnapshot envelope
+# and the save/load/validate request/response shapes.
 # --------------------------------------------------------------------------------------
 
+SNAPSHOT_FORMAT_VERSION = "1.0.0"
+SNAPSHOT_MODULE = "opal-event"
+SNAPSHOT_RESOURCE_SECTIONS = ("profiles", "personas", "rules", "actions")
 
-class ConfigBackup(Strict):
-    format_version: Literal[1]
-    exported_at: str | None = None
-    settings: PortableSettings
-    actions: list[Action]
-    rules: list[Rule]
-    personas: list[PersonaRead] = Field(default_factory=list)
-    profiles: list[Profile] = Field(default_factory=list)
+
+class ConfigSnapshot(Strict):
+    """Kernel ``OpalConfigSnapshot``: closed envelope carrying flat setting-key overrides
+    plus the module's declarative resource sections (profiles/personas/rules/actions).
+    Persistent desired configuration only — never history, sessions, or secrets."""
+
+    format_version: str = SNAPSHOT_FORMAT_VERSION
+    module: str = SNAPSHOT_MODULE
+    created_at: str = Field(default_factory=_utcnow)
+    settings: dict[str, Any] = Field(default_factory=dict)
+    resources: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConfigSaveRequest(Strict):
+    destination: Literal["managed", "response"] = "managed"
+
+
+class ConfigSaveResult(Strict):
+    snapshot: ConfigSnapshot
+    managed: bool
+
+
+class ConfigLoadRequest(Strict):
+    """Kernel ``OpalConfigLoadRequest``. ``snapshot`` omitted/``{}`` loads the managed
+    snapshot; an explicit ``null`` is rejected in the handler (``model_fields_set``)."""
+
+    snapshot: ConfigSnapshot | None = None
+
+
+class ValidationIssue(Strict):
+    """Kernel ``OpalValidationIssue``."""
+
+    code: str
+    path: str
+    message: str
+
+
+class ConfigLoadResult(Strict):
+    applied: bool = True
+    pending_restart_fields: list[str] = Field(default_factory=list)
+    warnings: list[ValidationIssue] = Field(default_factory=list)
+
+
+class ConfigValidation(Strict):
+    """Kernel ``OpalConfigValidation``."""
+
+    valid: bool
+    errors: list[ValidationIssue] = Field(default_factory=list)
+    warnings: list[ValidationIssue] = Field(default_factory=list)
 
 
 class ValidationReport(Strict):
     valid: bool
     errors: list[str]
     warnings: list[str]
-
-
-class BackupImportResult(Strict):
-    revision: str
-    pending_restart: bool
-
-
-# --------------------------------------------------------------------------------------
-# Managed backup archives (v1.7.1): service-managed .tar.gz config bundles
-# --------------------------------------------------------------------------------------
-
-
-class BackupInfo(Strict):
-    """Kernel ``OpalBackupInfo``: metadata for one stored archive."""
-
-    filename: str
-    size_bytes: int
-    created_at: str
-
-
-class BackupCreateResponse(Strict):
-    """Kernel ``OpalBackupCreateResponse``."""
-
-    filename: str
-    message: str | None = None
 
 
 # --------------------------------------------------------------------------------------

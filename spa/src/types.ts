@@ -219,17 +219,6 @@ export interface ProfilePatch {
 // Managed backup archives + service lifecycle (v1.7.1)
 // ---------------------------------------------------------------------------
 
-export interface BackupInfo {
-  filename: string;
-  size_bytes: number;
-  created_at: string;
-}
-
-export interface BackupCreateResponse {
-  filename: string;
-  message?: string | null;
-}
-
 export interface ServiceStatus {
   state: "running" | "stopped";
   pid?: number | null;
@@ -242,25 +231,42 @@ export interface ServiceLogTail {
   lines: string[];
 }
 
-export interface ConfigBackup {
-  format_version: 1;
-  exported_at?: string | null;
-  settings: PortableSettings;
-  actions: Action[];
-  rules: Rule[];
-  personas: Persona[];
-  profiles: Profile[];
+// Configuration snapshots (v0.1.0 kernel `config` tag)
+export interface ConfigSnapshot {
+  format_version: string;
+  module: string;
+  created_at: string;
+  settings: Record<string, unknown>;
+  resources: Record<string, unknown[]>;
+}
+
+export interface ConfigSaveResult {
+  snapshot: ConfigSnapshot;
+  managed: boolean;
+}
+
+export interface ValidationIssue {
+  code: string;
+  path: string;
+  message: string;
+}
+
+export interface ConfigValidation {
+  valid: boolean;
+  errors: ValidationIssue[];
+  warnings: ValidationIssue[];
+}
+
+export interface ConfigLoadResult {
+  applied: boolean;
+  pending_restart_fields?: string[];
+  warnings?: ValidationIssue[];
 }
 
 export interface ValidationReport {
   valid: boolean;
   errors: string[];
   warnings: string[];
-}
-
-export interface BackupImportResult {
-  revision: string;
-  pending_restart: boolean;
 }
 
 export interface HealthProbe {
@@ -272,6 +278,13 @@ export interface HealthProbe {
 export interface SettingRead {
   key: string;
   value: unknown;
+  configured_value?: unknown;
+  updated_at?: string | null;
   default?: unknown;
+  has_override?: boolean;
   is_default: boolean;
+  source?: "default" | "persisted" | "dotenv" | "environment";
+  restart_required?: boolean;
+  pending_restart?: boolean;
+  warnings?: Record<string, unknown>[] | null;
 }

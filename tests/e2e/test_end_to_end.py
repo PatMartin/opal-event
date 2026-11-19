@@ -178,19 +178,18 @@ class TestEndToEndPipeline:
         execution = app_client.get(f"/api/v1/execution/{execution_id}").json()
         assert execution["result"] == {"received_topic": "manual.test", "object": "cat"}
 
-    def test_backup_export_validate_roundtrip(self, app_client):
-        exported = app_client.get("/api/v1/backup/export").json()
-        resp = app_client.post("/api/v1/backup/validate", json=exported)
+    def test_snapshot_save_validate_roundtrip(self, app_client):
+        snap = app_client.post("/api/v1/config/save", json={"destination": "response"}).json()["snapshot"]
+        resp = app_client.post("/api/v1/config/validate", json={"snapshot": snap})
         assert resp.status_code == 200
         assert resp.json()["valid"] is True
 
-    def test_backup_import_stale_if_match_is_412(self, app_client):
-        # v1.7.1: import takes the bare bundle with mandatory If-Match; stale -> 412.
-        exported = app_client.get("/api/v1/backup/export").json()
-        resp = app_client.post("/api/v1/backup/import", json=exported, headers={"If-Match": "definitely-stale"})
+    def test_snapshot_load_stale_if_match_is_412(self, app_client):
+        snap = app_client.post("/api/v1/config/save", json={"destination": "response"}).json()["snapshot"]
+        resp = app_client.post("/api/v1/config/load", json={"snapshot": snap}, headers={"If-Match": "definitely-stale"})
         assert resp.status_code == 412
 
-    def test_backup_import_missing_if_match_is_428(self, app_client):
-        exported = app_client.get("/api/v1/backup/export").json()
-        resp = app_client.post("/api/v1/backup/import", json=exported)
+    def test_snapshot_load_missing_if_match_is_428(self, app_client):
+        snap = app_client.post("/api/v1/config/save", json={"destination": "response"}).json()["snapshot"]
+        resp = app_client.post("/api/v1/config/load", json={"snapshot": snap})
         assert resp.status_code == 428

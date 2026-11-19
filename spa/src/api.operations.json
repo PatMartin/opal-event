@@ -119,21 +119,6 @@
     "path": "/api/v1/setting/",
     "client": "getSettings"
   },
-  "opal_backup_export": {
-    "method": "GET",
-    "path": "/api/v1/backup/export",
-    "client": "exportBackup"
-  },
-  "opal_backup_validate_post": {
-    "method": "POST",
-    "path": "/api/v1/backup/validate",
-    "client": "validateBackup"
-  },
-  "opal_backup_import": {
-    "method": "POST",
-    "path": "/api/v1/backup/import",
-    "client": "importBackup"
-  },
   "opal_setting_get": {
     "method": "GET",
     "path": "/api/v1/setting/{key}",
@@ -209,31 +194,6 @@
     "path": "/api/v1/profile/{profile_id}/activate",
     "client": "activateProfile"
   },
-  "opal_backup_list": {
-    "method": "GET",
-    "path": "/api/v1/backup/list",
-    "client": "listBackups"
-  },
-  "opal_backup_create": {
-    "method": "POST",
-    "path": "/api/v1/backup/create",
-    "client": "createBackup"
-  },
-  "opal_backup_download": {
-    "method": "GET",
-    "path": "/api/v1/backup/download/{filename}",
-    "client": "downloadBackup"
-  },
-  "opal_backup_restore": {
-    "method": "POST",
-    "path": "/api/v1/backup/restore/{filename}",
-    "client": "restoreBackup"
-  },
-  "opal_backup_delete": {
-    "method": "DELETE",
-    "path": "/api/v1/backup/{filename}",
-    "client": "deleteBackup"
-  },
   "opal_service_start": {
     "method": "POST",
     "path": "/api/v1/service/start",
@@ -248,5 +208,20 @@
     "method": "GET",
     "path": "/api/v1/service/log",
     "client": "serviceLog"
+  },
+  "opal_config_save": {
+    "method": "POST",
+    "path": "/api/v1/config/save",
+    "client": "saveConfigSnapshot"
+  },
+  "opal_config_load": {
+    "method": "POST",
+    "path": "/api/v1/config/load",
+    "client": "loadConfigSnapshot"
+  },
+  "opal_config_validate": {
+    "method": "POST",
+    "path": "/api/v1/config/validate",
+    "client": "validateConfigSnapshot"
   }
 }

@@ -37,7 +37,7 @@ def _route_path(request: Request) -> str | None:
 
 
 # Routes a publish-scoped producer may use: event admission plus the read-only
-# liveness/discovery surface. Everything else (rules, settings, executions, backups)
+# liveness/discovery surface. Everything else (rules, settings, executions, snapshots)
 # is admin-only — fail-closed like the execute scope.
 _PUBLISH_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {

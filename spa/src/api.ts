@@ -222,15 +222,24 @@ export const api = {
       "If-Match": ifMatch,
     }),
 
-  exportBackup: () => request<import("./types").ConfigBackup>(opMethod("opal_backup_export"), opPath("opal_backup_export")),
-  validateBackup: (backup: unknown) =>
-    request<import("./types").ValidationReport>(opMethod("opal_backup_validate_post"), opPath("opal_backup_validate_post"), backup),
-  // v1.7.1: the import body IS the ConfigBackup bundle (no {"backup": ...} wrapper);
-  // missing If-Match is 428 and stale is 412.
-  importBackup: (backup: unknown, ifMatch: string) =>
-    request<import("./types").BackupImportResult>(opMethod("opal_backup_import"), opPath("opal_backup_import"), backup, {
-      "If-Match": ifMatch,
-    }),
+  // Configuration snapshots (v0.1.0 kernel `config` tag): save returns a managed or
+  // response-destination snapshot; load atomically replaces the live configuration and
+  // requires If-Match (428 missing, 412 stale); validate is non-mutating.
+  saveConfigSnapshot: (destination: "managed" | "response") =>
+    request<import("./types").ConfigSaveResult>(opMethod("opal_config_save"), opPath("opal_config_save"), { destination }),
+  loadConfigSnapshot: (snapshot: unknown | null, ifMatch: string) =>
+    request<import("./types").ConfigLoadResult>(
+      opMethod("opal_config_load"),
+      opPath("opal_config_load"),
+      snapshot === null ? {} : { snapshot },
+      { "If-Match": ifMatch },
+    ),
+  validateConfigSnapshot: (snapshot?: unknown) =>
+    request<import("./types").ConfigValidation>(
+      opMethod("opal_config_validate"),
+      opPath("opal_config_validate"),
+      snapshot === undefined ? {} : { snapshot },
+    ),
 
   // Personas are a bounded configuration catalog (v1.6.0): list returns the complete
   // collection with a strong ETag, and every mutation requires If-Match (428/412).
@@ -309,32 +318,6 @@ export const api = {
       { "If-Match": etag },
     );
   },
-
-  // Managed backup archives (v1.7.1): server-side .tar.gz bundles under var/backups/.
-  listBackups: () => request<import("./types").BackupInfo[]>(opMethod("opal_backup_list"), opPath("opal_backup_list")),
-  createBackup: () =>
-    request<import("./types").BackupCreateResponse>(opMethod("opal_backup_create"), opPath("opal_backup_create")),
-  downloadBackup: async (filename: string): Promise<Blob> => {
-    const resp = await fetch(opPath("opal_backup_download", { filename }), {
-      headers: { ...contextHeaders(), ...authHeaders() },
-    });
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => null);
-      throw new ApiError(resp.status, data ?? null);
-    }
-    return resp.blob();
-  },
-  restoreBackup: async (filename: string, ifMatch?: string) => {
-    const etag = ifMatch ?? (await api.getSettings()).etag;
-    return request<import("./types").BackupImportResult>(
-      opMethod("opal_backup_restore"),
-      opPath("opal_backup_restore", { filename }),
-      undefined,
-      { "If-Match": etag },
-    );
-  },
-  deleteBackup: (filename: string) =>
-    request<void>(opMethod("opal_backup_delete"), opPath("opal_backup_delete", { filename })),
 
   // Managed server process lifecycle (v1.7.1 kernel `service` tag).
   serviceStart: (append?: boolean) =>

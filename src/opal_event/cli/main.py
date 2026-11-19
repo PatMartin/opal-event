@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 import typer
+import yaml
 
 from opal_event.cli.client import ApiCallError, ApiClient, api_url_from_env, token_from_env
 
@@ -29,7 +30,6 @@ rules_app = typer.Typer(help="Manage rules that match events to actions.", no_ar
 actions_app = typer.Typer(help="Manage registered actions (shell/http/python).", no_args_is_help=True)
 executions_app = typer.Typer(help="Inspect action execution history.", no_args_is_help=True)
 info_app = typer.Typer(help="Service identity, health, and runtime metrics.", no_args_is_help=True)
-backup_app = typer.Typer(help="Export, validate, and import portable configuration.", no_args_is_help=True)
 service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
 profiles_app = typer.Typer(help="Manage named presets of portable operating defaults.", no_args_is_help=True)
@@ -46,7 +46,6 @@ for _sub, _name in (
     (info_app, "info"),
     (config_app, "config"),
     (profiles_app, "profiles"),
-    (backup_app, "backup"),
     (personas_app, "personas"),
     (service_app, "service"),
 ):
@@ -159,6 +158,11 @@ def _event_input(event_json: str) -> dict[str, Any]:
         return json.loads(event_json)
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(f"invalid JSON: {exc}") from None
+
+
+_NAME = typer.Option(..., "--name", help="Dotted portable setting key")
+_VALUE = typer.Option(..., "--value", help="JSON value (or literal string) to set")
+_IFM = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)")
 
 
 def _current_revision(ctx: typer.Context) -> str:
@@ -489,47 +493,61 @@ def executions_get(ctx: typer.Context, execution_id: str = typer.Argument(...)) 
     _emit(ctx, _call(ctx, "show_execution", path_params={"execution_id": execution_id}).json())
 
 
-# -- `opal event backup` -------------------------------------------------------------------------
+# -- `opal event config save|load|validate` -------------------------------------------------------
 
 
-@backup_app.command("export")
-def backup_export(
-    ctx: typer.Context, output: str = typer.Option(None, "--output", help="Write to a file instead of stdout")
-) -> None:
-    """Export portable configuration (settings, actions, rules)."""
-    data = _call(ctx, "opal_backup_export").json()
-    if output:
-        Path(output).write_text(json.dumps(data, indent=2), encoding="utf-8")
-        typer.echo(f"exported configuration to {output}", err=True)
-    else:
-        typer.echo(json.dumps(data, indent=2))
+def _read_snapshot_file(path: str) -> dict:
+    """Read a local YAML or JSON snapshot file (kernel ``yaml_or_json_file`` binding)."""
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Error: cannot read snapshot file {path}: {exc}", err=True)
+        raise typer.Exit(2) from None
+    if not isinstance(data, dict):
+        typer.echo(f"Error: snapshot file {path} is not a mapping", err=True)
+        raise typer.Exit(2)
+    return data
 
 
-@backup_app.command("validate")
-def backup_validate(
+@config_app.command("save")
+def config_save_cmd(
     ctx: typer.Context,
-    json_str: str = typer.Option(None, "--json", help="Full ConfigBackup JSON body"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the ConfigBackup JSON body"),
+    out: str = typer.Option(None, "--out", help="Write the snapshot to FILE instead of the managed store"),
 ) -> None:
-    """Validate a portable backup without side effects."""
-    body = _read_payload(json_str, file)
-    data = _call(ctx, "opal_backup_validate_post", json=body).json()
+    """Capture the persistent configuration as a portable snapshot."""
+    if out is None:
+        data = _call(ctx, "opal_config_save", json={"destination": "managed"}).json()
+        typer.echo("managed snapshot saved")
+        _emit(ctx, data["snapshot"])
+    else:
+        data = _call(ctx, "opal_config_save", json={"destination": "response"}).json()
+        Path(out).write_text(json.dumps(data["snapshot"], indent=2), encoding="utf-8")
+        typer.echo(f"snapshot written to {out}", err=True)
+
+
+@config_app.command("load")
+def config_load_cmd(
+    ctx: typer.Context,
+    in_file: str = typer.Option(None, "--in", help="YAML or JSON snapshot file (omit to load the managed snapshot)"),
+    if_match: str = _IFM,
+) -> None:
+    """Atomically replace the persistent portable configuration with a snapshot."""
+    body = {"snapshot": _read_snapshot_file(in_file)} if in_file else {}
+    revision = if_match or _current_revision(ctx)
+    _emit(ctx, _call(ctx, "opal_config_load", json=body, headers={"If-Match": revision}).json())
+
+
+@config_app.command("validate")
+def config_validate_cmd(
+    ctx: typer.Context,
+    in_file: str = typer.Option(None, "--in", help="YAML or JSON snapshot file (omit to validate live configuration)"),
+) -> None:
+    """Validate a candidate snapshot, or the live configuration, without side effects."""
+    body = {"snapshot": _read_snapshot_file(in_file)} if in_file else {}
+    data = _call(ctx, "opal_config_validate", json=body).json()
     _emit(ctx, data)
     if not data["valid"]:
         raise typer.Exit(1)
-
-
-@backup_app.command("import")
-def backup_import(
-    ctx: typer.Context,
-    json_str: str = typer.Option(None, "--json", help="Full ConfigBackup JSON body"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the ConfigBackup JSON body"),
-    if_match: str = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)"),
-) -> None:
-    """Import a portable backup atomically (replaces portable rules/actions/settings)."""
-    body = _read_payload(json_str, file)
-    revision = if_match or _current_revision(ctx)
-    _emit(ctx, _call(ctx, "opal_backup_import", json=body, headers={"If-Match": revision}).json())
 
 
 # -- `opal event personas` ---------------------------------------------------------------------
@@ -774,11 +792,6 @@ def _settings_remove_key(ctx: typer.Context, key: str, if_match: str | None) -> 
     revision = if_match or _current_revision(ctx)
     _call(ctx, "opal_setting_delete", path_params={"key": key}, headers={"If-Match": revision})
     typer.echo(f"removed setting override '{key}'")
-
-
-_NAME = typer.Option(..., "--name", help="Dotted portable setting key")
-_VALUE = typer.Option(..., "--value", help="JSON value (or literal string) to set")
-_IFM = typer.Option(None, "--if-match", help="Revision precondition (default: auto-fetched)")
 
 
 @config_setting_app.command("list")

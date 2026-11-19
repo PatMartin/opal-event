@@ -109,6 +109,15 @@ class PreconditionFailedError(OpalContextualError):
         super().__init__(412, "precondition_failed", message)
 
 
+class UnprocessableEntityError(OpalContextualError):
+    """422: a structurally valid request failed semantic validation (invalid snapshot,
+    foreign resource compartment, unknown section or setting key). ``details`` may carry
+    the structured issue list."""
+
+    def __init__(self, message: str = "Request failed semantic validation", details: object = None):
+        super().__init__(422, "unprocessable_entity", message, details)
+
+
 class ChainDepthExceededError(OpalContextualError):
     """422: a derived publication or action exceeded the configured suite hop limit."""
 

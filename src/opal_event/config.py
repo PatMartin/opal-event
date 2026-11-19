@@ -172,7 +172,7 @@ class ConfigStore:
 
     def set_reload_callback(self, callback: Callable[[Settings, Settings], None] | None) -> None:
         """Registers (or replaces) the callback invoked with (old, new) settings after any reload,
-        whether triggered by a REST write, a direct YAML edit, or a backup import."""
+        whether triggered by a REST write, a direct YAML edit, or a snapshot load."""
         with self._lock:
             self._on_reload = callback
 

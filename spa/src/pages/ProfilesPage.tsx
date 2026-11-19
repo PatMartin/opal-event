@@ -4,15 +4,16 @@ import type { Profile } from "../types";
 import { JsonField } from "../components/JsonField";
 import { StatusBadge } from "../components/StatusBadge";
 
-// Profiles (v1.7.1): named presets of portable operating defaults. Activation applies
-// the stored settings patch to live config; exactly one profile is active at a time.
+// Profiles (v0.1.0, kernel v3): namespaced documents — `shared` plus a `modules` map of
+// module-owned compartments. opal-event's compartment is a closed empty schema, so
+// activation is a local selection only; foreign compartments are preserved verbatim.
 export default function ProfilesPage() {
   const [items, setItems] = useState<Profile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [settingsJson, setSettingsJson] = useState("{}");
-  const [settingsValid, setSettingsValid] = useState(true);
+  const [modulesJson, setModulesJson] = useState("{}");
+  const [modulesValid, setModulesValid] = useState(true);
   const [activate, setActivate] = useState(false);
 
   async function load() {
@@ -32,16 +33,16 @@ export default function ProfilesPage() {
     e.preventDefault();
     try {
       setError(null);
-      const settings = JSON.parse(settingsJson || "{}");
+      const modules = JSON.parse(modulesJson || "{}");
       await api.createProfile({
         name,
         description: description || null,
         is_active: activate,
-        settings: Object.keys(settings).length ? settings : null,
+        modules,
       });
       setName("");
       setDescription("");
-      setSettingsJson("{}");
+      setModulesJson("{}");
       setActivate(false);
       await load();
     } catch (err) {
@@ -49,7 +50,7 @@ export default function ProfilesPage() {
     }
   }
 
-  async function activateProfile(id: number) {
+  async function activateProfile(id: string) {
     try {
       setError(null);
       await api.activateProfile(id);
@@ -59,7 +60,7 @@ export default function ProfilesPage() {
     }
   }
 
-  async function remove(id: number) {
+  async function remove(id: string) {
     if (!window.confirm(`Delete profile ${id}?`)) return;
     try {
       setError(null);
@@ -84,18 +85,18 @@ export default function ProfilesPage() {
           <input value={description} onChange={(e) => setDescription(e.target.value)} />
         </label>
         <JsonField
-          label="Settings preset (PortableSettingsPatch JSON)"
-          value={settingsJson}
+          label="Module compartments (OpalProfileModules JSON; opal-event is empty)"
+          value={modulesJson}
           onChange={(text, _p, valid) => {
-            setSettingsJson(text);
-            setSettingsValid(valid);
+            setModulesJson(text);
+            setModulesValid(valid);
           }}
         />
         <label>
           <input type="checkbox" checked={activate} onChange={(e) => setActivate(e.target.checked)} /> Activate on
           create
         </label>
-        <button type="submit" disabled={!settingsValid || !name}>
+        <button type="submit" disabled={!modulesValid || !name}>
           Create
         </button>
       </form>
@@ -108,7 +109,7 @@ export default function ProfilesPage() {
             <th>ID</th>
             <th>Name</th>
             <th>Active</th>
-            <th>Preset</th>
+            <th>Modules</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -122,7 +123,7 @@ export default function ProfilesPage() {
               </td>
               <td>{p.is_active ? <StatusBadge value="enabled" /> : "-"}</td>
               <td>
-                <pre>{p.settings ? JSON.stringify(p.settings) : "-"}</pre>
+                <pre>{Object.keys(p.modules ?? {}).length ? JSON.stringify(p.modules) : "-"}</pre>
               </td>
               <td>
                 {!p.is_active && (

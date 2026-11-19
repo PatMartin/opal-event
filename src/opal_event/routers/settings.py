@@ -3,7 +3,7 @@ subset, max_event_bytes). v0.1.0: the collection is a flat ``OpalSettingsMap`` (
 the collection PATCH is retired); individual overrides use GET/PUT/DELETE ``/setting/{key}``
 with the kernel ``SettingRead`` record (effective/configured/default + provenance). Network
 bindings, CURVE keys, bearer tokens, database path, and rules/actions are intentionally
-excluded -- see ``PortableSettings`` in ``opal_event.yaml``."""
+excluded -- see ``opal_event.yaml`` for the portable boundary."""
 
 from __future__ import annotations
 
@@ -22,19 +22,6 @@ from opal_event.models import (
 )
 
 router = APIRouter(dependencies=[Depends(require_auth)])
-
-
-def _apply_portable_patch(raw: dict, fields: dict) -> dict:
-    """Merge a ``PortableSettingsPatch``'s set fields into the raw config dict. Shared with
-    profile activation (``routers/profiles.py``), which applies a stored preset identically."""
-    raw = dict(raw)
-    if "execution" in fields:
-        raw["execution"] = {**raw.get("execution", {}), **fields["execution"]}
-    if "persistence" in fields:
-        raw["persistence"] = {**raw.get("persistence", {}), **fields["persistence"]}
-    if "max_event_bytes" in fields:
-        raw["zeromq"] = {**raw.get("zeromq", {}), "max_event_bytes": fields["max_event_bytes"]}
-    return raw
 
 
 _PERSISTENCE_KEYS = ("event_mode", "retention_days", "execution_history_enabled")

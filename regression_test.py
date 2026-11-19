@@ -428,15 +428,23 @@ def t_config_snapshot_save_validate_load():
 
 def t_profiles():
     etag = CLIENT.get("/api/v1/profile/").headers["etag"]
-    body = {"name": f"regression_{RUN}", "settings": {"execution": {"max_workers": 2}}}
+    body = {"name": f"regression_{RUN}", "modules": {"opal-say": {"speed": 1.1}}}
     r = CLIENT.post("/api/v1/profile/", json=body, headers={"If-Match": etag})
-    check(r.status_code == 201, f"profile create -> {r.status_code} {r.text[:200]}")
+    check(r.status_code == 201, f"profile add -> {r.status_code} {r.text[:200]}")
     pid = r.json()["id"]
-    check(isinstance(pid, int) and r.headers.get("location") == f"/api/v1/profile/{pid}", "bad profile id/location")
+    check(isinstance(pid, str) and r.headers.get("location") == f"/api/v1/profile/{pid}", "bad profile id/location")
+    check(r.json()["shared"] == {} and r.json()["modules"]["opal-say"] == {"speed": 1.1}, "namespaced profile shape")
     etag = CLIENT.get("/api/v1/profile/").headers["etag"]
     r2 = CLIENT.post(f"/api/v1/profile/{pid}/activate", headers={"If-Match": etag})
     check(r2.status_code == 200 and r2.json()["is_active"] is True, f"activate -> {r2.status_code}")
-    check(CLIENT.get("/api/v1/setting/").json()["execution.max_workers"] == 2, "preset not applied")
+    etag = CLIENT.get(f"/api/v1/profile/{pid}").headers["etag"]
+    check(
+        CLIENT.patch(
+            f"/api/v1/profile/{pid}", json={"modules": {"opal-say": {"speed": 2.0}}}, headers={"If-Match": etag}
+        ).status_code
+        == 422,
+        "foreign compartment patch must be 422",
+    )
     etag = CLIENT.get(f"/api/v1/profile/{pid}").headers["etag"]
     check(CLIENT.delete(f"/api/v1/profile/{pid}", headers={"If-Match": etag}).status_code == 204, "profile delete")
 

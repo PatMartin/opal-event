@@ -138,12 +138,6 @@ export interface PortablePersistenceSettings {
   execution_history_enabled: true;
 }
 
-export interface PortableSettings {
-  execution: ExecutionSettings;
-  persistence: PortablePersistenceSettings;
-  max_event_bytes: number;
-}
-
 // Kernel OpalSettingsMap (v0.1.0): flat map of registered setting keys to effective values.
 export type SettingsMap = Record<string, unknown>;
 
@@ -181,38 +175,35 @@ export interface PersonaUpdate {
 }
 
 // ---------------------------------------------------------------------------
-// Profiles (v1.7.1): named presets of portable operating defaults
+// Profiles (v0.1.0 kernel v3): namespaced documents, shared + module compartments
 // ---------------------------------------------------------------------------
 
-export interface PortableSettingsPatch {
-  execution?: Partial<ExecutionSettings>;
-  persistence?: Partial<PortablePersistenceSettings>;
-  max_event_bytes?: number;
-}
-
 export interface Profile {
-  id: number;
+  id: string;
   name: string;
   description?: string | null;
   is_active: boolean;
-  settings?: PortableSettingsPatch | null;
+  shared: Record<string, unknown>;
+  modules: Record<string, Record<string, unknown>>;
   created_at: string;
   updated_at: string;
 }
 
 export interface ProfileCreate {
-  id?: number;
+  id?: string;
   name: string;
   description?: string | null;
   is_active?: boolean;
-  settings?: PortableSettingsPatch | null;
+  shared?: Record<string, unknown>;
+  modules?: Record<string, Record<string, unknown>>;
 }
 
 export interface ProfilePatch {
   name?: string;
   description?: string | null;
   is_active?: boolean;
-  settings?: PortableSettingsPatch | null;
+  shared?: Record<string, unknown>;
+  modules?: Record<string, Record<string, unknown>>;
 }
 
 // ---------------------------------------------------------------------------

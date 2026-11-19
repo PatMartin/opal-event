@@ -32,7 +32,7 @@ executions_app = typer.Typer(help="Inspect action execution history.", no_args_i
 info_app = typer.Typer(help="Service identity, health, and runtime metrics.", no_args_is_help=True)
 service_app = typer.Typer(help="Run the local opal-event-svc process.", no_args_is_help=True)
 personas_app = typer.Typer(help="Manage registered personas (named automation identities).", no_args_is_help=True)
-profiles_app = typer.Typer(help="Manage named presets of portable operating defaults.", no_args_is_help=True)
+profiles_app = typer.Typer(help="Manage namespaced profiles (shared + module compartments).", no_args_is_help=True)
 history_app = typer.Typer(help="Stored-event history: list, inspect, and remove retained events.", no_args_is_help=True)
 # Canonical x-opal-cli bindings: `config setting <verb>` plus the declared flat `setting` aliases.
 config_app = typer.Typer(help="Configuration resources.", no_args_is_help=True)
@@ -45,7 +45,7 @@ for _sub, _name in (
     (history_app, "history"),
     (info_app, "info"),
     (config_app, "config"),
-    (profiles_app, "profiles"),
+    (profiles_app, "profile"),
     (personas_app, "personas"),
     (service_app, "service"),
 ):
@@ -818,12 +818,46 @@ def config_setting_remove(ctx: typer.Context, key: str = _NAME, if_match: str = 
     _settings_remove_key(ctx, key, if_match)
 
 
-# -- `opal event profiles` ---------------------------------------------------------------------
+# -- `opal event profile` (kernel v3 namespaced profiles) ------------------------------------------
 
 
-def _profile_etag(ctx: typer.Context, profile_id: int) -> str:
+def _profile_etag(ctx: typer.Context, profile_id: str) -> str:
     resp = _call(ctx, "opal_profile_get", path_params={"profile_id": profile_id})
     return resp.headers["etag"]
+
+
+def _profile_document(
+    in_file: str | None,
+    name: str | None,
+    description: str | None,
+    is_active: bool | None,
+    shared: str | None,
+    module: str | None,
+) -> dict[str, Any]:
+    """Build the profile document/patch per the kernel ``x-opal-cli`` bindings: ``--in``
+    supplies the whole file (exclusive with the field options); ``--shared``/``--module``
+    files feed the ``shared`` section and the own ``opal-event`` compartment."""
+    if in_file is not None and any(v is not None for v in (name, description, is_active, shared, module)):
+        typer.echo("Error: --in is exclusive with --name/--description/--is-active/--shared/--module", err=True)
+        raise typer.Exit(2)
+    if in_file is not None:
+        return _read_snapshot_file(in_file)
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    if is_active is not None:
+        body["is_active"] = is_active
+    if shared is not None:
+        body["shared"] = _read_snapshot_file(shared)
+    if module is not None:
+        body.setdefault("modules", {})["opal-event"] = _read_snapshot_file(module)
+    return body
+
+
+_PROFILE_ID = typer.Argument(..., help="Profile id")
+_IS_ACTIVE = typer.Option(None, "--is-active/--no-is-active", help="Activate this profile locally")
 
 
 @profiles_app.command("list")
@@ -832,30 +866,28 @@ def profiles_list(ctx: typer.Context) -> None:
     _emit(ctx, _call(ctx, "opal_profile_list").json(), columns=["id", "name", "is_active"])
 
 
-@profiles_app.command("create")
-def profiles_create(
+@profiles_app.command("add")
+def profiles_add(
     ctx: typer.Context,
-    name: str = typer.Argument(...),
+    in_file: str = typer.Option(None, "--in", help="Whole portable profile document (YAML/JSON)"),
+    name: str = typer.Option(None, "--name"),
     description: str = typer.Option(None, "--description"),
-    active: bool = typer.Option(False, "--active", help="Activate this profile on create"),
-    json_str: str = typer.Option(None, "--json", help="Full ProfileCreate JSON body"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the ProfileCreate body"),
+    is_active: bool | None = _IS_ACTIVE,
+    shared: str = typer.Option(None, "--shared", help="Shared-values object file"),
+    module: str = typer.Option(None, "--module", help="opal-event compartment file"),
     if_match: str = _IFM,
 ) -> None:
-    """Create a profile. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
-    body: dict[str, Any] = {"name": name}
-    if description is not None:
-        body["description"] = description
-    if active:
-        body["is_active"] = True
-    if json_str is not None or file is not None:
-        body = _read_payload(json_str, file)
+    """Add a profile. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
+    body = _profile_document(in_file, name, description, is_active, shared, module)
+    if "name" not in body:
+        typer.echo("Error: a profile name is required (--name or --in document)", err=True)
+        raise typer.Exit(2)
     revision = if_match or _current_revision(ctx)
     _emit(ctx, _call(ctx, "opal_profile_create", json=body, headers={"If-Match": revision}).json())
 
 
-@profiles_app.command("get")
-def profiles_get(ctx: typer.Context, profile_id: int = typer.Argument(...)) -> None:
+@profiles_app.command("show")
+def profiles_show(ctx: typer.Context, profile_id: str = _PROFILE_ID) -> None:
     """Show one profile."""
     _emit(ctx, _call(ctx, "opal_profile_get", path_params={"profile_id": profile_id}).json())
 
@@ -863,13 +895,17 @@ def profiles_get(ctx: typer.Context, profile_id: int = typer.Argument(...)) -> N
 @profiles_app.command("update")
 def profiles_update(
     ctx: typer.Context,
-    profile_id: int = typer.Argument(...),
-    json_str: str = typer.Option(None, "--json", help="Partial ProfilePatch JSON body"),
-    file: str = typer.Option(None, "--file", help="Path to a file containing the patch body"),
+    profile_id: str = _PROFILE_ID,
+    in_file: str = typer.Option(None, "--in", help="Patch document (YAML/JSON)"),
+    name: str = typer.Option(None, "--name"),
+    description: str = typer.Option(None, "--description"),
+    is_active: bool | None = _IS_ACTIVE,
+    shared: str = typer.Option(None, "--shared", help="Shared-values object file"),
+    module: str = typer.Option(None, "--module", help="Partial opal-event compartment file"),
     if_match: str = _IFM,
 ) -> None:
-    """Partially update a profile (is_active: true activates and applies the preset)."""
-    body = _read_payload(json_str, file)
+    """Partially update a profile (is_active: true activates it locally)."""
+    body = _profile_document(in_file, name, description, is_active, shared, module)
     revision = if_match or _profile_etag(ctx, profile_id)
     _emit(
         ctx,
@@ -879,19 +915,22 @@ def profiles_update(
     )
 
 
-@profiles_app.command("delete")
-def profiles_delete(ctx: typer.Context, profile_id: int = typer.Argument(...), if_match: str = _IFM) -> None:
-    """Delete a profile. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
+@profiles_app.command("remove")
+def profiles_remove(ctx: typer.Context, profile_id: str = _PROFILE_ID, if_match: str = _IFM) -> None:
+    """Remove a profile. Requires a matching If-Match (428 if omitted; auto-fetched here)."""
     revision = if_match or _profile_etag(ctx, profile_id)
     _call(ctx, "opal_profile_delete", path_params={"profile_id": profile_id}, headers={"If-Match": revision})
-    typer.echo(f"deleted profile {profile_id}")
+    typer.echo(f"removed profile {profile_id}")
 
 
 @profiles_app.command("activate")
-def profiles_activate(ctx: typer.Context, profile_id: int = typer.Argument(...), if_match: str = _IFM) -> None:
-    """Activate a profile: apply its stored preset to live config and deactivate others."""
+def profiles_activate(ctx: typer.Context, profile_id: str = _PROFILE_ID, if_match: str = _IFM) -> None:
+    """Activate a profile locally (deactivates all others)."""
     revision = if_match or _profile_etag(ctx, profile_id)
-    _emit(ctx, _call(ctx, "opal_profile_activate", path_params={"profile_id": profile_id}, headers={"If-Match": revision}).json())
+    _emit(
+        ctx,
+        _call(ctx, "opal_profile_activate", path_params={"profile_id": profile_id}, headers={"If-Match": revision}).json(),
+    )
 
 
 # -- `opal` root -----------------------------------------------------------------------------

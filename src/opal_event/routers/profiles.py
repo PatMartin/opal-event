@@ -1,12 +1,14 @@
-"""``/api/v1/profile``: kernel-mounted profile catalog (v1.7.1).
+"""``/api/v1/profile``: kernel-mounted profile catalog (v0.1.0, kernel v3 namespaced
+profiles).
 
-A profile is a named preset of the service's portable operating defaults (a
-``PortableSettingsPatch``). Profiles are YAML-persisted like rules/actions/personas:
-GET returns the complete bounded collection with a strong ETag, and every mutation
-requires ``If-Match`` (428 if omitted, 412 if stale). Exactly one profile may be active
-at a time; activation applies the stored preset to the live configuration in the same
-atomic write, so `is_active` always describes the last-applied preset. Deactivation
-does not revert previously applied settings — profiles are write-only presets.
+A profile is a portable ``OpalProfile`` document: opaque string ``id``, required
+``shared`` and ``modules`` sections (empty objects valid). opal-event's own compartment
+is a closed empty schema — activation is a local selection only and changes no live
+settings; foreign module compartments are stored and returned verbatim. Profiles are
+YAML-persisted like rules/actions/personas: GET returns the complete bounded collection
+with a strong ETag, and every mutation requires ``If-Match`` (428 if omitted, 412 if
+stale). Patches may only target the ``modules.opal-event`` compartment — foreign
+compartment edits are rejected with 422 and stored contents preserved.
 """
 
 from __future__ import annotations
@@ -17,8 +19,7 @@ from opal_event.auth import require_auth
 from opal_event.config import ConcurrentUpdateError
 from opal_event.deps import get_config
 from opal_event.errors import ConflictError, NotFoundError, PreconditionFailedError, PreconditionRequiredError
-from opal_event.models import Profile, ProfileCreate, ProfilePatch, _utcnow
-from opal_event.routers.settings import _apply_portable_patch
+from opal_event.models import _PROFILE_COMPARTMENT, Profile, ProfileCreate, ProfilePatch, _utcnow
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -31,13 +32,11 @@ def _mark_active(profiles: list[dict], index: int) -> list[dict]:
     return [{**p, "is_active": i == index} for i, p in enumerate(profiles)]
 
 
-def _apply_preset(raw: dict, profile: dict) -> dict:
-    """Apply an activated profile's stored settings preset to the raw config dict."""
-    settings = profile.get("settings")
-    if settings:
-        # Stored presets may carry explicit nulls for unset fields — only real values apply.
-        raw = _apply_portable_patch(raw, {k: v for k, v in settings.items() if v is not None})
-    return raw
+def _allocate_id(existing: list[dict]) -> str:
+    """Next free opaque id: continues the integer sequence for ids allocated before the
+    v3 string-id migration, so stored catalogs keep a stable ordering."""
+    numeric = [int(p["id"]) for p in existing if str(p.get("id", "")).isdigit()]
+    return str(max(numeric, default=0) + 1)
 
 
 @router.get("/api/v1/profile/", response_model=list[Profile])
@@ -54,7 +53,7 @@ def create_profile(
         raise PreconditionRequiredError()
 
     now = _utcnow()
-    profile_id: int | None = None
+    profile_id: str | None = None
 
     def mutate(raw: dict) -> dict:
         nonlocal profile_id
@@ -62,16 +61,17 @@ def create_profile(
         if any(p["name"] == body.name for p in existing):
             raise ConflictError(f"profile name '{body.name}' already exists")
         if body.id is not None and any(p["id"] == body.id for p in existing):
-            raise ConflictError(f"profile id {body.id} is already in use")
+            raise ConflictError(f"profile id '{body.id}' is already in use")
         if len(existing) >= PROFILES_MAX_COUNT:
             raise ConflictError(f"profile catalog is full (max {PROFILES_MAX_COUNT})")
-        profile_id = body.id if body.id is not None else max((p["id"] for p in existing), default=0) + 1
+        profile_id = body.id if body.id is not None else _allocate_id(existing)
         profile = Profile(
             id=profile_id,
             name=body.name,
             description=body.description,
             is_active=body.is_active,
-            settings=body.settings,
+            shared=body.shared,
+            modules=body.modules,
             created_at=now,
             updated_at=now,
         )
@@ -79,7 +79,6 @@ def create_profile(
         profiles = [*existing, profile.model_dump(mode="json")]
         if body.is_active:
             profiles = _mark_active(profiles, len(profiles) - 1)
-            raw = _apply_preset(raw, profile.model_dump(mode="json"))
         raw["profiles"] = profiles
         return raw
 
@@ -92,7 +91,7 @@ def create_profile(
 
 
 @router.get("/api/v1/profile/{profile_id}", response_model=Profile)
-def get_profile(profile_id: int, response: Response, config=Depends(get_config)):
+def get_profile(profile_id: str, response: Response, config=Depends(get_config)):
     response.headers["ETag"] = config.revision
     for profile in config.settings.profiles:
         if profile.id == profile_id:
@@ -101,7 +100,7 @@ def get_profile(profile_id: int, response: Response, config=Depends(get_config))
 
 
 @router.patch("/api/v1/profile/{profile_id}", response_model=Profile)
-def patch_profile(profile_id: int, patch: ProfilePatch, config=Depends(get_config), if_match: str | None = Header(default=None)):
+def patch_profile(profile_id: str, patch: ProfilePatch, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
         raise PreconditionRequiredError()
 
@@ -113,12 +112,29 @@ def patch_profile(profile_id: int, patch: ProfilePatch, config=Depends(get_confi
         fields = patch.model_dump(mode="json", exclude_unset=True)
         if "name" in fields and any(p["name"] == fields["name"] and i != index for i, p in enumerate(existing)):
             raise ConflictError(f"profile name '{fields['name']}' already exists")
-        merged = {**existing[index], **fields, "updated_at": _utcnow()}
+        stored = existing[index]
+        merged = {**stored}
+        for key in ("name", "description", "is_active", "shared"):
+            if key in fields:
+                merged[key] = fields[key]
+        if "modules" in fields:
+            # Own-compartment field-wise merge; foreign compartments are never touched
+            # (the patch schema rejects them before we get here). Explicit null removes
+            # an override field; the compartment itself must remain an object.
+            modules = dict(stored.get("modules", {}))
+            own = dict(modules.get(_PROFILE_COMPARTMENT) or {})
+            for field, value in (fields["modules"].get(_PROFILE_COMPARTMENT) or {}).items():
+                if value is None:
+                    own.pop(field, None)
+                else:
+                    own[field] = value
+            modules[_PROFILE_COMPARTMENT] = own
+            merged["modules"] = modules
+        merged["updated_at"] = _utcnow()
         raw = dict(raw)
         profiles = [*existing[:index], merged, *existing[index + 1 :]]
         if fields.get("is_active"):
             profiles = _mark_active(profiles, index)
-            raw = _apply_preset(raw, merged)
         raw["profiles"] = profiles
         return raw
 
@@ -130,7 +146,7 @@ def patch_profile(profile_id: int, patch: ProfilePatch, config=Depends(get_confi
 
 
 @router.delete("/api/v1/profile/{profile_id}", status_code=204)
-def delete_profile(profile_id: int, config=Depends(get_config), if_match: str | None = Header(default=None)):
+def delete_profile(profile_id: str, config=Depends(get_config), if_match: str | None = Header(default=None)):
     if if_match is None:
         raise PreconditionRequiredError()
 
@@ -150,9 +166,9 @@ def delete_profile(profile_id: int, config=Depends(get_config), if_match: str | 
 
 
 @router.post("/api/v1/profile/{profile_id}/activate", response_model=Profile)
-def activate_profile(profile_id: int, config=Depends(get_config), if_match: str | None = Header(default=None)):
-    """Mark `profile_id` active (deactivating all others) and apply its stored preset to
-    the live configuration in the same atomic write."""
+def activate_profile(profile_id: str, config=Depends(get_config), if_match: str | None = Header(default=None)):
+    """Mark `profile_id` active (deactivating all others). v3: activation is a local
+    selection only — opal-event's compartment declares no defaults to apply."""
     if if_match is None:
         raise PreconditionRequiredError()
 
@@ -162,10 +178,9 @@ def activate_profile(profile_id: int, config=Depends(get_config), if_match: str 
         if index is None:
             raise NotFoundError(f"profile '{profile_id}' not found")
         raw = dict(raw)
-        activated = {**existing[index], "updated_at": _utcnow()}
-        profiles = [*existing[:index], activated, *existing[index + 1 :]]
+        profiles = [*existing[:index], {**existing[index], "updated_at": _utcnow()}, *existing[index + 1 :]]
         raw["profiles"] = _mark_active(profiles, index)
-        return _apply_preset(raw, activated)
+        return raw
 
     try:
         new_settings = config.update(mutate, expected_revision=if_match)

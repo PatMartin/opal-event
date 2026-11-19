@@ -530,9 +530,9 @@ class CurveSettings(Strict):
 class ZeroMqSettings(Strict):
     publishers: str = "tcp://127.0.0.1:5555"
     subscribers: str = "tcp://127.0.0.1:5556"
-    # Contract note: the OpenAPI schema marks this `const: 1048576`, but `PortableSettings.max_event_bytes`
-    # (1..1048576) is explicitly PATCHable and documented to map onto this field. A rigid literal would make
-    # that PATCH operation non-functional, so we treat 1048576 as the enforced ceiling, not a fixed value.
+    # Contract note: the OpenAPI schema marks this `const: 1048576`, but the kernel settings
+    # surface allows PUT /api/v1/setting/max_event_bytes (1..1048576) which maps onto this field.
+    # A rigid literal would make that operation non-functional, so 1048576 is the ceiling.
     max_event_bytes: Annotated[int, Field(ge=1, le=MAX_EVENT_BYTES)] = MAX_EVENT_BYTES
     curve: CurveSettings = Field(default_factory=CurveSettings)
     publisher_queue_size: Annotated[int, Field(ge=1, le=100000)] = 1000
@@ -606,68 +606,92 @@ class PortablePersistenceSettings(Strict):
     execution_history_enabled: Literal[True] = True
 
 
-class PortableSettings(Strict):
-    execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
-    persistence: PortablePersistenceSettings = Field(default_factory=PortablePersistenceSettings)
-    max_event_bytes: Annotated[int, Field(ge=1, le=1048576)] = MAX_EVENT_BYTES
-
-
-class PortableSettingsPatch(Strict):
-    execution: ExecutionSettings | None = None
-    persistence: PortablePersistenceSettings | None = None
-    max_event_bytes: Annotated[int, Field(ge=1, le=1048576)] | None = None
-
-    @model_validator(mode="after")
-    def _at_least_one(self) -> PortableSettingsPatch:
-        if not self.model_fields_set:
-            raise ValueError("at least one property is required")
-        return self
-
-
 # --------------------------------------------------------------------------------------
-# Profiles (v1.7.1): named presets of portable operating defaults, one active at a time
+# Profiles (v0.1.0 kernel v3): namespaced ``OpalProfile`` documents — ``shared`` plus a
+# ``modules`` map of module-owned compartments. The opal-event compartment is an explicit
+# empty closed schema (no profile-specific defaults); foreign compartments are stored and
+# returned verbatim. ``is_active`` is a local selection, at most one per service.
 # --------------------------------------------------------------------------------------
+
+_PROFILE_COMPARTMENT = "opal-event"
+
+
+def _check_profile_envelope(shared: dict | None, modules: dict | None, patch: bool = False) -> None:
+    """Closed-envelope checks shared by create/patch payloads."""
+    if shared:
+        raise ValueError("'shared' is a closed empty object; members are rejected")
+    for key, compartment in (modules or {}).items():
+        if not isinstance(compartment, dict):
+            raise ValueError(f"module compartment '{key}' must be an object")
+        if patch and key != _PROFILE_COMPARTMENT:
+            raise ValueError(f"foreign compartment '{key}' is read-only; patches may only target '{_PROFILE_COMPARTMENT}'")
+        if key == _PROFILE_COMPARTMENT and compartment:
+            raise ValueError(f"'modules.{_PROFILE_COMPARTMENT}' is a closed empty schema; members are rejected")
 
 
 class ProfileCreate(Strict):
-    """Kernel ``OpalProfileCreate``: ``name`` is the only required field; ``is_active: true``
-    activates the new profile and deactivates all others. ``settings`` is the opal-event
-    service-defined preset — a portable-settings patch applied to live config on activation."""
+    """Kernel ``OpalProfileCreate``: ``name`` is required; omitted ``shared``/``modules``
+    normalize to empty objects. Compartments for other modules are stored verbatim;
+    ``is_active: true`` activates the new profile and deactivates all others."""
 
-    id: Annotated[int, Field(ge=1)] | None = None
+    id: Annotated[str, Field(min_length=1)] | None = None
     name: Annotated[str, Field(min_length=1, max_length=100)]
     description: Annotated[str, Field(max_length=1000)] | None = None
     is_active: bool = False
-    settings: PortableSettingsPatch | None = None
+    shared: dict[str, Any] = Field(default_factory=dict)
+    modules: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _envelope(self) -> ProfileCreate:
+        _check_profile_envelope(self.shared, self.modules)
+        return self
 
 
 class ProfilePatch(Strict):
-    """Kernel ``OpalProfilePatch``: partial update; ``is_active: true`` activates (and applies
-    the stored preset like ``/activate``), ``is_active: false`` deactivates without reverting."""
+    """Kernel ``OpalProfilePatch``: partial update; compartment values merge field-wise
+    over the stored compartment. ``modules`` may contain only the receiving service's own
+    compartment key — foreign compartment edits are rejected (422) and preserved."""
 
     name: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     description: Annotated[str, Field(max_length=1000)] | None = None
     is_active: bool | None = None
-    settings: PortableSettingsPatch | None = None
+    shared: dict[str, Any] | None = None
+    modules: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _at_least_one(self) -> ProfilePatch:
         if not self.model_fields_set:
             raise ValueError("at least one property is required")
+        _check_profile_envelope(self.shared, self.modules, patch=True)
         return self
 
 
 class Profile(Strict):
-    """Kernel ``OpalProfile``: ``id``, ``name`` and ``is_active`` are suite-standard; ``settings``
-    holds the opal-event preset. ids are positive integers allocated at create (next free id)."""
+    """Kernel ``OpalProfile``: opaque string ``id``, ``shared`` and ``modules`` required
+    (empty objects valid). v1.7.1 stored profiles (integer ``id``, ``settings`` preset)
+    upgrade on load: ids stringify, the dropped ``settings`` preset is discarded — the
+    v3 opal-event compartment declares no fields to carry it."""
 
-    id: Annotated[int, Field(ge=1)]
+    id: Annotated[str, Field(min_length=1)]
     name: Annotated[str, Field(min_length=1, max_length=100)]
     description: Annotated[str, Field(max_length=1000)] | None = None
     is_active: bool
-    settings: PortableSettingsPatch | None = None
+    shared: dict[str, Any] = Field(default_factory=dict)
+    modules: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_v2(cls, data):
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("settings", None)  # v2 preset; v3 opal-event compartment is empty
+            data.setdefault("shared", {})
+            data.setdefault("modules", {})
+            if isinstance(data.get("id"), int):
+                data["id"] = str(data["id"])
+        return data
 
 
 class Settings(Strict):

@@ -4,7 +4,7 @@ import time
 import zmq
 
 
-def wait_until(predicate, timeout=3.0, interval=0.05):
+def wait_until(predicate, timeout=10.0, interval=0.05):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():

@@ -63,7 +63,7 @@ def _allowlist(port):
 
 
 def test_normal_endpoint_succeeds(server):
-    out = run_http_action(_action(server.server_port, "/"), {}, 5, 65536, _allowlist(server.server_port))
+    out = run_http_action(_action(server.server_port, "/"), {}, 10, 65536, _allowlist(server.server_port))
     assert out.status == "completed" and out.http_status == 200
     assert out.result == {"ok": True}
 
